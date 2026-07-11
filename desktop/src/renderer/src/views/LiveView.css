@@ -24,10 +24,14 @@
 }
 
 /* Wrapper shrink-wraps the image so percentage-positioned boxes stay aligned
-   regardless of container size (no letterboxing). */
+   regardless of container size. align-self: flex-start is essential: without it
+   the flex column's default align-items: stretch widens the wrapper to the full
+   window, making the inset:0 overlay wider than the (max 1280px) image and
+   drifting boxes right of their objects once the window exceeds the image width. */
 .preview-wrapper {
   position: relative;
   display: inline-block;
+  align-self: flex-start;
   max-width: 100%;
   background: #111;
 }
