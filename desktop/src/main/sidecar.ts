@@ -17,6 +17,7 @@ export interface SupervisorOptions {
   cwd?: string
   onPort?: (port: number) => void
   onExit?: (code: number | null) => void
+  onStderr?: (text: string) => void
 }
 
 const PORT_RE = /SIDECAR_PORT=(\d+)/
@@ -41,6 +42,10 @@ export class SidecarSupervisor {
     this.child = child
 
     child.stdout?.on('data', (chunk) => this.onStdout(chunk.toString()))
+    // Drain stderr too. uvicorn logs to stderr by default; if we never read it,
+    // the OS pipe buffer fills and the sidecar blocks on its next write (frames
+    // stop with no error). Attaching a 'data' listener keeps the pipe flowing.
+    child.stderr?.on('data', (chunk) => this.opts.onStderr?.(chunk.toString()))
     child.on('exit', (code) => {
       if (!this.stopped) this.opts.onExit?.(code)
     })

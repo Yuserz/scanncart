@@ -4,6 +4,7 @@ import { SidecarSupervisor } from './sidecar'
 
 class FakeChild {
   stdoutCbs: Array<(c: Buffer) => void> = []
+  stderrCbs: Array<(c: Buffer) => void> = []
   exitCbs: Array<(code: number | null) => void> = []
   killed = false
   stdout = {
@@ -11,7 +12,11 @@ class FakeChild {
       if (e === 'data') this.stdoutCbs.push(cb)
     }
   }
-  stderr = { on: (): void => {} }
+  stderr = {
+    on: (e: string, cb: (c: Buffer) => void): void => {
+      if (e === 'data') this.stderrCbs.push(cb)
+    }
+  }
   on(e: string, cb: (code: number | null) => void): void {
     if (e === 'exit') this.exitCbs.push(cb)
   }
@@ -20,6 +25,9 @@ class FakeChild {
   }
   emitStdout(s: string): void {
     this.stdoutCbs.forEach((cb) => cb(Buffer.from(s)))
+  }
+  emitStderr(s: string): void {
+    this.stderrCbs.forEach((cb) => cb(Buffer.from(s)))
   }
   emitExit(code: number | null): void {
     this.exitCbs.forEach((cb) => cb(code))
@@ -62,6 +70,16 @@ describe('SidecarSupervisor', () => {
     sup.start()
     child.emitStdout('INFO: Uvicorn running\n')
     expect(onPort).not.toHaveBeenCalled()
+  })
+
+  it('drains stderr and forwards it to onStderr (prevents pipe-buffer deadlock)', () => {
+    const onStderr = vi.fn()
+    const { sup, child } = makeSupervisor({ onStderr })
+    sup.start()
+    // Attaching a 'data' listener is what keeps the pipe flowing; assert it happened.
+    expect(child.stderrCbs.length).toBe(1)
+    child.emitStderr('INFO: Uvicorn running\n')
+    expect(onStderr).toHaveBeenCalledWith('INFO: Uvicorn running\n')
   })
 
   it('stop() kills the child', () => {

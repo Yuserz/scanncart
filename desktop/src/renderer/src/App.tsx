@@ -15,7 +15,12 @@ function App({ getPort, pollMs = 500 }: AppProps = {}): JSX.Element {
     let active = true
     let timer: ReturnType<typeof setTimeout>
     const tick = async (): Promise<void> => {
-      const p = await resolvePort()
+      let p: number | null = null
+      try {
+        p = await resolvePort()
+      } catch {
+        // Transient IPC failure: keep polling rather than stalling forever.
+      }
       if (!active) return
       if (p != null) setPort(p)
       else timer = setTimeout(tick, pollMs)

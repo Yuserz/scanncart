@@ -73,6 +73,8 @@ export function createStreamClient(opts: StreamClientOptions): StreamClient {
     } catch {
       return // ignore malformed frames rather than crashing the stream
     }
+    // JSON.parse can yield null/non-objects; guard before reading .type.
+    if (typeof msg !== 'object' || msg === null) return
     if (msg.type === 'frame') opts.onFrame?.(msg)
     else if (msg.type === 'status') opts.onStatus?.(msg)
   }

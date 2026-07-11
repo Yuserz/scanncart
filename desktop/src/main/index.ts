@@ -43,7 +43,8 @@ function startSidecar(): void {
     onExit: (code) => {
       console.error(`[sidecar] exited unexpectedly (code ${code})`)
       sidecarPort = null
-    }
+    },
+    onStderr: (text) => process.stderr.write(text)
   })
   supervisor.start()
 }
