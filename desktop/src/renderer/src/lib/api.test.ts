@@ -53,4 +53,27 @@ describe('createApiClient', () => {
     const api = createApiClient(8765)
     await expect(api.health()).rejects.toThrow(/500/)
   })
+
+  it('getLogs() GETs /api/logs and returns parsed JSON', async () => {
+    mockFetchOnce({
+      session_id: 3,
+      events: [
+        {
+          track_id: 1,
+          class_name: 'banana',
+          confidence: 0.8,
+          max_conf: 0.91,
+          entered_at: 100.0,
+          left_at: null
+        }
+      ]
+    })
+    const api = createApiClient(8765)
+    const r = await api.getLogs()
+    expect(r.session_id).toBe(3)
+    expect(r.events[0].class_name).toBe('banana')
+    const [url, init] = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(url).toBe('http://127.0.0.1:8765/api/logs')
+    expect(init?.method ?? 'GET').toBe('GET')
+  })
 })

@@ -11,10 +11,25 @@ export interface StateResponse {
   state: string
 }
 
+export interface LogEvent {
+  track_id: number
+  class_name: string
+  confidence: number
+  max_conf: number
+  entered_at: number
+  left_at: number | null
+}
+
+export interface LogsResponse {
+  session_id: number | null
+  events: LogEvent[]
+}
+
 export interface ApiClient {
   health(): Promise<HealthResponse>
   start(): Promise<StateResponse>
   stop(): Promise<StateResponse>
+  getLogs(): Promise<LogsResponse>
 }
 
 export function createApiClient(port: number): ApiClient {
@@ -31,6 +46,7 @@ export function createApiClient(port: number): ApiClient {
   return {
     health: () => request<HealthResponse>('/health', 'GET'),
     start: () => request<StateResponse>('/capture/start', 'POST'),
-    stop: () => request<StateResponse>('/capture/stop', 'POST')
+    stop: () => request<StateResponse>('/capture/stop', 'POST'),
+    getLogs: () => request<LogsResponse>('/logs', 'GET')
   }
 }
