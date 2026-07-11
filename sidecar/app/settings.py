@@ -12,6 +12,7 @@ class Settings:
     infer_frame_skip: int = 0
     device: str = "auto"
     preview_height: int = 720
+    track_expiry_s: float = 1.5
 
 
 def resolve_device(pref: str) -> str:

@@ -19,11 +19,26 @@ def encode_preview_jpeg(frame: np.ndarray, target_height: int) -> str:
 
 
 class Pipeline:
-    def __init__(self, source, detector, settings, on_message: Callable[[dict], None]):
+    def __init__(
+        self,
+        source,
+        detector,
+        settings,
+        on_message: Callable[[dict], None],
+        logging_store=None,
+        session_id=None,
+        track_expiry_s: float = 1.5,
+        clock: Callable[[], float] = time.time,
+    ):
         self._source = source
         self._detector = detector
         self._settings = settings
         self._on_message = on_message
+        self._logging_store = logging_store
+        self._session_id = session_id
+        self._track_expiry_s = track_expiry_s
+        self._clock = clock
+        self._open: dict[int, float] = {}   # track_id -> last-seen timestamp
         self._thread = None
         self.is_running = False
         self._frame_counter = 0
@@ -51,6 +66,8 @@ class Pipeline:
                 self._infer_fps = 1.0 / dt
         self._last_infer_ts = t1
 
+        self._log_detections(detections)
+
         jpeg = encode_preview_jpeg(frame, self._settings.preview_height)
         stats = Stats(
             infer_fps=round(self._infer_fps, 1),
@@ -63,6 +80,29 @@ class Pipeline:
         ).model_dump()
         self._on_message(msg)
         return msg
+
+    def _log_detections(self, detections: list[Detection]) -> None:
+        if self._logging_store is None or self._session_id is None:
+            return
+        now = self._clock()
+        for d in detections:
+            if d.track_id is None:
+                continue
+            self._logging_store.record_detection(
+                self._session_id, d.track_id, d.cls, d.conf, now
+            )
+            self._open[d.track_id] = now
+        for track_id, last_seen in list(self._open.items()):
+            if now - last_seen > self._track_expiry_s:
+                self._logging_store.resolve_left(self._session_id, track_id, last_seen)
+                del self._open[track_id]
+
+    def resolve_open_tracks(self) -> None:
+        if self._logging_store is None or self._session_id is None:
+            return
+        for track_id, last_seen in list(self._open.items()):
+            self._logging_store.resolve_left(self._session_id, track_id, last_seen)
+        self._open.clear()
 
     def _loop(self) -> None:
         while self.is_running:
