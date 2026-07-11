@@ -31,8 +31,10 @@ export interface SidecarStream {
 
 // Wires the REST + WebSocket clients into React state. Detections are deduped
 // in-memory by track_id for the session (one row per item). On WS open, the
-// persisted /api/logs rows seed items + the dedup set so a track already in
-// the DB isn't double-counted when live frames resume.
+// persisted /api/logs rows seed items + the dedup set, but only to recover a
+// session that is actually running (a reconnect mid-capture) — a fresh
+// launch or idle app leaves the log empty, and start() resets it for a new
+// capture session.
 export function useSidecarStream(port: number, deps: StreamDeps = {}): SidecarStream {
   const apiFactory = deps.apiFactory ?? createApiClient
   const streamFactory = deps.streamFactory ?? createStreamClient
@@ -44,6 +46,12 @@ export function useSidecarStream(port: number, deps: StreamDeps = {}): SidecarSt
 
   const apiRef = useRef<ApiClient | null>(null)
   const seenRef = useRef<Set<number>>(new Set())
+  const statusRef = useRef<string>('idle')
+
+  const setStatus = useCallback((s: string): void => {
+    statusRef.current = s
+    setStatusState(s)
+  }, [])
 
   useEffect(() => {
     const api = apiFactory(port)
@@ -55,6 +63,10 @@ export function useSidecarStream(port: number, deps: StreamDeps = {}): SidecarSt
       try {
         const res = await api.getLogs()
         if (cancelled) return
+        // Only recover the log for a session that is actually running (reconnect
+        // recovery). On a fresh launch / idle the sidecar's most-recent session is
+        // stale, so the log stays empty until the user starts a new capture.
+        if (statusRef.current !== 'running' || res.session_id == null) return
         const seeded: LoggedItem[] = []
         for (const e of res.events) {
           if (seenRef.current.has(e.track_id)) continue
@@ -78,7 +90,7 @@ export function useSidecarStream(port: number, deps: StreamDeps = {}): SidecarSt
       if (fresh.length > 0) setItems((prev) => [...prev, ...fresh])
     }
 
-    const onStatus = (msg: StatusMessage): void => setStatusState(msg.state)
+    const onStatus = (msg: StatusMessage): void => setStatus(msg.state)
 
     const client = streamFactory({
       port,
@@ -99,14 +111,16 @@ export function useSidecarStream(port: number, deps: StreamDeps = {}): SidecarSt
   }, [port, apiFactory, streamFactory])
 
   const start = useCallback(async (): Promise<void> => {
+    seenRef.current = new Set()
+    setItems([])
     const r = await apiRef.current!.start()
-    setStatusState(r.state)
-  }, [])
+    setStatus(r.state)
+  }, [setStatus])
 
   const stop = useCallback(async (): Promise<void> => {
     const r = await apiRef.current!.stop()
-    setStatusState(r.state)
-  }, [])
+    setStatus(r.state)
+  }, [setStatus])
 
   return { frame, statusState, connected, items, start, stop }
 }
