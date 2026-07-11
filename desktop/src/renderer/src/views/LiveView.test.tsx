@@ -20,7 +20,12 @@ function makeHarness() {
   const start = vi.fn(async () => ({ state: 'running' }))
   const stop = vi.fn(async () => ({ state: 'idle' }))
   const deps = {
-    apiFactory: () => ({ health: vi.fn(), start, stop }),
+    apiFactory: () => ({
+      health: vi.fn(),
+      start,
+      stop,
+      getLogs: vi.fn(async () => ({ session_id: null, events: [] }))
+    }),
     streamFactory: (opts: StreamClientOptions) => {
       captured = opts
       return { connect: vi.fn(), close: vi.fn() }

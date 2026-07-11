@@ -30,8 +30,9 @@ export interface SidecarStream {
 }
 
 // Wires the REST + WebSocket clients into React state. Detections are deduped
-// in-memory by track_id for the session (one row per item); /api/logs
-// reconciliation is Phase 3.
+// in-memory by track_id for the session (one row per item). On WS open, the
+// persisted /api/logs rows seed items + the dedup set so a track already in
+// the DB isn't double-counted when live frames resume.
 export function useSidecarStream(port: number, deps: StreamDeps = {}): SidecarStream {
   const apiFactory = deps.apiFactory ?? createApiClient
   const streamFactory = deps.streamFactory ?? createStreamClient
@@ -48,6 +49,23 @@ export function useSidecarStream(port: number, deps: StreamDeps = {}): SidecarSt
     const api = apiFactory(port)
     apiRef.current = api
     seenRef.current = new Set()
+    let cancelled = false
+
+    const seedFromLogs = async (): Promise<void> => {
+      try {
+        const res = await api.getLogs()
+        if (cancelled) return
+        const seeded: LoggedItem[] = []
+        for (const e of res.events) {
+          if (seenRef.current.has(e.track_id)) continue
+          seenRef.current.add(e.track_id)
+          seeded.push({ track_id: e.track_id, cls: e.class_name, conf: e.max_conf, ts: e.entered_at })
+        }
+        if (seeded.length > 0) setItems((prev) => [...prev, ...seeded])
+      } catch {
+        // /api/logs unavailable (sidecar not ready): keep the live-only log.
+      }
+    }
 
     const onFrame = (msg: FrameMessage): void => {
       setFrame(msg)
@@ -66,12 +84,18 @@ export function useSidecarStream(port: number, deps: StreamDeps = {}): SidecarSt
       port,
       onFrame,
       onStatus,
-      onOpen: () => setConnected(true),
+      onOpen: () => {
+        setConnected(true)
+        void seedFromLogs()
+      },
       onClose: () => setConnected(false)
     })
     client.connect()
 
-    return () => client.close()
+    return () => {
+      cancelled = true
+      client.close()
+    }
   }, [port, apiFactory, streamFactory])
 
   const start = useCallback(async (): Promise<void> => {
