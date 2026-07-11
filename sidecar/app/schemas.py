@@ -34,3 +34,17 @@ class HealthResponse(BaseModel):
     state: str
     active_model: str
     device: str
+
+
+class LogEvent(BaseModel):
+    track_id: int
+    class_name: str
+    confidence: float
+    max_conf: float
+    entered_at: float
+    left_at: float | None = None
+
+
+class LogsResponse(BaseModel):
+    session_id: int | None = None
+    events: list[LogEvent] = []

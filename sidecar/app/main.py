@@ -5,9 +5,10 @@ from typing import Callable
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from app.settings import Settings, resolve_device
 from app.pipeline import Pipeline
-from app.schemas import HealthResponse
+from app.schemas import HealthResponse, LogEvent, LogsResponse
 from app.camera import CameraCapture
 from app.inference import YoloDetector
+from app.logging_store import LoggingStore
 
 
 def _default_source_factory(settings: Settings):
@@ -78,10 +79,15 @@ class AppState:
     pipeline: Pipeline | None = None
     state: str = "idle"
     device: str = ""
+    db_path: str = "data/scanncart.db"
+    logging_store: LoggingStore | None = None
+    session_id: int | None = None
 
     def __post_init__(self):
         if not self.device:
             self.device = resolve_device(self.settings.device)
+        if self.logging_store is None:
+            self.logging_store = LoggingStore(self.db_path)
 
 
 def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
@@ -103,9 +109,15 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
             if hasattr(source, "open"):
                 source.open()
             detector = state.detector_factory(state.settings, state.device)
+            state.session_id = state.logging_store.start_session(
+                state.settings.active_model, state.device
+            )
             state.pipeline = Pipeline(
                 source, detector, state.settings,
                 on_message=state.ws_manager.submit,
+                logging_store=state.logging_store,
+                session_id=state.session_id,
+                track_expiry_s=state.settings.track_expiry_s,
             )
             state.pipeline.start()
             state.state = "running"
@@ -115,9 +127,31 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
     async def stop():
         if state.pipeline is not None:
             state.pipeline.stop()
+            state.pipeline.resolve_open_tracks()
             state.pipeline = None
+        if state.session_id is not None:
+            state.logging_store.end_session(state.session_id)
+            state.session_id = None
         state.state = "idle"
         return {"state": state.state}
+
+    @app.get("/api/logs", response_model=LogsResponse)
+    async def logs():
+        sid = state.logging_store.current_session_id()
+        if sid is None:
+            return LogsResponse(session_id=None, events=[])
+        events = [
+            LogEvent(
+                track_id=r.track_id,
+                class_name=r.class_name,
+                confidence=r.confidence,
+                max_conf=r.max_conf,
+                entered_at=r.entered_at,
+                left_at=r.left_at,
+            )
+            for r in state.logging_store.query_events(sid)
+        ]
+        return LogsResponse(session_id=sid, events=events)
 
     @app.websocket("/ws/stream")
     async def stream(ws: WebSocket):

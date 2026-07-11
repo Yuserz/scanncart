@@ -33,6 +33,7 @@ def _make_client():
     state = AppState(
         source_factory=lambda settings: _StubSource(),
         detector_factory=lambda settings, device: _StubDetector(),
+        db_path=":memory:",
     )
     return TestClient(build_app(lambda: state)), state
 
