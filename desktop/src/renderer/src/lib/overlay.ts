@@ -32,6 +32,26 @@ export function boxToPixels(
   }
 }
 
+export interface PercentRect {
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
+// Percentages relative to a wrapper sized to the rendered image. Used by the
+// DOM overlay (positioned elements), which is inherently letterbox-safe because
+// the wrapper IS the image bounds.
+export function boxToPercent(box: [number, number, number, number]): PercentRect {
+  const [x1, y1, x2, y2] = box
+  return {
+    left: x1 * 100,
+    top: y1 * 100,
+    width: (x2 - x1) * 100,
+    height: (y2 - y1) * 100
+  }
+}
+
 export function layoutDetections(
   detections: Detection[],
   dispW: number,

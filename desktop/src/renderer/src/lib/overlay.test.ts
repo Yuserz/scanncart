@@ -1,6 +1,17 @@
 import { describe, it, expect } from 'vitest'
-import { boxToPixels, layoutDetections } from './overlay'
+import { boxToPixels, layoutDetections, boxToPercent } from './overlay'
 import type { Detection } from './ws'
+
+describe('boxToPercent', () => {
+  it('maps a normalized box to CSS percentages relative to the image wrapper', () => {
+    expect(boxToPercent([0.25, 0.1, 0.75, 0.6])).toEqual({
+      left: 25,
+      top: 10,
+      width: 50,
+      height: 50
+    })
+  })
+})
 
 describe('boxToPixels', () => {
   it('scales a normalized box to the displayed image size', () => {
