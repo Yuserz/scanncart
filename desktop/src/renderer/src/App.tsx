@@ -1,35 +1,38 @@
-import Versions from './components/Versions'
-import electronLogo from './assets/electron.svg'
+import { useEffect, useState, type JSX } from 'react'
+import { LiveView } from './views/LiveView'
 
-function App(): React.JSX.Element {
-  const ipcHandle = (): void => window.electron.ipcRenderer.send('ping')
+export interface AppProps {
+  // Injectable for tests; defaults to the preload bridge.
+  getPort?: () => Promise<number | null>
+  pollMs?: number
+}
 
-  return (
-    <>
-      <img alt="logo" className="logo" src={electronLogo} />
-      <div className="creator">Powered by electron-vite</div>
-      <div className="text">
-        Build an Electron app with <span className="react">React</span>
-        &nbsp;and <span className="ts">TypeScript</span>
-      </div>
-      <p className="tip">
-        Please try pressing <code>F12</code> to open the devTool
-      </p>
-      <div className="actions">
-        <div className="action">
-          <a href="https://electron-vite.org/" target="_blank" rel="noreferrer">
-            Documentation
-          </a>
-        </div>
-        <div className="action">
-          <a target="_blank" rel="noreferrer" onClick={ipcHandle}>
-            Send IPC
-          </a>
-        </div>
-      </div>
-      <Versions></Versions>
-    </>
-  )
+function App({ getPort, pollMs = 500 }: AppProps = {}): JSX.Element {
+  const resolvePort = getPort ?? ((): Promise<number | null> => window.api.getSidecarPort())
+  const [port, setPort] = useState<number | null>(null)
+
+  useEffect(() => {
+    let active = true
+    let timer: ReturnType<typeof setTimeout>
+    const tick = async (): Promise<void> => {
+      const p = await resolvePort()
+      if (!active) return
+      if (p != null) setPort(p)
+      else timer = setTimeout(tick, pollMs)
+    }
+    tick()
+    return () => {
+      active = false
+      clearTimeout(timer)
+    }
+    // resolvePort is stable per mount; intentionally not re-running on identity change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pollMs])
+
+  if (port == null) {
+    return <div className="app-waiting">Starting sidecar…</div>
+  }
+  return <LiveView port={port} />
 }
 
 export default App

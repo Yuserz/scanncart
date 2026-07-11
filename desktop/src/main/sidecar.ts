@@ -7,7 +7,7 @@ export interface SpawnedLike {
   stdout: { on(event: 'data', cb: (chunk: Buffer) => void): void } | null
   stderr: { on(event: 'data', cb: (chunk: Buffer) => void): void } | null
   on(event: 'exit', cb: (code: number | null) => void): void
-  kill(signal?: string): void
+  kill(): void
 }
 
 export interface SupervisorOptions {

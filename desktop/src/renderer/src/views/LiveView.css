@@ -1,0 +1,93 @@
+.live-view {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  color: #e8e8e8;
+}
+
+.live-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.live-toolbar button {
+  padding: 6px 18px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.live-toolbar .conn {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+/* Wrapper shrink-wraps the image so percentage-positioned boxes stay aligned
+   regardless of container size (no letterboxing). */
+.preview-wrapper {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  background: #111;
+}
+
+.preview-img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.preview-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 640px;
+  max-width: 100%;
+  aspect-ratio: 16 / 9;
+  color: #888;
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.det-box {
+  border: 2px solid #38d39f;
+  box-sizing: border-box;
+}
+
+.det-label {
+  position: absolute;
+  top: -18px;
+  left: -2px;
+  background: #38d39f;
+  color: #08130e;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 4px;
+  white-space: nowrap;
+}
+
+.stats-strip {
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  opacity: 0.85;
+}
+
+.item-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 180px;
+  overflow-y: auto;
+  font-size: 13px;
+}
+
+.item-log li {
+  padding: 2px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}

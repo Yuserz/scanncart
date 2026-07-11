@@ -1,8 +1,11 @@
-import { contextBridge } from 'electron'
+import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 
-// Custom APIs for renderer
-const api = {}
+// Custom APIs for renderer. Hands the renderer the sidecar port (null until the
+// sidecar has reported it); the renderer then connects directly over WS/HTTP.
+const api = {
+  getSidecarPort: (): Promise<number | null> => ipcRenderer.invoke('sidecar:port')
+}
 
 // Use `contextBridge` APIs to expose Electron APIs to
 // renderer only if context isolation is enabled, otherwise

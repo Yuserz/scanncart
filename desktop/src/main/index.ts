@@ -1,7 +1,52 @@
 import { app, shell, BrowserWindow, ipcMain } from 'electron'
+import { spawn } from 'child_process'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
+import { SidecarSupervisor } from './sidecar'
+
+// Resolve where the Python sidecar lives. Defaults assume the repo layout
+// (desktop/ and sidecar/ side by side) and the sidecar's local venv; override
+// with SIDECAR_PYTHON / SIDECAR_SCRIPT for packaged builds or custom setups.
+function resolveSidecarPaths(): { python: string; script: string; cwd: string } {
+  const sidecarDir = join(app.getAppPath(), '..', 'sidecar')
+  const venvPython =
+    process.platform === 'win32'
+      ? join(sidecarDir, '.venv', 'Scripts', 'python.exe')
+      : join(sidecarDir, '.venv', 'bin', 'python')
+  return {
+    python: process.env['SIDECAR_PYTHON'] || venvPython,
+    script: process.env['SIDECAR_SCRIPT'] || join(sidecarDir, 'run.py'),
+    cwd: sidecarDir
+  }
+}
+
+let sidecarPort: number | null = null
+let supervisor: SidecarSupervisor | null = null
+
+function startSidecar(): void {
+  const { python, script, cwd } = resolveSidecarPaths()
+  supervisor = new SidecarSupervisor({
+    spawnFn: (command, args, options) => {
+      const cp = spawn(command, args, options)
+      // Guard against ENOENT (bad python path) crashing the main process.
+      cp.on('error', (e) => console.error('[sidecar] spawn error:', e.message))
+      return cp
+    },
+    pythonPath: python,
+    scriptPath: script,
+    cwd,
+    onPort: (port) => {
+      sidecarPort = port
+      console.log(`[sidecar] ready on port ${port}`)
+    },
+    onExit: (code) => {
+      console.error(`[sidecar] exited unexpectedly (code ${code})`)
+      sidecarPort = null
+    }
+  })
+  supervisor.start()
+}
 
 function createWindow(): void {
   // Create the browser window.
@@ -49,9 +94,10 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
-  // IPC test
-  ipcMain.on('ping', () => console.log('pong'))
+  // Renderer asks for the sidecar port; returns null until the sidecar reports it.
+  ipcMain.handle('sidecar:port', () => sidecarPort)
 
+  startSidecar()
   createWindow()
 
   app.on('activate', function () {
@@ -68,6 +114,12 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit()
   }
+})
+
+// Ensure the sidecar child is terminated with the app.
+app.on('before-quit', () => {
+  supervisor?.stop()
+  supervisor = null
 })
 
 // In this file you can include the rest of your app's specific main process

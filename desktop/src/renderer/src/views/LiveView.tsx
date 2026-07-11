@@ -1,6 +1,7 @@
 import { type JSX } from 'react'
 import { useSidecarStream, type StreamDeps } from '../hooks/useSidecarStream'
 import { boxToPercent } from '../lib/overlay'
+import './LiveView.css'
 
 export interface LiveViewProps {
   port: number
