@@ -1,5 +1,7 @@
 import threading
+import time
 from typing import Protocol
+import cv2
 import numpy as np
 
 
@@ -52,3 +54,58 @@ class FakeFrameSource:
 
     def release(self) -> None:
         pass
+
+
+class CameraCapture:
+    """Owns an OpenCV device and runs a background capture thread."""
+
+    def __init__(self, index, width, height, fps, cap_factory=cv2.VideoCapture):
+        self.index = index
+        self.width = width
+        self.height = height
+        self.fps = float(fps)
+        self._cap_factory = cap_factory
+        self._cap = None
+        self._buffer = LatestFrameBuffer()
+        self._thread = None
+        self._running = False
+        self._seq = 0
+        self.is_open = False
+
+    def open(self) -> bool:
+        self._cap = self._cap_factory(self.index)
+        self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+        self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+        self._cap.set(cv2.CAP_PROP_FPS, self.fps)
+        if not self._cap.isOpened():
+            self.is_open = False
+            return False
+        self.is_open = True
+        self._running = True
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+        return True
+
+    def _loop(self) -> None:
+        while self._running:
+            ok, frame = self._cap.read()
+            if not ok:
+                time.sleep(0.005)
+                continue
+            self._seq += 1
+            self._buffer.put(self._seq, frame)
+
+    def latest(self):
+        return self._buffer.get()
+
+    def read(self):
+        got = self._buffer.get()
+        return None if got is None else got[1]
+
+    def release(self) -> None:
+        self._running = False
+        if self._thread is not None:
+            self._thread.join(timeout=1.0)
+        if self._cap is not None:
+            self._cap.release()
+        self.is_open = False
