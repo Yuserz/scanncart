@@ -204,6 +204,28 @@ describe('AdminPanel', () => {
     )
   })
 
+  it('labels a discrete NVIDIA card without CUDA as a missing-CUDA-torch case, not an APU', async () => {
+    const { deps } = makeDeps('idle', {
+      getSystemInfo: vi.fn(async () => ({
+        cpu_count: 8,
+        ram_gb: 16,
+        cuda_available: false,
+        accelerator: 'integrated' as const,
+        gpu_name: 'NVIDIA GeForce RTX 4060',
+        gpu_vram_gb: null,
+        recommended_preset: 'mid_range'
+      }))
+    })
+    render(<AdminPanel port={8765} deps={deps} />)
+    await waitFor(() =>
+      expect(screen.getByTestId('hardware-info')).toHaveTextContent(
+        /NVIDIA GeForce RTX 4060 — GPU detected but CUDA is unavailable/
+      )
+    )
+    // Must NOT mislabel a discrete NVIDIA card as an APU.
+    expect(screen.getByTestId('hardware-info')).not.toHaveTextContent(/\(APU\)/)
+  })
+
   it('device toggle: GPU is selectable and default on a CUDA machine, and stores auto', async () => {
     const { deps, api } = makeDeps('idle', {
       getSystemInfo: vi.fn(async () => ({

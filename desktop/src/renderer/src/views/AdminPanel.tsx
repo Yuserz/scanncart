@@ -1,12 +1,34 @@
 import { useState, type JSX } from 'react'
 import { useSidecarSettings, type SettingsDeps } from '../hooks/useSidecarSettings'
-import type { SettingsPayload, SettingsResponse, SettingsUpdate } from '../lib/api'
+import type {
+  SettingsPayload,
+  SettingsResponse,
+  SettingsUpdate,
+  SystemInfoResponse
+} from '../lib/api'
 import { SETTINGS_FIELDS } from '../lib/settingsFields'
 import './AdminPanel.css'
 
 export interface AdminPanelProps {
   port: number
   deps?: SettingsDeps
+}
+
+// Human-readable one-liner for the "This machine" GPU row.
+function describeGpu(si: SystemInfoResponse): string {
+  if (si.accelerator === 'cuda') {
+    return `${si.gpu_name ?? 'CUDA GPU'} (${si.gpu_vram_gb?.toFixed(1) ?? '?'} GB VRAM) — GPU acceleration available`
+  }
+  if (si.accelerator === 'integrated') {
+    // A CUDA-capable NVIDIA card that torch can't use is almost always a
+    // missing CUDA torch build, not an APU — say so rather than mislabeling a
+    // discrete GPU as integrated.
+    if (si.gpu_name?.toLowerCase().includes('nvidia')) {
+      return `${si.gpu_name} — GPU detected but CUDA is unavailable (install a CUDA build of torch to accelerate); running on CPU`
+    }
+    return `Integrated graphics: ${si.gpu_name ?? 'unknown'} (APU) — no CUDA acceleration, runs on CPU`
+  }
+  return 'No GPU detected — CPU only'
 }
 
 export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
@@ -107,14 +129,7 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
           <ul>
             <li>CPU cores: {systemInfo.cpu_count}</li>
             <li>RAM: {systemInfo.ram_gb.toFixed(1)} GB</li>
-            <li>
-              GPU:{' '}
-              {systemInfo.accelerator === 'cuda'
-                ? `${systemInfo.gpu_name ?? 'CUDA GPU'} (${systemInfo.gpu_vram_gb?.toFixed(1) ?? '?'} GB VRAM) — GPU acceleration available`
-                : systemInfo.accelerator === 'integrated'
-                  ? `Integrated graphics: ${systemInfo.gpu_name ?? 'unknown'} (APU) — no CUDA acceleration, runs on CPU`
-                  : 'No GPU detected — CPU only'}
-            </li>
+            <li>GPU: {describeGpu(systemInfo)}</li>
           </ul>
         ) : (
           <p>Detecting hardware…</p>

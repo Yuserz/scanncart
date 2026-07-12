@@ -16,8 +16,12 @@ class Settings:
 
 
 def resolve_device(pref: str) -> str:
-    if pref != "auto":
-        return pref
+    # "cpu" is always honored. "auto" and an explicit "cuda" both want the GPU,
+    # but only when torch can actually use it — otherwise fall back to "cpu" so a
+    # stale or forced "cuda" (e.g. persisted before a CPU-only torch install)
+    # never crashes capture at start on a machine without a CUDA-enabled torch.
+    if pref == "cpu":
+        return "cpu"
     try:
         import torch
         return "cuda" if torch.cuda.is_available() else "cpu"
