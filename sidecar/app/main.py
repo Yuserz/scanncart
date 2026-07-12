@@ -105,6 +105,9 @@ class AppState:
     logging_store: LoggingStore | None = None
     session_id: int | None = None
     hardware_info: HardwareInfo | None = None
+    # Injection seam so tests can supply a fake instead of the real probe
+    # (which shells out to PowerShell and reads torch.cuda).
+    hardware_prober: Callable[[], HardwareInfo] = probe_hardware
 
     def __post_init__(self):
         if self.settings is None:
@@ -163,9 +166,16 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
     )
     state = state_factory()
 
+    # Guard the first probe so concurrent callers (AdminPanel mount fires
+    # /api/system-info and /api/presets together) don't each spawn a probe;
+    # double-checked against the cache so subsequent calls skip the lock.
+    hw_lock = asyncio.Lock()
+
     async def _get_hardware() -> HardwareInfo:
         if state.hardware_info is None:
-            state.hardware_info = await run_in_threadpool(probe_hardware)
+            async with hw_lock:
+                if state.hardware_info is None:
+                    state.hardware_info = await run_in_threadpool(state.hardware_prober)
         return state.hardware_info
 
     @app.get("/api/health", response_model=HealthResponse)

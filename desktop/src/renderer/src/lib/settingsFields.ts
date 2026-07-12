@@ -37,8 +37,9 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
     key: 'device',
     label: 'Device',
     hint: 'GPU uses your NVIDIA (CUDA) GPU for faster inference; CPU runs on the processor. GPU is the default when a CUDA GPU is present, and disabled otherwise.',
-    type: 'select',
-    options: ALLOWED_DEVICES
+    // Rendered as a custom GPU/CPU toggle in AdminPanel (the `field.key === 'device'`
+    // branch), so `type` here is inert and no `options` list drives its UI.
+    type: 'select'
   },
   {
     key: 'camera_index',

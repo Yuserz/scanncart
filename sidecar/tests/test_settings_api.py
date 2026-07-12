@@ -29,6 +29,12 @@ class _StubDetector:
         return [Detection(track_id=1, cls="banana", conf=0.9, box=(0.1, 0.2, 0.3, 0.4))]
 
 
+def _fake_hardware():
+    from app.hardware import HardwareInfo
+
+    return HardwareInfo(cpu_count=8, ram_gb=16.0, cuda_available=False, accelerator="cpu")
+
+
 def _make_client(tmp_path, **kwargs):
     state = AppState(
         settings=kwargs.pop("settings", Settings()),
@@ -36,6 +42,7 @@ def _make_client(tmp_path, **kwargs):
         source_factory=lambda settings: _StubSource(),
         detector_factory=lambda settings, device: _StubDetector(),
         db_path=":memory:",
+        hardware_prober=kwargs.pop("hardware_prober", _fake_hardware),
         **kwargs,
     )
     return TestClient(build_app(lambda: state)), state
@@ -122,6 +129,22 @@ def test_system_info_reports_hardware_and_recommendation(tmp_path):
     assert body["cpu_count"] > 0
     assert body["ram_gb"] > 0
     assert body["recommended_preset"] in ("low_end", "mid_range", "high_end")
+
+
+def test_hardware_probed_once_across_endpoints(tmp_path):
+    from app.hardware import HardwareInfo
+
+    calls = {"n": 0}
+
+    def counting_prober():
+        calls["n"] += 1
+        return HardwareInfo(cpu_count=8, ram_gb=16.0, cuda_available=False, accelerator="cpu")
+
+    client, _ = _make_client(tmp_path, hardware_prober=counting_prober)
+    client.get("/api/system-info")
+    client.get("/api/presets")
+    # Memoized: both endpoints share one probe rather than re-running it.
+    assert calls["n"] == 1
 
 
 def test_presets_lists_three_and_a_recommendation(tmp_path):

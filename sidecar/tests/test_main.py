@@ -30,12 +30,19 @@ class _StubDetector:
         return [Detection(track_id=1, cls="banana", conf=0.9, box=(0.1, 0.2, 0.3, 0.4))]
 
 
+def _fake_hardware():
+    from app.hardware import HardwareInfo
+
+    return HardwareInfo(cpu_count=8, ram_gb=16.0, cuda_available=False, accelerator="cpu")
+
+
 def _make_client():
     state = AppState(
         settings=Settings(),
         source_factory=lambda settings: _StubSource(),
         detector_factory=lambda settings, device: _StubDetector(),
         db_path=":memory:",
+        hardware_prober=_fake_hardware,
     )
     return TestClient(build_app(lambda: state)), state
 
