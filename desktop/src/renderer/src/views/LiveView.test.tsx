@@ -59,7 +59,10 @@ describe('LiveView', () => {
     expect(screen.getAllByTestId('det-box')).toHaveLength(1)
     expect(screen.getByTestId('det-box')).toHaveTextContent('banana 90%')
     expect(screen.getByTestId('item-log')).toHaveTextContent('banana (90%)')
-    expect(screen.getByTestId('stats')).toHaveTextContent('infer 22.4 fps')
+    expect(screen.getByTestId('stat-infer-fps')).toHaveTextContent('22.4')
+    expect(screen.getByTestId('stat-capture-fps')).toHaveTextContent('60')
+    expect(screen.getByTestId('stat-latency')).toHaveTextContent('88')
+    expect(screen.getByTestId('stat-tracked')).toHaveTextContent('1')
   })
 
   it('does not add a duplicate item-log row for a repeated track_id', () => {
