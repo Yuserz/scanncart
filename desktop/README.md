@@ -46,8 +46,23 @@ SIDECAR_PYTHON=/path/to/python SIDECAR_SCRIPT=/path/to/run.py npm run dev
 
 Click **Start** to begin capture; live boxes render on the StreamCam feed.
 
-> **Known env note:** on the current dev machine, the Electron binary postinstall
-> did not complete (`node_modules/electron/dist` left partial → "Electron failed to
-> install correctly"). Re-run `npm install` on a stable connection, or
-> `rm -rf node_modules/electron ~/.cache/electron && npm install`, before `npm run dev`.
-> This affects only launching the GUI; `npm test` and `npm run build` are unaffected.
+> **Known env note — "Electron uninstall" / "Electron failed to install correctly" on `npm run dev`:**
+> the Electron binary postinstall can leave `node_modules/electron/dist` partial
+> (only `locales/`, no `electron.exe`) with no `path.txt`, so electron-vite throws
+> `Error: Electron uninstall`. Re-running `npm install` does **not** reliably fix it:
+> `@electron/get` reports a cache hit and the extract step can silently no-op
+> (exit 0, nothing written) — likely the same Windows Defender interference
+> documented in [`../sidecar/README.md`](../sidecar/README.md), so add the Defender
+> exclusion for this repo first. Then rebuild:
+>
+> ```powershell
+> Remove-Item -Recurse -Force node_modules/electron/dist
+> npm rebuild electron   # or: node node_modules/electron/install.js
+> ```
+>
+> If the extract still no-ops, do it by hand: the cached
+> `%LOCALAPPDATA%\electron\Cache\<hash>\electron-v<ver>-win32-x64.zip` is valid —
+> extract it into `node_modules/electron/dist/` and write `path.txt` containing
+> `electron.exe`. Verify with `node -e "console.log(require('electron'))"` (prints
+> the exe path) and `npx electron --version`. Affects only launching the GUI;
+> `npm test` and `npm run build` are unaffected.

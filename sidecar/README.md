@@ -14,6 +14,12 @@ pip install -r requirements.txt
 > No system `pip`/`venv`? [uv](https://docs.astral.sh/uv/) works without sudo:
 > `uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -r requirements.txt`
 
+> **Use Python 3.12.** The pinned `numpy`/`torch`/`opencv` wheels are not all
+> available (or crash) on very new interpreters — a 3.14 venv was seen with a
+> broken numpy (native `_multiarray_umath` load aborting) and no installable
+> `torch`. `uv venv --python 3.12` fetches 3.12 automatically if it's not on
+> the machine.
+
 ### GPU (NVIDIA/CUDA) setup
 
 `requirements.txt` doesn't pin `torch`, so a plain install pulls in
@@ -38,6 +44,40 @@ uv pip install --python .venv/Scripts/python.exe torch torchvision --index-url h
 ```
 
 Verify with `python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"`.
+
+> Verified on the current dev machine (RTX 4060, driver 610.62): the base
+> install pulled `torch==2.13.0+cpu`; reinstalling from the `cu128` index gave
+> `torch==2.11.0+cu128` (uv picks the nearest version that index actually
+> carries — don't hard-pin the version, just the `cuXXX` tag) with
+> `cuda_available: true`.
+
+### Windows Defender / antivirus (silent native-import crashes)
+
+On some Windows machines, Defender's real-time protection **intermittently
+kills Python as it loads native extension DLLs** (numpy, OpenCV, torch). The
+crash is silent: the process exits with code `0xffffffff` / `4294967295` and
+prints **no traceback**. Because `torch` loads many DLLs, the sidecar then dies
+on almost every launch — the Electron app logs
+`[sidecar] exited unexpectedly (code 4294967295)` and shows no live feed, while
+`python run.py` on its own exits `255` with empty output.
+
+The tell that it's a scan race (not a broken install) is that a heavy import
+succeeds only *some* of the time — e.g. `import torch` passing 0–3 times out of
+20 while `psutil` (few DLLs) passes 20/20.
+
+Fix: exclude the repo and the interpreter directory from Defender scanning
+(run in an **elevated / Administrator** PowerShell):
+
+```powershell
+Add-MpPreference -ExclusionPath "C:\path\to\scanncart"
+Add-MpPreference -ExclusionPath "$env:APPDATA\uv"   # if using a uv-managed Python
+```
+
+Then confirm a heavy import is now reliable (expect 10/10 exit 0):
+
+```powershell
+$ok=0; 1..10 | %{ .venv\Scripts\python.exe -c "import torch,cv2,ultralytics" 2>$null; if ($?){$ok++} }; "OK=$ok/10"
+```
 
 ## Run
 
