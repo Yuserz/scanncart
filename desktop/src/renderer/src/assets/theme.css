@@ -1,0 +1,24 @@
+:root {
+  --bg: #0b0d10;
+  --panel: #14171b;
+  --border: #262a30;
+  --text: #e7e9ea;
+  --dim: #8a9099;
+  --accent: #2dd4a7;
+  --accent-ink: #08130e;
+  --danger-bg: #3a1418;
+  --danger-fg: #ff8a8a;
+  --danger-border: #5a2228;
+  --font-mono:
+    'JetBrains Mono',
+    'Cascadia Code',
+    'SF Mono',
+    Consolas,
+    monospace;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
