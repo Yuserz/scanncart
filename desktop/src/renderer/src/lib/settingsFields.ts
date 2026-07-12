@@ -36,7 +36,7 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
   {
     key: 'device',
     label: 'Device',
-    hint: '"auto" uses a GPU if one is available, otherwise CPU. Only force cpu/cuda if auto picks the wrong one.',
+    hint: 'GPU uses your NVIDIA (CUDA) GPU for faster inference; CPU runs on the processor. GPU is the default when a CUDA GPU is present, and disabled otherwise.',
     type: 'select',
     options: ALLOWED_DEVICES
   },

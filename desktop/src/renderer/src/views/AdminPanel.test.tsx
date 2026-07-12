@@ -203,4 +203,52 @@ describe('AdminPanel', () => {
       )
     )
   })
+
+  it('device toggle: GPU is selectable and default on a CUDA machine, and stores auto', async () => {
+    const { deps, api } = makeDeps('idle', {
+      getSystemInfo: vi.fn(async () => ({
+        cpu_count: 8,
+        ram_gb: 16,
+        cuda_available: true,
+        accelerator: 'cuda' as const,
+        gpu_name: 'NVIDIA GeForce RTX 4060',
+        gpu_vram_gb: 8,
+        recommended_preset: 'high_end'
+      }))
+    })
+    const user = userEvent.setup()
+    render(<AdminPanel port={8765} deps={deps} />)
+
+    const gpu = await screen.findByLabelText(/GPU \(recommended\)/i)
+    const cpu = screen.getByLabelText(/CPU only/i)
+    expect(gpu).toBeEnabled()
+    expect(gpu).toBeChecked() // stored device 'auto' shows as GPU
+
+    // Switch to CPU, then save persists 'cpu'.
+    await user.click(cpu)
+    const saveButton = screen.getByTestId('save-settings')
+    await waitFor(() => expect(saveButton).toBeEnabled())
+    await user.click(saveButton)
+    await waitFor(() => expect(api.updateSettings).toHaveBeenCalledWith({ device: 'cpu' }))
+  })
+
+  it('device toggle: GPU is disabled and CPU forced when no CUDA GPU', async () => {
+    const { deps } = makeDeps('idle', {
+      getSystemInfo: vi.fn(async () => ({
+        cpu_count: 8,
+        ram_gb: 16,
+        cuda_available: false,
+        accelerator: 'integrated' as const,
+        gpu_name: 'AMD Radeon(TM) Graphics',
+        gpu_vram_gb: null,
+        recommended_preset: 'low_end'
+      }))
+    })
+    render(<AdminPanel port={8765} deps={deps} />)
+
+    const gpu = await screen.findByLabelText(/GPU \(recommended\)/i)
+    expect(gpu).toBeDisabled()
+    expect(screen.getByLabelText(/CPU only/i)).toBeChecked()
+    expect(screen.getByTestId('device-gpu-note')).toBeInTheDocument()
+  })
 })

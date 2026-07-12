@@ -154,6 +154,50 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
         {SETTINGS_FIELDS.map((field) => {
           const isRestartField = settings.restart_required_fields.includes(field.key)
           const value = valueOf(field.key)
+          if (field.key === 'device') {
+            const gpuAvailable = systemInfo?.accelerator === 'cuda'
+            const isCpu = value === 'cpu' || !gpuAvailable
+            return (
+              <div className="admin-field" key={field.key}>
+                <div className="admin-field-label">
+                  <label htmlFor={field.key}>{field.label}</label>
+                  <span className={`badge ${isRestartField ? 'restart' : 'live'}`}>
+                    {isRestartField ? 'restart required' : 'live'}
+                  </span>
+                </div>
+                <div className="device-toggle" data-testid="device-toggle">
+                  <label>
+                    <input
+                      type="radio"
+                      name="device"
+                      value="gpu"
+                      checked={!isCpu}
+                      disabled={!gpuAvailable}
+                      onChange={() => setField('device', 'auto')}
+                    />
+                    GPU (recommended)
+                  </label>
+                  <label>
+                    <input
+                      type="radio"
+                      name="device"
+                      value="cpu"
+                      checked={isCpu}
+                      onChange={() => setField('device', 'cpu')}
+                    />
+                    CPU only
+                  </label>
+                </div>
+                {!gpuAvailable && (
+                  <p className="field-hint" data-testid="device-gpu-note">
+                    No CUDA GPU on this machine — integrated/APU can&apos;t accelerate; running on
+                    CPU.
+                  </p>
+                )}
+                <p className="field-hint">{field.hint}</p>
+              </div>
+            )
+          }
           return (
             <div className="admin-field" key={field.key}>
               <div className="admin-field-label">
