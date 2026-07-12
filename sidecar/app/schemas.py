@@ -106,6 +106,7 @@ class HardwareInfo(BaseModel):
     cpu_count: int
     ram_gb: float
     cuda_available: bool
+    accelerator: Literal["cuda", "integrated", "cpu"] = "cpu"
     gpu_name: str | None = None
     gpu_vram_gb: float | None = None
 

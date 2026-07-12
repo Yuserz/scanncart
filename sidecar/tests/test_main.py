@@ -76,3 +76,10 @@ def test_websocket_receives_a_frame_after_start():
         assert msg["type"] == "frame"
         assert msg["detections"][0]["cls"] == "banana"
     client.post("/api/capture/stop")
+
+
+def test_system_info_reports_accelerator():
+    client, _ = _make_client()
+    r = client.get("/api/system-info")
+    assert r.status_code == 200
+    assert r.json()["accelerator"] in {"cuda", "integrated", "cpu"}

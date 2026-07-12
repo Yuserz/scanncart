@@ -30,3 +30,12 @@ def test_status_message_default_detail():
 def test_health_response_fields():
     h = HealthResponse(state="idle", active_model="yolo11n.pt", device="cpu")
     assert h.active_model == "yolo11n.pt"
+
+
+def test_hardware_info_accepts_accelerator():
+    from app.schemas import HardwareInfo
+
+    hw = HardwareInfo(
+        cpu_count=4, ram_gb=8.0, cuda_available=False, accelerator="integrated"
+    )
+    assert hw.accelerator == "integrated"

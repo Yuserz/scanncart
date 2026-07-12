@@ -185,6 +185,7 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
             cpu_count=hw.cpu_count,
             ram_gb=hw.ram_gb,
             cuda_available=hw.cuda_available,
+            accelerator=hw.accelerator,
             gpu_name=hw.gpu_name,
             gpu_vram_gb=hw.gpu_vram_gb,
             recommended_preset=recommend_preset(hw),
