@@ -34,6 +34,7 @@ function makeDeps(overrides: Partial<ApiClient> = {}): { deps: SettingsDeps; api
       cpu_count: 8,
       ram_gb: 16,
       cuda_available: false,
+      accelerator: 'cpu' as const,
       gpu_name: null,
       gpu_vram_gb: null,
       recommended_preset: 'mid_range'

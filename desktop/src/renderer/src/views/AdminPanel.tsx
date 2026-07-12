@@ -109,9 +109,11 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
             <li>RAM: {systemInfo.ram_gb.toFixed(1)} GB</li>
             <li>
               GPU:{' '}
-              {systemInfo.cuda_available
-                ? `${systemInfo.gpu_name ?? 'CUDA GPU'} (${systemInfo.gpu_vram_gb?.toFixed(1) ?? '?'} GB VRAM)`
-                : 'No GPU detected'}
+              {systemInfo.accelerator === 'cuda'
+                ? `${systemInfo.gpu_name ?? 'CUDA GPU'} (${systemInfo.gpu_vram_gb?.toFixed(1) ?? '?'} GB VRAM) — GPU acceleration available`
+                : systemInfo.accelerator === 'integrated'
+                  ? `Integrated graphics: ${systemInfo.gpu_name ?? 'unknown'} (APU) — no CUDA acceleration, runs on CPU`
+                  : 'No GPU detected — CPU only'}
             </li>
           </ul>
         ) : (

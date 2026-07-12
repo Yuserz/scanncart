@@ -52,6 +52,7 @@ export interface SystemInfoResponse {
   cpu_count: number
   ram_gb: number
   cuda_available: boolean
+  accelerator: 'cuda' | 'integrated' | 'cpu'
   gpu_name: string | null
   gpu_vram_gb: number | null
   recommended_preset: string

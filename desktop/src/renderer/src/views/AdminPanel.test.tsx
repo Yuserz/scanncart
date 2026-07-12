@@ -47,6 +47,7 @@ function makeDeps(
       cpu_count: 8,
       ram_gb: 16,
       cuda_available: false,
+      accelerator: 'cpu' as const,
       gpu_name: null,
       gpu_vram_gb: null,
       recommended_preset: 'mid_range'
@@ -161,5 +162,45 @@ describe('AdminPanel', () => {
 
     // Auto-retry succeeds without any user action.
     await waitFor(() => expect(screen.getByLabelText(/Model/i)).toBeInTheDocument())
+  })
+
+  it('labels a CUDA machine as GPU-acceleration-available', async () => {
+    const { deps } = makeDeps('idle', {
+      getSystemInfo: vi.fn(async () => ({
+        cpu_count: 8,
+        ram_gb: 16,
+        cuda_available: true,
+        accelerator: 'cuda' as const,
+        gpu_name: 'NVIDIA GeForce RTX 4060',
+        gpu_vram_gb: 8,
+        recommended_preset: 'high_end'
+      }))
+    })
+    render(<AdminPanel port={8765} deps={deps} />)
+    await waitFor(() =>
+      expect(screen.getByTestId('hardware-info')).toHaveTextContent(
+        /NVIDIA GeForce RTX 4060.*GPU acceleration available/
+      )
+    )
+  })
+
+  it('labels an integrated GPU as APU without CUDA', async () => {
+    const { deps } = makeDeps('idle', {
+      getSystemInfo: vi.fn(async () => ({
+        cpu_count: 8,
+        ram_gb: 16,
+        cuda_available: false,
+        accelerator: 'integrated' as const,
+        gpu_name: 'AMD Radeon(TM) Graphics',
+        gpu_vram_gb: null,
+        recommended_preset: 'low_end'
+      }))
+    })
+    render(<AdminPanel port={8765} deps={deps} />)
+    await waitFor(() =>
+      expect(screen.getByTestId('hardware-info')).toHaveTextContent(
+        /Integrated graphics: AMD Radeon\(TM\) Graphics \(APU\)/
+      )
+    )
   })
 })
