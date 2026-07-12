@@ -1,0 +1,145 @@
+.admin-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 16px;
+  color: #e8e8e8;
+  max-width: 720px;
+}
+
+.admin-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.admin-header .state {
+  font-size: 12px;
+  opacity: 0.7;
+  text-transform: uppercase;
+}
+
+.admin-hardware ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 13px;
+  opacity: 0.9;
+}
+
+.preset-cards {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.preset-card {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  padding: 12px;
+  flex: 1 1 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.preset-card.recommended {
+  border-color: #38d39f;
+}
+
+.preset-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.preset-card p {
+  font-size: 12px;
+  opacity: 0.8;
+  flex: 1;
+}
+
+.badge {
+  font-size: 10px;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.badge.live {
+  background: rgba(56, 211, 159, 0.2);
+  color: #38d39f;
+}
+
+.badge.restart {
+  background: rgba(255, 176, 32, 0.2);
+  color: #ffb020;
+}
+
+.admin-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.admin-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.admin-field-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.admin-field input,
+.admin-field select {
+  padding: 4px 8px;
+  max-width: 260px;
+}
+
+.field-hint {
+  font-size: 12px;
+  opacity: 0.65;
+  margin: 0;
+}
+
+.admin-warnings {
+  list-style: disc;
+  margin: 0;
+  padding-left: 20px;
+  font-size: 12px;
+  color: #ffb020;
+}
+
+.admin-warning {
+  font-size: 12px;
+  color: #ffb020;
+  margin: 0;
+}
+
+.admin-error {
+  font-size: 12px;
+  color: #ff6b6b;
+  margin: 0;
+}
+
+.admin-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.admin-actions button {
+  padding: 6px 18px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.admin-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

@@ -2,6 +2,7 @@ import numpy as np
 from fastapi.testclient import TestClient
 from app.main import build_app, AppState
 from app.schemas import Detection
+from app.settings import Settings
 
 
 class _StubSource:
@@ -31,6 +32,7 @@ class _StubDetector:
 
 def _make_client():
     state = AppState(
+        settings=Settings(),
         source_factory=lambda settings: _StubSource(),
         detector_factory=lambda settings, device: _StubDetector(),
         db_path=":memory:",
@@ -53,6 +55,17 @@ def test_start_then_stop_transitions_state():
     assert client.post("/api/capture/start").json()["state"] == "running"
     assert client.get("/api/health").json()["state"] == "running"
     assert client.post("/api/capture/stop").json()["state"] == "idle"
+
+
+def test_cross_origin_requests_get_cors_headers():
+    # The renderer's origin (Vite dev server port, or a packaged app's
+    # file:// origin) never matches this server's http://127.0.0.1:<port>
+    # origin, so without CORS headers the browser blocks the renderer from
+    # reading the response body even though the request succeeds server-side.
+    client, _ = _make_client()
+    r = client.get("/api/settings", headers={"Origin": "http://localhost:5173"})
+    assert r.status_code == 200
+    assert r.headers["access-control-allow-origin"] == "*"
 
 
 def test_websocket_receives_a_frame_after_start():

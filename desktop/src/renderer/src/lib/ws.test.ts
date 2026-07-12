@@ -18,6 +18,7 @@ class FakeWS {
     this.readyState = 3
     this.onclose?.()
   }
+  // eslint-disable-next-line @typescript-eslint/no-empty-function -- intentional no-op stub
   send(): void {}
   // --- test helpers ---
   emitOpen(): void {

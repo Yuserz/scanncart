@@ -26,9 +26,7 @@ describe('boxToPixels', () => {
 
 describe('layoutDetections', () => {
   it('produces pixel rects with class + confidence labels', () => {
-    const dets: Detection[] = [
-      { track_id: 3, cls: 'banana', conf: 0.912, box: [0, 0, 0.5, 0.5] }
-    ]
+    const dets: Detection[] = [{ track_id: 3, cls: 'banana', conf: 0.912, box: [0, 0, 0.5, 0.5] }]
     const rects = layoutDetections(dets, 100, 100)
     expect(rects).toHaveLength(1)
     expect(rects[0]).toMatchObject({ x: 0, y: 0, w: 50, h: 50 })

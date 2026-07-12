@@ -34,7 +34,14 @@ class FakeChild {
   }
 }
 
-function makeSupervisor(overrides = {}) {
+const makeSupervisor = (
+  overrides = {}
+): {
+  sup: SidecarSupervisor
+  child: FakeChild
+  onPort: ReturnType<typeof vi.fn>
+  onExit: ReturnType<typeof vi.fn>
+} => {
   const child = new FakeChild()
   const onPort = vi.fn()
   const onExit = vi.fn()

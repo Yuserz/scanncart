@@ -52,7 +52,6 @@ def _pipe(script, store, clock, expiry=1.5):
         on_message=lambda m: None,
         logging_store=store,
         session_id=42,
-        track_expiry_s=expiry,
         clock=clock,
     )
 
@@ -97,3 +96,30 @@ def test_resolve_open_tracks_flushes_remaining():
     pipe.process_once()
     pipe.resolve_open_tracks()
     assert store.resolved == [(42, 8, 3.0)]
+
+
+def test_track_expiry_s_is_live_reloaded_from_settings():
+    # settings.track_expiry_s is mutated in place mid-run (as a real settings
+    # PATCH would do) — the pipeline must pick it up on the very next frame,
+    # not just at construction time.
+    store, clock = FakeStore(), FakeClock()
+    settings = Settings(track_expiry_s=10.0)
+    seen = [Detection(track_id=5, cls="banana", conf=0.9, box=(0.1, 0.2, 0.3, 0.4))]
+    pipe = Pipeline(
+        ScriptedSource(),
+        ScriptedDetector([seen, [], []]),
+        settings,
+        on_message=lambda m: None,
+        logging_store=store,
+        session_id=42,
+        clock=clock,
+    )
+    clock.t = 0.0
+    pipe.process_once()          # track 5 seen at t=0
+    settings.track_expiry_s = 1.0   # shrink expiry in place after construction
+    clock.t = 0.5
+    pipe.process_once()          # 0.5s gap < new 1.0s expiry → not yet resolved
+    assert store.resolved == []
+    clock.t = 2.0
+    pipe.process_once()          # 2.0s gap > new 1.0s expiry → resolved
+    assert store.resolved == [(42, 5, 0.0)]

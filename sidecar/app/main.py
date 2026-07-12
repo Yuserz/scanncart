@@ -2,10 +2,30 @@ import asyncio
 import queue
 from dataclasses import dataclass, field
 from typing import Callable
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from app.settings import Settings, resolve_device
+from app.settings_store import (
+    HOT_RELOADABLE_FIELDS,
+    RESTART_REQUIRED_FIELDS,
+    compute_warnings,
+    load_settings,
+    save_settings,
+)
+from app.hardware import probe_hardware
+from app.presets import PRESETS, recommend_preset
 from app.pipeline import Pipeline
-from app.schemas import HealthResponse, LogEvent, LogsResponse
+from app.schemas import (
+    ApplyPresetRequest,
+    HealthResponse,
+    LogEvent,
+    LogsResponse,
+    PresetInfo,
+    PresetsResponse,
+    SettingsResponse,
+    SettingsUpdateRequest,
+    SystemInfoResponse,
+)
 from app.camera import CameraCapture
 from app.inference import YoloDetector
 from app.logging_store import LoggingStore
@@ -72,7 +92,8 @@ class WSManager:
 
 @dataclass
 class AppState:
-    settings: Settings = field(default_factory=Settings)
+    settings: Settings | None = None
+    settings_path: str = "data/settings.json"
     source_factory: Callable = _default_source_factory
     detector_factory: Callable = _default_detector_factory
     ws_manager: WSManager = field(default_factory=WSManager)
@@ -84,14 +105,60 @@ class AppState:
     session_id: int | None = None
 
     def __post_init__(self):
+        if self.settings is None:
+            self.settings = load_settings(self.settings_path)
         if not self.device:
             self.device = resolve_device(self.settings.device)
         if self.logging_store is None:
             self.logging_store = LoggingStore(self.db_path)
 
 
+def _settings_response(state: "AppState") -> SettingsResponse:
+    return SettingsResponse(
+        active_model=state.settings.active_model,
+        camera_index=state.settings.camera_index,
+        capture_width=state.settings.capture_width,
+        capture_height=state.settings.capture_height,
+        capture_fps=state.settings.capture_fps,
+        conf_threshold=state.settings.conf_threshold,
+        infer_frame_skip=state.settings.infer_frame_skip,
+        device=state.settings.device,
+        preview_height=state.settings.preview_height,
+        track_expiry_s=state.settings.track_expiry_s,
+        hot_reloadable_fields=sorted(HOT_RELOADABLE_FIELDS),
+        restart_required_fields=sorted(RESTART_REQUIRED_FIELDS),
+        warnings=compute_warnings(state.settings, state.state),
+    )
+
+
+def _apply_settings_patch(state: "AppState", patch: dict) -> SettingsResponse:
+    if state.state == "running":
+        locked = set(patch) & RESTART_REQUIRED_FIELDS
+        if locked:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot change {sorted(locked)} while capture is running; stop capture first.",
+            )
+    for key, value in patch.items():
+        setattr(state.settings, key, value)
+    if "device" in patch:
+        state.device = resolve_device(state.settings.device)
+    save_settings(state.settings, state.settings_path)
+    return _settings_response(state)
+
+
 def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
     app = FastAPI(title="SCANnCART Sidecar")
+    # The renderer's origin varies by mode (Vite dev server port, or a
+    # packaged app's file:// origin) and this server only ever binds to
+    # 127.0.0.1 as a locally-spawned child process, so allow any origin
+    # rather than hand-tracking renderer origins here.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     state = state_factory()
 
     @app.get("/api/health", response_model=HealthResponse)
@@ -101,6 +168,44 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
             active_model=state.settings.active_model,
             device=state.device,
         )
+
+    @app.get("/api/settings", response_model=SettingsResponse)
+    async def get_settings():
+        return _settings_response(state)
+
+    @app.patch("/api/settings", response_model=SettingsResponse)
+    async def update_settings(body: SettingsUpdateRequest):
+        patch = body.model_dump(exclude_none=True)
+        return _apply_settings_patch(state, patch)
+
+    @app.get("/api/system-info", response_model=SystemInfoResponse)
+    async def system_info():
+        hw = probe_hardware()
+        return SystemInfoResponse(
+            cpu_count=hw.cpu_count,
+            ram_gb=hw.ram_gb,
+            cuda_available=hw.cuda_available,
+            gpu_name=hw.gpu_name,
+            gpu_vram_gb=hw.gpu_vram_gb,
+            recommended_preset=recommend_preset(hw),
+        )
+
+    @app.get("/api/presets", response_model=PresetsResponse)
+    async def presets():
+        return PresetsResponse(
+            presets=[
+                PresetInfo(name=p.name, label=p.label, description=p.description, settings=p.settings)
+                for p in PRESETS.values()
+            ],
+            recommended=recommend_preset(probe_hardware()),
+        )
+
+    @app.post("/api/settings/preset", response_model=SettingsResponse)
+    async def apply_preset(body: ApplyPresetRequest):
+        preset = PRESETS.get(body.name)
+        if preset is None:
+            raise HTTPException(status_code=404, detail=f"Unknown preset: {body.name}")
+        return _apply_settings_patch(state, preset.settings)
 
     @app.post("/api/capture/start")
     async def start():
@@ -117,7 +222,6 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
                 on_message=state.ws_manager.submit,
                 logging_store=state.logging_store,
                 session_id=state.session_id,
-                track_expiry_s=state.settings.track_expiry_s,
             )
             state.pipeline.start()
             state.state = "running"

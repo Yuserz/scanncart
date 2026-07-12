@@ -27,7 +27,6 @@ class Pipeline:
         on_message: Callable[[dict], None],
         logging_store=None,
         session_id=None,
-        track_expiry_s: float = 1.5,
         clock: Callable[[], float] = time.time,
     ):
         self._source = source
@@ -36,7 +35,6 @@ class Pipeline:
         self._on_message = on_message
         self._logging_store = logging_store
         self._session_id = session_id
-        self._track_expiry_s = track_expiry_s
         self._clock = clock
         self._open: dict[int, float] = {}   # track_id -> last-seen timestamp
         self._thread = None
@@ -93,7 +91,7 @@ class Pipeline:
             )
             self._open[d.track_id] = now
         for track_id, last_seen in list(self._open.items()):
-            if now - last_seen > self._track_expiry_s:
+            if now - last_seen > self._settings.track_expiry_s:
                 self._logging_store.resolve_left(self._session_id, track_id, last_seen)
                 del self._open[track_id]
 

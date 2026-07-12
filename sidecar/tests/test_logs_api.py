@@ -2,6 +2,7 @@ import numpy as np
 from fastapi.testclient import TestClient
 from app.main import build_app, AppState
 from app.schemas import Detection
+from app.settings import Settings
 
 
 class _StubSource:
@@ -29,6 +30,7 @@ class _StubDetector:
 
 def _client():
     state = AppState(
+        settings=Settings(),
         source_factory=lambda s: _StubSource(),
         detector_factory=lambda s, d: _StubDetector(),
         db_path=":memory:",

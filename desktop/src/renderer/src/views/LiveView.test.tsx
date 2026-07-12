@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { render, screen, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { LiveView } from './LiveView'
+import type { StreamDeps } from '../hooks/useSidecarStream'
 import type { StreamClientOptions, FrameMessage } from '../lib/ws'
 
 function frameWith(dets: FrameMessage['detections']): FrameMessage {
@@ -15,7 +16,12 @@ function frameWith(dets: FrameMessage['detections']): FrameMessage {
   }
 }
 
-function makeHarness() {
+const makeHarness = (): {
+  deps: StreamDeps
+  opts: () => StreamClientOptions
+  start: ReturnType<typeof vi.fn>
+  stop: ReturnType<typeof vi.fn>
+} => {
   let captured: StreamClientOptions | null = null
   const start = vi.fn(async () => ({ state: 'running' }))
   const stop = vi.fn(async () => ({ state: 'idle' }))
@@ -24,7 +30,12 @@ function makeHarness() {
       health: vi.fn(),
       start,
       stop,
-      getLogs: vi.fn(async () => ({ session_id: null, events: [] }))
+      getLogs: vi.fn(async () => ({ session_id: null, events: [] })),
+      getSettings: vi.fn(),
+      updateSettings: vi.fn(),
+      getSystemInfo: vi.fn(),
+      getPresets: vi.fn(),
+      applyPreset: vi.fn()
     }),
     streamFactory: (opts: StreamClientOptions) => {
       captured = opts
@@ -54,7 +65,14 @@ describe('LiveView', () => {
   it('does not add a duplicate item-log row for a repeated track_id', () => {
     const h = makeHarness()
     render(<LiveView port={1} deps={h.deps} />)
-    const det = [{ track_id: 7, cls: 'apple', conf: 0.8, box: [0, 0, 0.5, 0.5] as [number, number, number, number] }]
+    const det = [
+      {
+        track_id: 7,
+        cls: 'apple',
+        conf: 0.8,
+        box: [0, 0, 0.5, 0.5] as [number, number, number, number]
+      }
+    ]
     act(() => {
       h.opts().onFrame?.(frameWith(det))
       h.opts().onFrame?.(frameWith(det))

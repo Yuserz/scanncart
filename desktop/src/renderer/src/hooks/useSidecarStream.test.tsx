@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
-import { useSidecarStream } from './useSidecarStream'
+import { useSidecarStream, type StreamDeps } from './useSidecarStream'
 import type { StreamClientOptions, FrameMessage } from '../lib/ws'
 import type { LogsResponse } from '../lib/api'
 
@@ -15,7 +15,14 @@ function frameWith(dets: FrameMessage['detections']): FrameMessage {
   }
 }
 
-function makeDeps(logs: LogsResponse) {
+const makeDeps = (
+  logs: LogsResponse
+): {
+  deps: StreamDeps
+  opts: () => StreamClientOptions
+  start: ReturnType<typeof vi.fn>
+  stop: ReturnType<typeof vi.fn>
+} => {
   let opts: StreamClientOptions | null = null
   const start = vi.fn(async () => ({ state: 'running' }))
   const stop = vi.fn(async () => ({ state: 'idle' }))
@@ -24,7 +31,12 @@ function makeDeps(logs: LogsResponse) {
       health: vi.fn(),
       start,
       stop,
-      getLogs: vi.fn(async () => logs)
+      getLogs: vi.fn(async () => logs),
+      getSettings: vi.fn(),
+      updateSettings: vi.fn(),
+      getSystemInfo: vi.fn(),
+      getPresets: vi.fn(),
+      applyPreset: vi.fn()
     }),
     streamFactory: (o: StreamClientOptions) => {
       opts = o
@@ -97,9 +109,7 @@ describe('useSidecarStream reconciliation', () => {
 
     // A live frame for a new track appends.
     act(() =>
-      opts().onFrame?.(
-        frameWith([{ track_id: 8, cls: 'apple', conf: 0.7, box: [0, 0, 0.5, 0.5] }])
-      )
+      opts().onFrame?.(frameWith([{ track_id: 8, cls: 'apple', conf: 0.7, box: [0, 0, 0.5, 0.5] }]))
     )
     expect(result.current.items).toHaveLength(2)
   })

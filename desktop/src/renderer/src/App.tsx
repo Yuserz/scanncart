@@ -1,5 +1,5 @@
 import { useEffect, useState, type JSX } from 'react'
-import { LiveView } from './views/LiveView'
+import { AppShell } from './components/AppShell'
 
 export interface AppProps {
   // Injectable for tests; defaults to the preload bridge.
@@ -37,7 +37,7 @@ function App({ getPort, pollMs = 500 }: AppProps = {}): JSX.Element {
   if (port == null) {
     return <div className="app-waiting">Starting sidecar…</div>
   }
-  return <LiveView port={port} />
+  return <AppShell port={port} />
 }
 
 export default App

@@ -71,7 +71,12 @@ export function useSidecarStream(port: number, deps: StreamDeps = {}): SidecarSt
         for (const e of res.events) {
           if (seenRef.current.has(e.track_id)) continue
           seenRef.current.add(e.track_id)
-          seeded.push({ track_id: e.track_id, cls: e.class_name, conf: e.max_conf, ts: e.entered_at })
+          seeded.push({
+            track_id: e.track_id,
+            cls: e.class_name,
+            conf: e.max_conf,
+            ts: e.entered_at
+          })
         }
         if (seeded.length > 0) setItems((prev) => [...prev, ...seeded])
       } catch {
@@ -108,7 +113,7 @@ export function useSidecarStream(port: number, deps: StreamDeps = {}): SidecarSt
       cancelled = true
       client.close()
     }
-  }, [port, apiFactory, streamFactory])
+  }, [port, apiFactory, streamFactory, setStatus])
 
   const start = useCallback(async (): Promise<void> => {
     seenRef.current = new Set()

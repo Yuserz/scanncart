@@ -76,4 +76,74 @@ describe('createApiClient', () => {
     expect(url).toBe('http://127.0.0.1:8765/api/logs')
     expect(init?.method ?? 'GET').toBe('GET')
   })
+
+  it('getSettings() GETs /api/settings and returns parsed JSON', async () => {
+    mockFetchOnce({
+      active_model: 'yolo11n.pt',
+      camera_index: 0,
+      capture_width: 1280,
+      capture_height: 720,
+      capture_fps: 60,
+      conf_threshold: 0.5,
+      infer_frame_skip: 0,
+      device: 'auto',
+      preview_height: 720,
+      track_expiry_s: 1.5,
+      hot_reloadable_fields: ['infer_frame_skip'],
+      restart_required_fields: ['active_model'],
+      warnings: []
+    })
+    const api = createApiClient(8765)
+    const r = await api.getSettings()
+    expect(r.active_model).toBe('yolo11n.pt')
+    const [url, init] = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(url).toBe('http://127.0.0.1:8765/api/settings')
+    expect(init?.method ?? 'GET').toBe('GET')
+  })
+
+  it('updateSettings() PATCHes /api/settings with a JSON body', async () => {
+    mockFetchOnce({ infer_frame_skip: 2 })
+    const api = createApiClient(8765)
+    await api.updateSettings({ infer_frame_skip: 2 })
+    const [url, init] = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(url).toBe('http://127.0.0.1:8765/api/settings')
+    expect(init?.method).toBe('PATCH')
+    expect(init?.headers).toMatchObject({ 'Content-Type': 'application/json' })
+    expect(JSON.parse(init?.body as string)).toEqual({ infer_frame_skip: 2 })
+  })
+
+  it('getSystemInfo() GETs /api/system-info', async () => {
+    mockFetchOnce({
+      cpu_count: 8,
+      ram_gb: 16,
+      cuda_available: false,
+      gpu_name: null,
+      gpu_vram_gb: null,
+      recommended_preset: 'mid_range'
+    })
+    const api = createApiClient(8765)
+    const r = await api.getSystemInfo()
+    expect(r.recommended_preset).toBe('mid_range')
+    const [url] = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(url).toBe('http://127.0.0.1:8765/api/system-info')
+  })
+
+  it('getPresets() GETs /api/presets', async () => {
+    mockFetchOnce({ presets: [], recommended: 'low_end' })
+    const api = createApiClient(8765)
+    const r = await api.getPresets()
+    expect(r.recommended).toBe('low_end')
+    const [url] = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(url).toBe('http://127.0.0.1:8765/api/presets')
+  })
+
+  it('applyPreset() POSTs /api/settings/preset with the preset name', async () => {
+    mockFetchOnce({ active_model: 'yolo11s.pt' })
+    const api = createApiClient(8765)
+    await api.applyPreset('mid_range')
+    const [url, init] = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(url).toBe('http://127.0.0.1:8765/api/settings/preset')
+    expect(init?.method).toBe('POST')
+    expect(JSON.parse(init?.body as string)).toEqual({ name: 'mid_range' })
+  })
 })

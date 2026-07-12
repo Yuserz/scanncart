@@ -8,7 +8,9 @@ class NoopWS {
   onmessage: (() => void) | null = null
   onclose: (() => void) | null = null
   onerror: (() => void) | null = null
+  // eslint-disable-next-line @typescript-eslint/no-empty-function -- intentional no-op stub
   close(): void {}
+  // eslint-disable-next-line @typescript-eslint/no-empty-function -- intentional no-op stub
   send(): void {}
 }
 
