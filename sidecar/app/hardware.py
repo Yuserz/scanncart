@@ -34,6 +34,7 @@ def _list_display_adapters() -> list[str]:
             capture_output=True,
             text=True,
             timeout=10,
+            creationflags=subprocess.CREATE_NO_WINDOW,
         )
         return [line.strip() for line in out.stdout.splitlines() if line.strip()]
     except Exception:

@@ -3,6 +3,7 @@ import queue
 from dataclasses import dataclass, field
 from typing import Callable
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from app.settings import Settings, resolve_device
 from app.settings_store import (
@@ -12,7 +13,7 @@ from app.settings_store import (
     load_settings,
     save_settings,
 )
-from app.hardware import probe_hardware
+from app.hardware import HardwareInfo, probe_hardware
 from app.presets import PRESETS, recommend_preset
 from app.pipeline import Pipeline
 from app.schemas import (
@@ -103,6 +104,7 @@ class AppState:
     db_path: str = "data/scanncart.db"
     logging_store: LoggingStore | None = None
     session_id: int | None = None
+    hardware_info: HardwareInfo | None = None
 
     def __post_init__(self):
         if self.settings is None:
@@ -161,6 +163,11 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
     )
     state = state_factory()
 
+    async def _get_hardware() -> HardwareInfo:
+        if state.hardware_info is None:
+            state.hardware_info = await run_in_threadpool(probe_hardware)
+        return state.hardware_info
+
     @app.get("/api/health", response_model=HealthResponse)
     async def health():
         return HealthResponse(
@@ -180,7 +187,7 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
 
     @app.get("/api/system-info", response_model=SystemInfoResponse)
     async def system_info():
-        hw = probe_hardware()
+        hw = await _get_hardware()
         return SystemInfoResponse(
             cpu_count=hw.cpu_count,
             ram_gb=hw.ram_gb,
@@ -193,12 +200,13 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
 
     @app.get("/api/presets", response_model=PresetsResponse)
     async def presets():
+        hw = await _get_hardware()
         return PresetsResponse(
             presets=[
                 PresetInfo(name=p.name, label=p.label, description=p.description, settings=p.settings)
                 for p in PRESETS.values()
             ],
-            recommended=recommend_preset(probe_hardware()),
+            recommended=recommend_preset(hw),
         )
 
     @app.post("/api/settings/preset", response_model=SettingsResponse)

@@ -160,7 +160,7 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
             return (
               <div className="admin-field" key={field.key}>
                 <div className="admin-field-label">
-                  <label htmlFor={field.key}>{field.label}</label>
+                  <span className="admin-field-labeltext">{field.label}</span>
                   <span className={`badge ${isRestartField ? 'restart' : 'live'}`}>
                     {isRestartField ? 'restart required' : 'live'}
                   </span>

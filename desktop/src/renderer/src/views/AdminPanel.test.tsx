@@ -232,6 +232,28 @@ describe('AdminPanel', () => {
     await waitFor(() => expect(api.updateSettings).toHaveBeenCalledWith({ device: 'cpu' }))
   })
 
+  it('device toggle: back-compat stored device "cuda" shows as GPU on a CUDA machine', async () => {
+    const { deps } = makeDeps('idle', {
+      getSystemInfo: vi.fn(async () => ({
+        cpu_count: 8,
+        ram_gb: 16,
+        cuda_available: true,
+        accelerator: 'cuda' as const,
+        gpu_name: 'NVIDIA GeForce RTX 4060',
+        gpu_vram_gb: 8,
+        recommended_preset: 'high_end'
+      })),
+      getSettings: vi.fn(async () => baseSettings({ device: 'cuda' }))
+    })
+    render(<AdminPanel port={8765} deps={deps} />)
+
+    const gpu = await screen.findByLabelText(/GPU \(recommended\)/i)
+    const cpu = screen.getByLabelText(/CPU only/i)
+    expect(gpu).toBeChecked()
+    expect(gpu).toBeEnabled()
+    expect(cpu).not.toBeChecked()
+  })
+
   it('device toggle: GPU is disabled and CPU forced when no CUDA GPU', async () => {
     const { deps } = makeDeps('idle', {
       getSystemInfo: vi.fn(async () => ({
