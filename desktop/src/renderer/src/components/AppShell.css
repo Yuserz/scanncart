@@ -1,25 +1,29 @@
 .app-shell {
   display: flex;
   flex-direction: column;
+  background: var(--bg);
+  min-height: 100vh;
 }
 
 .app-nav {
   display: flex;
   gap: 4px;
   padding: 8px 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid var(--border);
 }
 
 .app-nav button {
   padding: 6px 14px;
   background: transparent;
-  border: 1px solid transparent;
-  color: rgba(255, 255, 255, 0.7);
+  border: none;
+  border-radius: 6px;
+  color: var(--dim);
   cursor: pointer;
   font-weight: 600;
+  font-size: 13px;
 }
 
 .app-nav button.active {
-  color: #e8e8e8;
-  border-color: #38d39f;
+  color: var(--text);
+  background: var(--panel);
 }
