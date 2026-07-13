@@ -114,3 +114,20 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
     step: 0.5
   }
 ]
+
+export interface FieldGroup {
+  label: string
+  keys: (keyof SettingsPayload)[]
+}
+
+export const SETTINGS_GROUPS: FieldGroup[] = [
+  { label: 'Model & Device', keys: ['active_model', 'device'] },
+  {
+    label: 'Camera & Capture',
+    keys: ['camera_index', 'capture_width', 'capture_height', 'capture_fps', 'preview_height']
+  },
+  {
+    label: 'Detection & Tracking',
+    keys: ['conf_threshold', 'infer_frame_skip', 'track_expiry_s']
+  }
+]
