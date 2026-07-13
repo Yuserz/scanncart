@@ -147,23 +147,19 @@
   gap: 10px 8px;
 }
 
-.stat-tile {
-  font-family: var(--font-mono);
-}
-
 .stat-tile b {
   display: block;
   font-size: 20px;
   font-weight: 600;
   color: var(--text);
   letter-spacing: -0.01em;
+  font-family: var(--font-mono);
 }
 
 .stat-tile small {
   color: var(--dim);
   font-size: 11px;
   font-weight: 500;
-  font-family: initial;
 }
 
 .log-card {
