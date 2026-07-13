@@ -5,6 +5,9 @@
   padding: 16px;
   color: var(--text);
   background: var(--bg);
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .live-toolbar {

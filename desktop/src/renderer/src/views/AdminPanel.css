@@ -7,6 +7,9 @@
   background: var(--bg);
   max-width: 760px;
   font-size: 13px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .admin-header {
