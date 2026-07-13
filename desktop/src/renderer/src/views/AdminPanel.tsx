@@ -6,7 +6,7 @@ import type {
   SettingsUpdate,
   SystemInfoResponse
 } from '../lib/api'
-import { SETTINGS_FIELDS } from '../lib/settingsFields'
+import { SETTINGS_FIELDS, SETTINGS_GROUPS, type FieldMeta } from '../lib/settingsFields'
 import './AdminPanel.css'
 
 export interface AdminPanelProps {
@@ -114,6 +114,93 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
     await restoreDefaults()
   }
 
+  const renderField = (field: FieldMeta): JSX.Element => {
+    const isRestartField = settings.restart_required_fields.includes(field.key)
+    const value = valueOf(field.key)
+
+    if (field.key === 'device') {
+      const gpuAvailable = systemInfo?.accelerator === 'cuda'
+      const isCpu = value === 'cpu' || !gpuAvailable
+      return (
+        <div className="admin-field" key={field.key}>
+          <div className="admin-field-label">
+            <span className="admin-field-labeltext">{field.label}</span>
+            <span className={`badge ${isRestartField ? 'restart' : 'live'}`}>
+              {isRestartField ? 'restart required' : 'live'}
+            </span>
+          </div>
+          <div className="device-toggle" data-testid="device-toggle">
+            <label>
+              <input
+                type="radio"
+                name="device"
+                value="gpu"
+                checked={!isCpu}
+                disabled={!gpuAvailable}
+                onChange={() => setField('device', 'auto')}
+              />
+              GPU (recommended)
+            </label>
+            <label>
+              <input
+                type="radio"
+                name="device"
+                value="cpu"
+                checked={isCpu}
+                onChange={() => setField('device', 'cpu')}
+              />
+              CPU only
+            </label>
+          </div>
+          {!gpuAvailable && (
+            <p className="field-hint" data-testid="device-gpu-note">
+              No CUDA GPU on this machine — integrated/APU can&apos;t accelerate; running on CPU.
+            </p>
+          )}
+          <p className="field-hint">{field.hint}</p>
+        </div>
+      )
+    }
+
+    return (
+      <div className="admin-field" key={field.key}>
+        <div className="admin-field-label">
+          <label htmlFor={field.key}>{field.label}</label>
+          <span className={`badge ${isRestartField ? 'restart' : 'live'}`}>
+            {isRestartField ? 'restart required' : 'live'}
+          </span>
+        </div>
+        {field.type === 'select' ? (
+          <select
+            id={field.key}
+            value={String(value)}
+            onChange={(e) => setField(field.key, e.target.value)}
+          >
+            {field.options?.map((opt) => (
+              <option key={opt} value={opt}>
+                {opt}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <input
+            id={field.key}
+            type="number"
+            value={value}
+            min={field.min}
+            max={field.max}
+            step={field.step}
+            onChange={(e) => {
+              const n = e.target.valueAsNumber
+              if (!Number.isNaN(n)) setField(field.key, n)
+            }}
+          />
+        )}
+        <p className="field-hint">{field.hint}</p>
+      </div>
+    )
+  }
+
   return (
     <div className="admin-panel">
       <header className="admin-header">
@@ -124,20 +211,18 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
       </header>
 
       <section className="admin-hardware" data-testid="hardware-info">
-        <h3>This machine</h3>
         {systemInfo ? (
-          <ul>
-            <li>CPU cores: {systemInfo.cpu_count}</li>
-            <li>RAM: {systemInfo.ram_gb.toFixed(1)} GB</li>
-            <li>GPU: {describeGpu(systemInfo)}</li>
-          </ul>
+          <>
+            <span>CPU cores: {systemInfo.cpu_count}</span>
+            <span>RAM: {systemInfo.ram_gb.toFixed(1)} GB</span>
+            <span>GPU: {describeGpu(systemInfo)}</span>
+          </>
         ) : (
-          <p>Detecting hardware…</p>
+          <span>Detecting hardware…</span>
         )}
       </section>
 
       <section className="admin-presets">
-        <h3>Presets</h3>
         <div className="preset-cards">
           {presets.map((p) => (
             <div
@@ -147,7 +232,7 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
               <div className="preset-card-header">
                 <strong>{p.label}</strong>
                 {p.name === recommended && (
-                  <span className="badge">Recommended for this machine</span>
+                  <span className="badge accent">Recommended for this machine</span>
                 )}
               </div>
               <p>{p.description}</p>
@@ -164,94 +249,19 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
         {running && <p className="admin-warning">Stop capture to apply a preset.</p>}
       </section>
 
-      <section className="admin-form">
-        <h3>Settings</h3>
-        {SETTINGS_FIELDS.map((field) => {
-          const isRestartField = settings.restart_required_fields.includes(field.key)
-          const value = valueOf(field.key)
-          if (field.key === 'device') {
-            const gpuAvailable = systemInfo?.accelerator === 'cuda'
-            const isCpu = value === 'cpu' || !gpuAvailable
-            return (
-              <div className="admin-field" key={field.key}>
-                <div className="admin-field-label">
-                  <span className="admin-field-labeltext">{field.label}</span>
-                  <span className={`badge ${isRestartField ? 'restart' : 'live'}`}>
-                    {isRestartField ? 'restart required' : 'live'}
-                  </span>
-                </div>
-                <div className="device-toggle" data-testid="device-toggle">
-                  <label>
-                    <input
-                      type="radio"
-                      name="device"
-                      value="gpu"
-                      checked={!isCpu}
-                      disabled={!gpuAvailable}
-                      onChange={() => setField('device', 'auto')}
-                    />
-                    GPU (recommended)
-                  </label>
-                  <label>
-                    <input
-                      type="radio"
-                      name="device"
-                      value="cpu"
-                      checked={isCpu}
-                      onChange={() => setField('device', 'cpu')}
-                    />
-                    CPU only
-                  </label>
-                </div>
-                {!gpuAvailable && (
-                  <p className="field-hint" data-testid="device-gpu-note">
-                    No CUDA GPU on this machine — integrated/APU can&apos;t accelerate; running on
-                    CPU.
-                  </p>
-                )}
-                <p className="field-hint">{field.hint}</p>
-              </div>
-            )
-          }
-          return (
-            <div className="admin-field" key={field.key}>
-              <div className="admin-field-label">
-                <label htmlFor={field.key}>{field.label}</label>
-                <span className={`badge ${isRestartField ? 'restart' : 'live'}`}>
-                  {isRestartField ? 'restart required' : 'live'}
-                </span>
-              </div>
-              {field.type === 'select' ? (
-                <select
-                  id={field.key}
-                  value={String(value)}
-                  onChange={(e) => setField(field.key, e.target.value)}
-                >
-                  {field.options?.map((opt) => (
-                    <option key={opt} value={opt}>
-                      {opt}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  id={field.key}
-                  type="number"
-                  value={value}
-                  min={field.min}
-                  max={field.max}
-                  step={field.step}
-                  onChange={(e) => {
-                    const n = e.target.valueAsNumber
-                    if (!Number.isNaN(n)) setField(field.key, n)
-                  }}
-                />
-              )}
-              <p className="field-hint">{field.hint}</p>
+      <div className="admin-groups">
+        {SETTINGS_GROUPS.map((group) => (
+          <section className="admin-group" key={group.label}>
+            <h4>{group.label}</h4>
+            <div className="admin-grid">
+              {group.keys.map((key) => {
+                const field = SETTINGS_FIELDS.find((f) => f.key === key)
+                return field ? renderField(field) : null
+              })}
             </div>
-          )
-        })}
-      </section>
+          </section>
+        ))}
+      </div>
 
       {settings.warnings.length > 0 && (
         <ul className="admin-warnings" data-testid="server-warnings">
@@ -275,6 +285,7 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
 
       <div className="admin-actions">
         <button
+          className="btn-primary"
           disabled={!canSave || saving}
           onClick={() => void handleSave()}
           data-testid="save-settings"
@@ -282,6 +293,7 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
           Save
         </button>
         <button
+          className="btn-outline"
           disabled={running || saving}
           onClick={() => void handleRestoreDefaults()}
           data-testid="restore-defaults"

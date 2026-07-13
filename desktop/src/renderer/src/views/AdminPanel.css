@@ -1,10 +1,12 @@
 .admin-panel {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 16px;
   padding: 16px;
-  color: #e8e8e8;
-  max-width: 720px;
+  color: var(--text);
+  background: var(--bg);
+  max-width: 760px;
+  font-size: 13px;
 }
 
 .admin-header {
@@ -13,38 +15,53 @@
   gap: 12px;
 }
 
-.admin-header .state {
-  font-size: 12px;
-  opacity: 0.7;
-  text-transform: uppercase;
+.admin-header h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
 }
 
-.admin-hardware ul {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  font-size: 13px;
-  opacity: 0.9;
+.admin-header .state {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--dim);
+  background: rgba(255, 255, 255, 0.05);
+  padding: 3px 9px;
+  border-radius: 20px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.admin-hardware {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--dim);
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
 }
 
 .preset-cards {
   display: flex;
-  gap: 12px;
+  gap: 10px;
   flex-wrap: wrap;
 }
 
 .preset-card {
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 6px;
-  padding: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
   flex: 1 1 200px;
   display: flex;
   flex-direction: column;
   gap: 6px;
+  position: relative;
 }
 
 .preset-card.recommended {
-  border-color: #38d39f;
+  border-color: var(--accent);
 }
 
 .preset-card-header {
@@ -54,58 +71,130 @@
   flex-wrap: wrap;
 }
 
+.preset-card-header strong {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
 .preset-card p {
-  font-size: 12px;
-  opacity: 0.8;
+  font-size: 11px;
+  color: var(--dim);
   flex: 1;
 }
 
+.preset-card button {
+  align-self: flex-start;
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 5px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.preset-card button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .badge {
-  font-size: 10px;
+  font-size: 9px;
+  font-weight: 700;
   text-transform: uppercase;
+  letter-spacing: 0.04em;
   padding: 2px 6px;
-  border-radius: 3px;
+  border-radius: 4px;
   background: rgba(255, 255, 255, 0.1);
+  color: var(--dim);
 }
 
 .badge.live {
-  background: rgba(56, 211, 159, 0.2);
-  color: #38d39f;
+  background: var(--accent);
+  color: var(--accent-ink);
 }
 
 .badge.restart {
-  background: rgba(255, 176, 32, 0.2);
-  color: #ffb020;
+  background: rgba(255, 100, 100, 0.15);
+  color: #ffb4b4;
 }
 
-.admin-form {
+.badge.accent {
+  background: var(--accent);
+  color: var(--accent-ink);
+  position: absolute;
+  top: -8px;
+  right: 10px;
+}
+
+.admin-groups {
   display: flex;
   flex-direction: column;
   gap: 14px;
 }
 
+.admin-group {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+
+.admin-group h4 {
+  margin: 0 0 12px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--dim);
+  font-weight: 600;
+}
+
+.admin-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px 20px;
+}
+
 .admin-field {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 5px;
 }
 
 .admin-field-label {
   display: flex;
+  justify-content: space-between;
   align-items: center;
-  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 500;
 }
 
 .admin-field input,
 .admin-field select {
-  padding: 4px 8px;
-  max-width: 260px;
+  width: 100%;
+  box-sizing: border-box;
+  background: #0e1114;
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+
+.device-toggle {
+  display: flex;
+  gap: 14px;
+  font-size: 12.5px;
 }
 
 .field-hint {
-  font-size: 12px;
-  opacity: 0.65;
+  font-size: 10.5px;
+  color: var(--dim);
+  font-style: italic;
   margin: 0;
+  line-height: 1.3;
 }
 
 .admin-warnings {
@@ -130,16 +219,30 @@
 
 .admin-actions {
   display: flex;
-  gap: 12px;
+  gap: 10px;
 }
 
 .admin-actions button {
-  padding: 6px 18px;
+  padding: 8px 16px;
   font-weight: 600;
+  font-size: 12.5px;
+  border-radius: 6px;
   cursor: pointer;
 }
 
 .admin-actions button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.admin-actions .btn-primary {
+  background: var(--accent);
+  border: none;
+  color: var(--accent-ink);
+}
+
+.admin-actions .btn-outline {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--dim);
 }
