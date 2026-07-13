@@ -25,7 +25,7 @@
   font-size: 11px;
   font-weight: 600;
   color: var(--dim);
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--state-pill-bg);
   padding: 3px 9px;
   border-radius: 20px;
   text-transform: uppercase;
@@ -116,8 +116,8 @@
 }
 
 .badge.restart {
-  background: rgba(255, 100, 100, 0.15);
-  color: #ffb4b4;
+  background: var(--badge-restart-bg);
+  color: var(--badge-restart-fg);
 }
 
 .badge.accent {
@@ -174,7 +174,7 @@
 .admin-field select {
   width: 100%;
   box-sizing: border-box;
-  background: #0e1114;
+  background: var(--input-bg);
   border: 1px solid var(--border);
   color: var(--text);
   padding: 6px 8px;

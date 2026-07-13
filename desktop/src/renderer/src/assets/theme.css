@@ -15,6 +15,10 @@
     'SF Mono',
     Consolas,
     monospace;
+  --state-pill-bg: rgba(255, 255, 255, 0.05);
+  --badge-restart-bg: rgba(255, 100, 100, 0.15);
+  --badge-restart-fg: #ffb4b4;
+  --input-bg: #0e1114;
 }
 
 .card {
