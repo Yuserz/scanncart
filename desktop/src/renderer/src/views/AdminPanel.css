@@ -203,6 +203,10 @@
   line-height: 1.3;
 }
 
+.field-hint.experimental {
+  color: #ffb020;
+}
+
 .admin-warnings {
   list-style: disc;
   margin: 0;

@@ -86,3 +86,19 @@ def test_compute_warnings_low_frame_skip_no_expiry_warning():
     settings = Settings(infer_frame_skip=0, capture_fps=60, track_expiry_s=1.5)
     warnings = compute_warnings(settings, "idle")
     assert not any("infer_frame_skip" in w for w in warnings)
+
+
+def test_compute_warnings_experimental_model():
+    warnings = compute_warnings(Settings(active_model="yolo26n.pt"), "idle")
+    assert any("experimental" in w for w in warnings)
+
+
+def test_compute_warnings_supported_model_no_experimental_warning():
+    warnings = compute_warnings(Settings(), "idle")
+    assert not any("experimental" in w for w in warnings)
+
+
+def test_save_then_load_round_trips_experimental_model(tmp_path):
+    path = tmp_path / "settings.json"
+    save_settings(Settings(active_model="yolo26m.pt"), str(path))
+    assert load_settings(str(path)).active_model == "yolo26m.pt"

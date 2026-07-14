@@ -276,6 +276,27 @@ describe('AdminPanel', () => {
     expect(cpu).not.toBeChecked()
   })
 
+  it('yolo26 options are labeled experimental and show a hardware spec hint when selected', async () => {
+    const { deps } = makeDeps('idle', {
+      getSettings: vi.fn(async () => baseSettings({ active_model: 'yolo26n.pt' }))
+    })
+    render(<AdminPanel port={8765} deps={deps} />)
+
+    const model = await screen.findByLabelText(/Model/i)
+    expect(model).toHaveValue('yolo26n.pt')
+    expect(screen.getByRole('option', { name: 'yolo26n.pt (experimental)' })).toBeInTheDocument()
+    expect(screen.getByTestId('model-spec-hint')).toHaveTextContent(/CPU|GPU/)
+  })
+
+  it('supported yolo11 models get no experimental spec hint', async () => {
+    const { deps } = makeDeps('idle')
+    render(<AdminPanel port={8765} deps={deps} />)
+
+    await screen.findByLabelText(/Model/i)
+    expect(screen.getByRole('option', { name: 'yolo11n.pt' })).toBeInTheDocument()
+    expect(screen.queryByTestId('model-spec-hint')).not.toBeInTheDocument()
+  })
+
   it('device toggle: GPU is disabled and CPU forced when no CUDA GPU', async () => {
     const { deps } = makeDeps('idle', {
       getSystemInfo: vi.fn(async () => ({

@@ -6,7 +6,13 @@ import type {
   SettingsUpdate,
   SystemInfoResponse
 } from '../lib/api'
-import { SETTINGS_FIELDS, SETTINGS_GROUPS, type FieldMeta } from '../lib/settingsFields'
+import {
+  EXPERIMENTAL_MODELS,
+  MODEL_SPEC_HINTS,
+  SETTINGS_FIELDS,
+  SETTINGS_GROUPS,
+  type FieldMeta
+} from '../lib/settingsFields'
 import './AdminPanel.css'
 
 export interface AdminPanelProps {
@@ -178,7 +184,7 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
           >
             {field.options?.map((opt) => (
               <option key={opt} value={opt}>
-                {opt}
+                {EXPERIMENTAL_MODELS.includes(opt) ? `${opt} (experimental)` : opt}
               </option>
             ))}
           </select>
@@ -195,6 +201,11 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
               if (!Number.isNaN(n)) setField(field.key, n)
             }}
           />
+        )}
+        {field.key === 'active_model' && MODEL_SPEC_HINTS[String(value)] && (
+          <p className="field-hint experimental" data-testid="model-spec-hint">
+            {MODEL_SPEC_HINTS[String(value)]}
+          </p>
         )}
         <p className="field-hint">{field.hint}</p>
       </div>

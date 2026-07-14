@@ -178,3 +178,10 @@ def test_apply_unknown_preset_returns_404(tmp_path):
     client, _ = _make_client(tmp_path)
     r = client.post("/api/settings/preset", json={"name": "nonexistent"})
     assert r.status_code == 404
+
+
+def test_patch_experimental_yolo26_model_is_accepted(tmp_path):
+    client, state = _make_client(tmp_path)
+    r = client.patch("/api/settings", json={"active_model": "yolo26n.pt"})
+    assert r.status_code == 200
+    assert state.settings.active_model == "yolo26n.pt"

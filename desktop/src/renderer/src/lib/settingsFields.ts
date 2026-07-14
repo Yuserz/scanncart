@@ -10,9 +10,28 @@ export const ALLOWED_MODELS = [
   'yolo11s.pt',
   'yolo11m.pt',
   'yolo11l.pt',
-  'yolo11x.pt'
+  'yolo11x.pt',
+  'yolo26n.pt',
+  'yolo26s.pt',
+  'yolo26m.pt'
 ] as const
 export const ALLOWED_DEVICES = ['auto', 'cpu', 'cuda'] as const
+
+// YOLO26 is offered as an experimental lane: the detector loads it fine, but
+// presets and tuning guidance are calibrated for YOLO11. Mirrors the
+// sidecar's EXPERIMENTAL_MODELS set.
+export const EXPERIMENTAL_MODELS: readonly string[] = ['yolo26n.pt', 'yolo26s.pt', 'yolo26m.pt']
+
+// Per-model hardware guidance shown under the Model field while an
+// experimental model is selected.
+export const MODEL_SPEC_HINTS: Record<string, string> = {
+  'yolo26n.pt':
+    'Experimental — lightest YOLO26. Needs roughly yolo11n-class hardware: a modern 4-core CPU and 8 GB RAM. Its NMS-free design typically runs faster than yolo11n on CPU. Weights auto-download on first capture start (internet needed once).',
+  'yolo26s.pt':
+    'Experimental — needs a strong CPU (8+ cores) or an entry CUDA GPU (≥2 GB VRAM) to hold ~30 fps. Weights auto-download on first capture start (internet needed once).',
+  'yolo26m.pt':
+    'Experimental — needs a discrete CUDA GPU (≥4 GB VRAM); CPU-only machines will fall behind in real time. Weights auto-download on first capture start (internet needed once).'
+}
 
 export interface FieldMeta {
   key: keyof SettingsPayload

@@ -8,7 +8,18 @@ from app.settings import Settings
 
 DEFAULT_SETTINGS_PATH = "data/settings.json"
 
-ALLOWED_MODELS = {"yolo11n.pt", "yolo11s.pt", "yolo11m.pt", "yolo11l.pt", "yolo11x.pt"}
+# YOLO26 is an experimental lane: YoloDetector loads it fine (ultralytics
+# >= 8.4), but presets and tuning guidance are calibrated for YOLO11, so
+# selecting one surfaces a soft warning via compute_warnings(). Mirrored by
+# hand in desktop settingsFields.ts (EXPERIMENTAL_MODELS / MODEL_SPEC_HINTS).
+EXPERIMENTAL_MODELS = {"yolo26n.pt", "yolo26s.pt", "yolo26m.pt"}
+ALLOWED_MODELS = {
+    "yolo11n.pt",
+    "yolo11s.pt",
+    "yolo11m.pt",
+    "yolo11l.pt",
+    "yolo11x.pt",
+} | EXPERIMENTAL_MODELS
 ALLOWED_DEVICES = {"auto", "cpu", "cuda"}
 
 # Fields the running Pipeline re-reads from `settings` every frame/track update,
@@ -90,6 +101,13 @@ def save_settings(settings: Settings, path: str = DEFAULT_SETTINGS_PATH) -> None
 
 def compute_warnings(settings: Settings, state: str) -> list[str]:
     warnings: list[str] = []
+    if settings.active_model in EXPERIMENTAL_MODELS:
+        warnings.append(
+            f"{settings.active_model} is experimental: presets and tuning guidance "
+            "are calibrated for YOLO11. Requires ultralytics >= 8.4 in the sidecar "
+            "environment; weights auto-download on the first capture start (needs "
+            "internet once)."
+        )
     if state == "running":
         locked = ", ".join(sorted(RESTART_REQUIRED_FIELDS))
         warnings.append(f"Capture is running — {locked} require stopping capture first.")

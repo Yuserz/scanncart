@@ -1,6 +1,6 @@
 fastapi>=0.139
 uvicorn[standard]>=0.51
-ultralytics>=8.3
+ultralytics>=8.4
 opencv-python-headless>=5.0
 numpy>=2.5
 pydantic>=2.13
