@@ -15,6 +15,13 @@
   overflow-y: auto;
 }
 
+.admin-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
 .admin-header {
   display: flex;
   align-items: center;

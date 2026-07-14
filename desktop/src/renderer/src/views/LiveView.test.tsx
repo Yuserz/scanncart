@@ -110,4 +110,28 @@ describe('LiveView', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Start' }))
     expect(h.start).toHaveBeenCalledTimes(1)
   })
+
+  it('shows a loading state while start() is in flight, then clears it', async () => {
+    const h = makeHarness()
+    let resolveStart!: (v: { state: string }) => void
+    h.start.mockImplementation(() => new Promise<{ state: string }>((res) => (resolveStart = res)))
+    render(<LiveView port={1} deps={h.deps} />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Start' }))
+
+    // In flight: button disabled and spinning, placeholder explains the model load.
+    const button = screen.getByRole('button', { name: 'Start' })
+    expect(button).toBeDisabled()
+    expect(button).toHaveTextContent(/Starting…/)
+    expect(screen.getByTestId('preview-placeholder')).toHaveTextContent(/Loading model/)
+    expect(screen.getByTestId('preview-placeholder')).toHaveTextContent(/downloads its weights/)
+
+    await act(async () => {
+      resolveStart({ state: 'running' })
+    })
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeEnabled()
+    // Running but no frame yet: waiting-for-frames copy with a spinner.
+    expect(screen.getByTestId('preview-placeholder')).toHaveTextContent(/Waiting for frames/)
+    expect(screen.getByTestId('preview-placeholder').querySelector('.spinner')).not.toBeNull()
+  })
 })

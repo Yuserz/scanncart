@@ -1,5 +1,7 @@
 import { useEffect, useState, type JSX } from 'react'
 import { AppShell } from './components/AppShell'
+import { Spinner } from './components/Spinner'
+import './App.css'
 
 export interface AppProps {
   // Injectable for tests; defaults to the preload bridge.
@@ -35,7 +37,13 @@ function App({ getPort, pollMs = 500 }: AppProps = {}): JSX.Element {
   }, [pollMs])
 
   if (port == null) {
-    return <div className="app-waiting">Starting sidecar…</div>
+    return (
+      <div className="app-waiting">
+        <Spinner size={28} />
+        <p>Starting sidecar…</p>
+        <small>loading Python runtime and model libraries</small>
+      </div>
+    )
   }
   return <AppShell port={port} />
 }

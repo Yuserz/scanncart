@@ -1,6 +1,7 @@
 import { useState, type CSSProperties, type JSX } from 'react'
 import { useSidecarStream, type StreamDeps } from '../hooks/useSidecarStream'
 import { boxToPercent } from '../lib/overlay'
+import { Spinner } from '../components/Spinner'
 import './LiveView.css'
 
 export interface LiveViewProps {
@@ -20,6 +21,19 @@ export function LiveView({ port, deps }: LiveViewProps): JSX.Element {
   const previewStyle: CSSProperties | undefined = frameSize
     ? ({ '--preview-w': `${frameSize.w}`, '--preview-h': `${frameSize.h}` } as CSSProperties)
     : undefined
+  // Purely presentational: start/stop block on the sidecar (model load,
+  // possibly a one-time weight download), so surface that wait in the UI.
+  const [pending, setPending] = useState<'start' | 'stop' | null>(null)
+
+  const handleToggle = async (): Promise<void> => {
+    const action = running ? stop : start
+    setPending(running ? 'stop' : 'start')
+    try {
+      await action()
+    } finally {
+      setPending(null)
+    }
+  }
 
   return (
     <div className="live-view">
@@ -33,10 +47,20 @@ export function LiveView({ port, deps }: LiveViewProps): JSX.Element {
         </span>
         <button
           className={running ? 'btn-stop' : 'btn-start'}
-          onClick={running ? stop : start}
+          onClick={() => void handleToggle()}
+          disabled={pending !== null}
           aria-label={running ? 'Stop' : 'Start'}
         >
-          {running ? 'Stop' : 'Start'}
+          {pending !== null ? (
+            <>
+              <Spinner size={12} />
+              {pending === 'start' ? 'Starting…' : 'Stopping…'}
+            </>
+          ) : running ? (
+            'Stop'
+          ) : (
+            'Start'
+          )}
         </button>
       </div>
 
@@ -56,7 +80,22 @@ export function LiveView({ port, deps }: LiveViewProps): JSX.Element {
                 }}
               />
             ) : (
-              <div className="preview-placeholder">Waiting for frames…</div>
+              <div className="preview-placeholder" data-testid="preview-placeholder">
+                {pending === 'start' ? (
+                  <>
+                    <Spinner size={22} />
+                    <span>Loading model…</span>
+                    <small>first use of a model downloads its weights (one time)</small>
+                  </>
+                ) : running ? (
+                  <>
+                    <Spinner size={22} />
+                    <span>Waiting for frames…</span>
+                  </>
+                ) : (
+                  'Waiting for frames…'
+                )}
+              </div>
             )}
             <div className="overlay" data-testid="overlay">
               {frame?.detections

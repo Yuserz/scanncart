@@ -276,6 +276,16 @@ describe('AdminPanel', () => {
     expect(cpu).not.toBeChecked()
   })
 
+  it('shows a spinner while settings are loading', () => {
+    const { deps } = makeDeps('idle', {
+      getSettings: vi.fn(() => new Promise<never>(() => {})) // never resolves
+    })
+    const { container } = render(<AdminPanel port={8765} deps={deps} />)
+
+    expect(screen.getByText(/Loading settings/i)).toBeInTheDocument()
+    expect(container.querySelector('.spinner')).not.toBeNull()
+  })
+
   it('yolo26 options are labeled experimental and show a hardware spec hint when selected', async () => {
     const { deps } = makeDeps('idle', {
       getSettings: vi.fn(async () => baseSettings({ active_model: 'yolo26n.pt' }))

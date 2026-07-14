@@ -13,6 +13,7 @@ import {
   SETTINGS_GROUPS,
   type FieldMeta
 } from '../lib/settingsFields'
+import { Spinner } from '../components/Spinner'
 import './AdminPanel.css'
 
 export interface AdminPanelProps {
@@ -69,7 +70,9 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
   if (loading && !settings) {
     return (
       <div className="admin-panel">
-        <p>Loading settings…</p>
+        <p className="admin-loading">
+          <Spinner /> Loading settings…
+        </p>
       </div>
     )
   }

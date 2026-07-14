@@ -55,6 +55,14 @@
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.live-toolbar button:disabled {
+  opacity: 0.7;
+  cursor: default;
 }
 
 .live-toolbar .btn-stop {
@@ -120,11 +128,19 @@
 
 .preview-placeholder {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 10px;
   width: 100%;
   height: 100%;
   color: var(--dim);
+}
+
+.preview-placeholder small {
+  font-size: 11px;
+  color: var(--dim);
+  opacity: 0.75;
 }
 
 .overlay {
