@@ -8,6 +8,10 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  max-width: 1600px;
+  width: 100%;
+  margin: 0 auto;
+  box-sizing: border-box;
 }
 
 .live-toolbar {
@@ -62,6 +66,12 @@
 .live-body {
   display: flex;
   gap: 14px;
+}
+
+@media (max-width: 900px) {
+  .live-body {
+    flex-direction: column;
+  }
 }
 
 .feed-col {
@@ -131,6 +141,13 @@
   gap: 12px;
 }
 
+@media (max-width: 900px) {
+  .side-rail {
+    min-width: 0;
+    width: 100%;
+  }
+}
+
 .side-rail .card {
   padding: 12px 14px;
 }
@@ -146,7 +163,7 @@
 
 .stats-strip {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
   gap: 10px 8px;
 }
 
