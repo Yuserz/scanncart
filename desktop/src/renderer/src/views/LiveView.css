@@ -72,6 +72,18 @@
   .live-body {
     flex-direction: column;
   }
+
+  /* feed-col's flex:2/side-rail's flex:1 are a width ratio for the row
+     layout above. In column mode the same values would apply as a
+     vertical grow ratio instead: feed-col would claim 2x the leftover
+     height even though its box is height-locked by aspect-ratio, leaving
+     that claimed space as blank padding (indistinguishable from the
+     video's own black background). Reset both to their natural content
+     height when stacked. */
+  .feed-col,
+  .side-rail {
+    flex: none;
+  }
 }
 
 .feed-col {
