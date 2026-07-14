@@ -65,50 +65,48 @@
 
 .live-body {
   display: flex;
-  gap: 14px;
+  gap: var(--body-gap);
+  /* Claim all window height left under the toolbar so the preview and
+     side rail can grow into it instead of leaving dead space below.
+     Size container: the preview wrapper sizes itself against this box
+     with cqw/cqh units. */
+  flex: 1;
+  min-height: 0;
+  container-type: size;
+  --body-gap: 14px;
+  --rail-min: 230px;
 }
 
-@media (max-width: 900px) {
-  .live-body {
-    flex-direction: column;
-  }
-
-  /* feed-col's flex:2/side-rail's flex:1 are a width ratio for the row
-     layout above. In column mode the same values would apply as a
-     vertical grow ratio instead: feed-col would claim 2x the leftover
-     height even though its box is height-locked by aspect-ratio, leaving
-     that claimed space as blank padding (indistinguishable from the
-     video's own black background). Reset both to their natural content
-     height when stacked. */
-  .feed-col,
-  .side-rail {
-    flex: none;
-  }
-}
-
+/* Hugs the preview wrapper's computed size; the side rail (flex: 1)
+   takes all remaining width. Flex centering splits any leftover height
+   around the preview (video-player letterbox) instead of stacking it
+   below. */
 .feed-col {
-  flex: 2;
+  flex: none;
   min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
 }
 
-/* Wrapper has no fixed aspect-ratio of its own -- it's a plain block box
-   (position:relative for the overlay) that hugs whatever its content
-   actually renders at. preview-img is width:100%/height:auto, so the
-   wrapper's height comes from the IMAGE's true intrinsic aspect ratio
-   (whatever capture_width/capture_height the sidecar is actually
-   configured with), not a hardcoded guess -- a non-16:9 capture
-   resolution (e.g. the 640x480 "common mode" the sidecar itself
-   recognizes) renders undistorted instead of being force-stretched into
-   a 16:9 box. The overlay (inset:0) still lines up 1:1 with the image at
-   any window size because it's sized off the wrapper, and the wrapper's
-   box IS the image's box (position:absolute children don't contribute to
-   a block's auto-height, so only preview-img/preview-placeholder do).
-   preview-placeholder has its own aspect-ratio for the idle state only,
-   since there's no real frame yet to derive a ratio from. */
+/* The wrapper is the largest box with the frame's own aspect ratio that
+   fits the body: width is capped by the body width left after reserving
+   the side rail's minimum (100cqw - rail - gap) and by the width implied
+   by the full body height (100cqh * ratio); height then follows from
+   aspect-ratio. --preview-w/--preview-h are the decoded frame's real
+   dimensions, set inline from the img's onLoad (LiveView state), so a
+   non-16:9 capture resolution renders undistorted -- 16/9 is only the
+   idle-placeholder fallback. The overlay (inset:0) stays 1:1 with the
+   image at any window size because the img fills the wrapper exactly
+   (width/height 100% of a box that already has the img's ratio), so the
+   wrapper's box IS the image's box. */
 .preview-wrapper {
   position: relative;
-  width: 100%;
-  max-width: 1280px;
+  aspect-ratio: calc(var(--preview-w, 16) / var(--preview-h, 9));
+  width: min(
+    calc(100cqw - var(--rail-min) - var(--body-gap)),
+    calc(100cqh * var(--preview-w, 16) / var(--preview-h, 9))
+  );
   background: #000;
   border-radius: 8px;
   overflow: hidden;
@@ -117,7 +115,7 @@
 .preview-img {
   display: block;
   width: 100%;
-  height: auto;
+  height: 100%;
 }
 
 .preview-placeholder {
@@ -125,7 +123,7 @@
   align-items: center;
   justify-content: center;
   width: 100%;
-  aspect-ratio: 16 / 9;
+  height: 100%;
   color: var(--dim);
 }
 
@@ -154,17 +152,11 @@
 
 .side-rail {
   flex: 1;
-  min-width: 230px;
+  min-width: var(--rail-min);
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 12px;
-}
-
-@media (max-width: 900px) {
-  .side-rail {
-    min-width: 0;
-    width: 100%;
-  }
 }
 
 .side-rail .card {
@@ -205,6 +197,7 @@
   display: flex;
   flex-direction: column;
   flex: 1;
+  min-height: 0;
 }
 
 .log-count {
@@ -218,7 +211,8 @@
   list-style: none;
   margin: 0;
   padding: 0;
-  max-height: 200px;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -238,4 +232,49 @@
   font-size: 11px;
   font-weight: 600;
   color: var(--accent);
+}
+
+/* Stacked (narrow) layout. Kept as ONE block at the end of the file: these
+   overrides share specificity with the base rules above, so source order is
+   what makes them win inside the media query -- don't move them earlier. */
+@media (max-width: 900px) {
+  .live-body {
+    flex-direction: column;
+    /* Stacked mode keeps natural content height (live-view scrolls);
+       there is no height budget to distribute vertically. container-type:
+       size would collapse the now content-driven height to 0 -- revert. */
+    flex: none;
+    container-type: normal;
+  }
+
+  /* feed-col's flex:2/side-rail's flex:1 are a width ratio for the row
+     layout above. In column mode the same values would apply as a
+     vertical grow ratio instead, claiming leftover height as blank
+     padding. Reset both to their natural content height when stacked. */
+  .feed-col,
+  .side-rail {
+    flex: none;
+  }
+
+  /* Plain block in stacked mode; the wrapper goes width-driven
+     (aspect-ratio still supplies the height). */
+  .feed-col {
+    display: block;
+  }
+
+  .preview-wrapper {
+    width: 100%;
+  }
+
+  .side-rail {
+    min-width: 0;
+    width: 100%;
+  }
+
+  /* No height budget in stacked mode -- cap the log so it scrolls
+     instead of growing the page unboundedly. */
+  .item-log {
+    flex: none;
+    max-height: 200px;
+  }
 }

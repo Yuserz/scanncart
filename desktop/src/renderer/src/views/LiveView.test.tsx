@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, act } from '@testing-library/react'
+import { render, screen, act, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { LiveView } from './LiveView'
 import type { StreamDeps } from '../hooks/useSidecarStream'
@@ -81,6 +81,27 @@ describe('LiveView', () => {
       h.opts().onFrame?.(frameWith(det))
     })
     expect(screen.getByTestId('item-log').querySelectorAll('li')).toHaveLength(1)
+  })
+
+  it('sets the preview aspect ratio from the loaded frame dimensions', () => {
+    const h = makeHarness()
+    render(<LiveView port={1} deps={h.deps} />)
+    const wrapper = screen.getByTestId('preview-wrapper')
+    // no frame loaded yet: no override, CSS falls back to its 16/9 default
+    expect(wrapper.style.getPropertyValue('--preview-w')).toBe('')
+    expect(wrapper.style.getPropertyValue('--preview-h')).toBe('')
+
+    act(() => {
+      h.opts().onFrame?.(frameWith([]))
+    })
+    const img = screen.getByAltText('live preview') as HTMLImageElement
+    // jsdom reports 0x0 for natural dimensions; define the decoded size
+    Object.defineProperty(img, 'naturalWidth', { value: 640 })
+    Object.defineProperty(img, 'naturalHeight', { value: 480 })
+    fireEvent.load(img)
+
+    expect(wrapper.style.getPropertyValue('--preview-w')).toBe('640')
+    expect(wrapper.style.getPropertyValue('--preview-h')).toBe('480')
   })
 
   it('Start button calls the REST start endpoint', async () => {

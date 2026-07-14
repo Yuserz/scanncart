@@ -37,29 +37,40 @@ CSS-first, with one small JSX touch to learn the frame's real aspect ratio.
    min-height: 0` so it claims the window height left under the toolbar.
    In the `<900px` stacked media query it stays `flex: none` (natural
    height), preserving the existing stacked-layout behavior.
-2. **Preview sizing:** `.preview-wrapper` is sized by an explicit
-   `aspect-ratio` (CSS variable, see 3) constrained by both `max-width: 100%`
-   and `max-height: 100%` inside a flex `feed-col` (`min-width: 0;
-   min-height: 0`). The browser resolves the largest box that fits both
-   constraints at that ratio. `preview-img` becomes `width: 100%;
-   height: 100%` filling the wrapper — the wrapper box *is* the image box, so
-   the `inset: 0` overlay stays aligned exactly as today. The `max-width:
-   1280px` cap is dropped: the preview may upscale beyond the JPEG's encoded
-   size on large windows; acceptable for a live preview.
-3. **Real aspect ratio, not hardcoded:** the wrapper's `aspect-ratio` comes
-   from a CSS variable (e.g. `--preview-ar`) set from the rendered image's
+2. **Preview sizing:** `.live-body` becomes a size container
+   (`container-type: size`) and `.preview-wrapper` computes its own width in
+   container-query units: `min(100cqw - rail-min - gap, 100cqh * ratio)` —
+   the largest box at the frame's aspect ratio that fits the body height
+   while reserving the side rail's minimum width (`--rail-min: 230px`,
+   `--body-gap: 14px`, shared with `.side-rail`'s `min-width`). Height
+   follows from `aspect-ratio`. `feed-col` drops its fixed `flex: 2` and
+   hugs the wrapper (`flex: none`); the side rail (`flex: 1`) takes all
+   remaining width. `preview-img` becomes `width: 100%; height: 100%`
+   filling the wrapper — the wrapper box *is* the image box, so the
+   `inset: 0` overlay stays aligned exactly as today. The `max-width:
+   1280px` cap is dropped (the preview may upscale beyond the JPEG's encoded
+   size; acceptable for a live preview); `.live-view`'s existing 1600px
+   page cap still applies.
+3. **Real aspect ratio, not hardcoded:** the ratio comes from two CSS
+   variables (`--preview-w`/`--preview-h`) set from the rendered image's
    `naturalWidth`/`naturalHeight` in the img's `onLoad` handler (React state
    in `LiveView`, inline style on the wrapper). Until the first frame loads
-   (idle placeholder), it defaults to `16 / 9` — same as today's
+   (idle placeholder), they default to `16`/`9` — same as today's
    placeholder-only fallback.
-4. **Letterboxing:** when the window shape doesn't match the frame's ratio,
-   the leftover space in `feed-col` is split around the preview
-   (`justify-content: center; align-items: center` on the flex `feed-col`),
+4. **Letterboxing:** when the preview is width-limited, the leftover height
+   in `feed-col` is split above/below the preview (`align-items: center`),
    giving a deliberate video-player look instead of a dead slab below.
 5. **Side rail:** `.item-log` drops `max-height: 200px` in favor of
    `flex: 1; min-height: 0` inside the already-`flex: 1` `.log-card`, so the
    log fills the rail's remaining height and scrolls internally. In stacked
    mode the 200px cap is kept (the rail has no height budget to fill there).
+6. **Media-query ordering:** all stacked-mode (`<900px`) overrides live in a
+   single `@media` block at the *end* of `LiveView.css`. They share
+   specificity with the base rules, so source order is what makes them win —
+   the file previously interleaved media blocks before base rules, which
+   silently disabled some overrides. Stacked mode also reverts
+   `container-type` to `normal` (size containment would collapse the
+   content-driven height to 0).
 
 ## Testing
 

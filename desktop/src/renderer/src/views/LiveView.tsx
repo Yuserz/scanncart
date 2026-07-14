@@ -1,4 +1,4 @@
-import { type JSX } from 'react'
+import { useState, type CSSProperties, type JSX } from 'react'
 import { useSidecarStream, type StreamDeps } from '../hooks/useSidecarStream'
 import { boxToPercent } from '../lib/overlay'
 import './LiveView.css'
@@ -13,6 +13,13 @@ export function LiveView({ port, deps }: LiveViewProps): JSX.Element {
   const running = statusState === 'running'
   const stats = frame?.stats
   const trackedCount = frame?.detections.length ?? 0
+  // Real decoded frame size, read on img load — drives the wrapper's
+  // aspect-ratio and fit-to-column sizing in CSS (falls back to 16/9
+  // while idle). Same-value updates bail out, so per-frame loads are free.
+  const [frameSize, setFrameSize] = useState<{ w: number; h: number } | null>(null)
+  const previewStyle: CSSProperties | undefined = frameSize
+    ? ({ '--preview-w': `${frameSize.w}`, '--preview-h': `${frameSize.h}` } as CSSProperties)
+    : undefined
 
   return (
     <div className="live-view">
@@ -35,12 +42,18 @@ export function LiveView({ port, deps }: LiveViewProps): JSX.Element {
 
       <div className="live-body">
         <div className="feed-col">
-          <div className="preview-wrapper">
+          <div className="preview-wrapper" data-testid="preview-wrapper" style={previewStyle}>
             {frame ? (
               <img
                 className="preview-img"
                 alt="live preview"
                 src={`data:image/jpeg;base64,${frame.jpeg}`}
+                onLoad={(e) => {
+                  const { naturalWidth: w, naturalHeight: h } = e.currentTarget
+                  if (w > 0 && h > 0) {
+                    setFrameSize((prev) => (prev && prev.w === w && prev.h === h ? prev : { w, h }))
+                  }
+                }}
               />
             ) : (
               <div className="preview-placeholder">Waiting for frames…</div>
