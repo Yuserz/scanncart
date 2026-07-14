@@ -67,8 +67,14 @@ PRESETS: dict[str, Preset] = {
 
 
 def recommend_preset(hw: HardwareInfo) -> str:
-    if hw.cuda_available and (hw.gpu_vram_gb or 0) >= 4:
+    # hw.ram_gb/hw.gpu_vram_gb are binary GiB (see hardware.py). A genuine
+    # "8GB"/"4GB" machine's OS/driver-visible total is commonly a bit under
+    # the nominal figure after firmware/iGPU/driver reservation, so the
+    # thresholds sit slightly below the marketed round numbers rather than
+    # requiring >= 8 / >= 4 exactly -- otherwise real 8GB/4GB-class hardware
+    # would get bumped down a tier just for having a little reserved memory.
+    if hw.cuda_available and (hw.gpu_vram_gb or 0) >= 3.5:
         return "high_end"
-    if hw.cpu_count >= 6 and hw.ram_gb >= 8:
+    if hw.cpu_count >= 6 and hw.ram_gb >= 7.5:
         return "mid_range"
     return "low_end"
