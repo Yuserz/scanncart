@@ -7,6 +7,25 @@ def test_probe_hardware_reports_positive_cpu_and_ram():
     assert hw.ram_gb > 0
 
 
+def test_ram_gb_uses_binary_gib_not_decimal_gb(monkeypatch):
+    # A "16GB" RAM stick is physically 16 * 1024**3 bytes. Reporting it via
+    # decimal (bytes / 1e9) yields ~17.18 -- the "16GB" a user paid for
+    # shouldn't display as 17GB. OS tools (Task Manager, Settings) report
+    # binary GiB, so we must match: bytes / 1024**3 == 16.0 exactly.
+    import types
+
+    import app.hardware as hardware_module
+
+    fake_total = 16 * 1024**3
+    monkeypatch.setattr(
+        hardware_module.psutil,
+        "virtual_memory",
+        lambda: types.SimpleNamespace(total=fake_total),
+    )
+    hw = probe_hardware(adapter_lister=lambda: [])
+    assert hw.ram_gb == 16.0
+
+
 def test_probe_hardware_falls_back_when_torch_missing(monkeypatch):
     import builtins
 
@@ -41,7 +60,9 @@ def test_probe_hardware_reports_gpu_when_cuda_available(monkeypatch):
     hw = probe_hardware()
     assert hw.cuda_available is True
     assert hw.gpu_name == "Fake GPU 3000"
-    assert hw.gpu_vram_gb is not None and hw.gpu_vram_gb > 0
+    # Same binary-GiB requirement as RAM: an 8GB card is 8 * 1024**3 bytes,
+    # and should report as 8.0, not ~8.59 (decimal GB).
+    assert hw.gpu_vram_gb == 8.0
     assert hw.accelerator == "cuda"
 
 

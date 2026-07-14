@@ -45,7 +45,10 @@ def probe_hardware(
     adapter_lister: Callable[[], list[str]] = _list_display_adapters,
 ) -> HardwareInfo:
     cpu_count = psutil.cpu_count(logical=True) or 1
-    ram_gb = psutil.virtual_memory().total / 1e9
+    # Binary GiB (1024**3), not decimal GB (1e9): RAM/VRAM capacity is sized
+    # and reported by the OS in binary units, so a "16GB" stick is physically
+    # 16 * 1024**3 bytes -- dividing by 1e9 would show it as ~17.18.
+    ram_gb = psutil.virtual_memory().total / 1024**3
 
     try:
         import torch
@@ -58,7 +61,7 @@ def probe_hardware(
                 cuda_available=True,
                 accelerator="cuda",
                 gpu_name=torch.cuda.get_device_name(0),
-                gpu_vram_gb=props.total_memory / 1e9,
+                gpu_vram_gb=props.total_memory / 1024**3,
             )
     except ImportError:
         pass
