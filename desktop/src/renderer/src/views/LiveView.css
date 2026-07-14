@@ -91,18 +91,24 @@
   min-width: 0;
 }
 
-/* Wrapper fills feed-col at a fixed 16:9 aspect ratio and scales with the
-   window instead of shrink-wrapping to the image's intrinsic pixel size (the
-   old inline-block/shrink-wrap approach left a large dead gap on wide windows
-   because the wrapper never grew to match feed-col's flex-allotted width).
-   preview-img/preview-placeholder fill the wrapper exactly (width/height:
-   100%) so the percentage-positioned overlay always lines up with the
-   rendered image 1:1, at any window size. */
+/* Wrapper has no fixed aspect-ratio of its own -- it's a plain block box
+   (position:relative for the overlay) that hugs whatever its content
+   actually renders at. preview-img is width:100%/height:auto, so the
+   wrapper's height comes from the IMAGE's true intrinsic aspect ratio
+   (whatever capture_width/capture_height the sidecar is actually
+   configured with), not a hardcoded guess -- a non-16:9 capture
+   resolution (e.g. the 640x480 "common mode" the sidecar itself
+   recognizes) renders undistorted instead of being force-stretched into
+   a 16:9 box. The overlay (inset:0) still lines up 1:1 with the image at
+   any window size because it's sized off the wrapper, and the wrapper's
+   box IS the image's box (position:absolute children don't contribute to
+   a block's auto-height, so only preview-img/preview-placeholder do).
+   preview-placeholder has its own aspect-ratio for the idle state only,
+   since there's no real frame yet to derive a ratio from. */
 .preview-wrapper {
   position: relative;
   width: 100%;
   max-width: 1280px;
-  aspect-ratio: 16 / 9;
   background: #000;
   border-radius: 8px;
   overflow: hidden;
@@ -111,8 +117,7 @@
 .preview-img {
   display: block;
   width: 100%;
-  height: 100%;
-  object-fit: fill;
+  height: auto;
 }
 
 .preview-placeholder {
@@ -120,7 +125,7 @@
   align-items: center;
   justify-content: center;
   width: 100%;
-  height: 100%;
+  aspect-ratio: 16 / 9;
   color: var(--dim);
 }
 
