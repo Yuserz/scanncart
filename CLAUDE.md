@@ -95,3 +95,13 @@ Standard electron-vite three-target layout: `main` (Node, Electron APIs), `prelo
 - Sidecar tests always use fakes (`FakeFrameSource`, injected detectors/clocks) — never a real camera or GPU. Don't add tests that assume Ultralytics/OpenCV hardware is present.
 - Desktop tests inject `spawnFn`/`wsFactory`/`apiFactory`/`streamFactory` rather than mocking modules — follow that pattern (see `sidecar.test.ts`, `useSidecarStream.test.tsx`) when adding new injectable dependencies.
 - The WS message contract (`FrameMessage`/`StatusMessage`/`Detection`) — and now the settings contract (`SettingsPayload`/allowed models/allowed devices/defaults) — are duplicated by hand between `sidecar/app/schemas.py`+`settings_store.py` (Pydantic/Python) and `desktop/src/renderer/src/lib/api.ts`+`settingsFields.ts`+`settingsDefaults.ts` (TS). There's no shared schema generation, so keep them in sync manually when either protocol changes.
+
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+Rules:
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
