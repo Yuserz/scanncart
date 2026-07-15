@@ -70,6 +70,17 @@ The `loading && !settings` branch gets a spinner next to the existing
   presence; visual check via the app driver once the sidecar can run again
   (currently blocked by the Defender native-DLL issue).
 
+**Verified 2026-07-15 (second machine, no Defender interference — 10/10
+`import torch,cv2,ultralytics` succeeded):** built the app and drove it with
+a throwaway Playwright `_electron` script. Confirmed the boot screen mounts
+past the sidecar-import wait quickly, the Start button shows a disabled
+"Starting…" state with a spinner, the Live preview shows the spinner +
+"Loading model… / first use of a model downloads its weights (one time)"
+placeholder while `/api/capture/start` is in flight, and the Admin panel
+shows the spinner next to "Loading settings…" during the initial fetch.
+(No physical camera on this machine, so capture start itself errors out
+after the model loads — expected and out of scope for this feature.)
+
 ## Non-goals
 
 - No fake progress stages/percentages — the sidecar reports no import or

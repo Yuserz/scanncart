@@ -74,6 +74,15 @@ Decisions already made in discussion:
   by the intermittent Defender native-DLL kill; verify when the sidecar
   starts cleanly.
 
+**Verified 2026-07-15 (second machine, no Defender interference):** drove
+the built app with a throwaway Playwright `_electron` script. The Admin
+panel's Model `<select>` lists all eight options in order —
+`yolo11n/s/m/l/x.pt` followed by `yolo26n/s/m.pt`, each yolo26 entry labeled
+"(experimental)" — confirming the desktop-side option list and label wiring.
+No physical camera on this machine, so the frames-stream leg of the
+end-to-end check (select → save → start → confirm frames) is still
+unverified; only the model-list/label rendering was covered here.
+
 ## Non-goals
 
 - No preset changes, no older YOLO families, no free-form custom `.pt` path
