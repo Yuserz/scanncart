@@ -1,3 +1,4 @@
 .superpowers/
 graphify-out/cache/
 .claude/settings.json
+.claude/skills/run-desktop/shots/
