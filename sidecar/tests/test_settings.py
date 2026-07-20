@@ -8,6 +8,7 @@ def test_settings_defaults():
     assert s.capture_height == 720
     assert s.capture_fps == 60
     assert s.conf_threshold == 0.5
+    assert s.imgsz == 640
     assert s.infer_frame_skip == 0
     assert s.device == "auto"
     assert s.preview_height == 720

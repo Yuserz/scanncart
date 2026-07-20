@@ -59,6 +59,7 @@ class SettingsPayload(BaseModel):
     capture_height: int
     capture_fps: int
     conf_threshold: float
+    imgsz: int
     infer_frame_skip: int
     device: str
     preview_height: int
@@ -78,6 +79,7 @@ class SettingsUpdateRequest(BaseModel):
     capture_height: int | None = Field(default=None, ge=120, le=2160)
     capture_fps: int | None = Field(default=None, ge=1, le=120)
     conf_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    imgsz: int | None = Field(default=None, ge=320, le=1920)
     infer_frame_skip: int | None = Field(default=None, ge=0, le=30)
     device: str | None = None
     preview_height: int | None = Field(default=None, ge=120, le=1080)
@@ -95,6 +97,13 @@ class SettingsUpdateRequest(BaseModel):
     def _validate_device(cls, v: str | None) -> str | None:
         if v is not None and v not in ALLOWED_DEVICES:
             raise ValueError(f"device must be one of {sorted(ALLOWED_DEVICES)}")
+        return v
+
+    @field_validator("imgsz")
+    @classmethod
+    def _validate_imgsz(cls, v: int | None) -> int | None:
+        if v is not None and v % 32 != 0:
+            raise ValueError("imgsz must be a multiple of 32 (the YOLO model stride)")
         return v
 
 

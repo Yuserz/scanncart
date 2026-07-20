@@ -106,6 +106,15 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
     step: 0.05
   },
   {
+    key: 'imgsz',
+    label: 'Inference size (px)',
+    hint: 'Size each frame is scaled to before detection (square, multiple of 32). Bigger sees small and fast-moving items better — the key lever for catching thrown objects — but raises latency. 640 is the default; 960 is a good accuracy step on a discrete GPU.',
+    type: 'number',
+    min: 320,
+    max: 1920,
+    step: 32
+  },
+  {
     key: 'infer_frame_skip',
     label: 'Frame skip',
     hint: "Skip N frames between inferences. Higher means less CPU/GPU load but staler tracking — pair with a larger track expiry so items aren't marked 'left' between inferences.",
@@ -147,6 +156,6 @@ export const SETTINGS_GROUPS: FieldGroup[] = [
   },
   {
     label: 'Detection & Tracking',
-    keys: ['conf_threshold', 'infer_frame_skip', 'track_expiry_s']
+    keys: ['conf_threshold', 'imgsz', 'infer_frame_skip', 'track_expiry_s']
   }
 ]

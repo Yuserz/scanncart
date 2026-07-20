@@ -1,7 +1,13 @@
 import json
 
 from app.settings import Settings
-from app.settings_store import compute_warnings, load_settings, save_settings
+from app.settings_store import (
+    RESTART_REQUIRED_FIELDS,
+    _valid_field,
+    compute_warnings,
+    load_settings,
+    save_settings,
+)
 
 
 def test_load_settings_missing_file_returns_defaults(tmp_path):
@@ -33,6 +39,32 @@ def test_load_settings_falls_back_per_field_on_invalid_value(tmp_path):
     settings = load_settings(str(path))
     assert settings.conf_threshold == 0.5  # invalid -> default, not a crash
     assert settings.active_model == "yolo11m.pt"  # valid field still applied
+
+
+def test_imgsz_is_restart_required():
+    assert "imgsz" in RESTART_REQUIRED_FIELDS
+
+
+def test_valid_field_imgsz_accepts_stride_multiples():
+    assert _valid_field("imgsz", 640)
+    assert _valid_field("imgsz", 960)
+
+
+def test_valid_field_imgsz_rejects_non_stride_and_out_of_range():
+    assert not _valid_field("imgsz", 641)  # not a multiple of 32
+    assert not _valid_field("imgsz", 160)  # below the 320 floor
+    assert not _valid_field("imgsz", 2048)  # above the 1920 ceiling
+    assert not _valid_field("imgsz", 640.0)  # must be an int
+
+
+def test_compute_warnings_high_imgsz():
+    warnings = compute_warnings(Settings(imgsz=1280), "idle")
+    assert any("imgsz above 960" in w for w in warnings)
+
+
+def test_compute_warnings_default_imgsz_no_warning():
+    warnings = compute_warnings(Settings(imgsz=640), "idle")
+    assert not any("imgsz" in w for w in warnings)
 
 
 def test_load_settings_ignores_unknown_keys(tmp_path):

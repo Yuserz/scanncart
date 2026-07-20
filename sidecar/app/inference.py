@@ -36,18 +36,20 @@ class Detector(Protocol):
 
 
 class YoloDetector:
-    def __init__(self, model_path, device, conf, model_factory=None):
+    def __init__(self, model_path, device, conf, imgsz=640, model_factory=None):
         if model_factory is None:
             from ultralytics import YOLO
             model_factory = YOLO
         self._model = model_factory(model_path)
         self._device = device
         self._conf = conf
+        self._imgsz = imgsz
         self.names = self._model.names
 
     def infer(self, frame: np.ndarray) -> list[Detection]:
         results = self._model.track(
-            frame, persist=True, conf=self._conf, device=self._device, verbose=False
+            frame, persist=True, conf=self._conf, imgsz=self._imgsz,
+            device=self._device, verbose=False,
         )
         if not results:
             return []

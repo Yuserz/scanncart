@@ -33,6 +33,7 @@ RESTART_REQUIRED_FIELDS = {
     "capture_height",
     "capture_fps",
     "conf_threshold",
+    "imgsz",
     "device",
 }
 
@@ -56,6 +57,10 @@ def _valid_field(name: str, value: Any) -> bool:
         return isinstance(value, int) and 1 <= value <= 120
     if name == "conf_threshold":
         return isinstance(value, (int, float)) and 0.0 <= value <= 1.0
+    if name == "imgsz":
+        # YOLO requires the inference size to be a multiple of the model stride
+        # (32); ultralytics silently rounds otherwise, so reject up front.
+        return isinstance(value, int) and 320 <= value <= 1920 and value % 32 == 0
     if name == "infer_frame_skip":
         return isinstance(value, int) and 0 <= value <= 30
     if name == "preview_height":
@@ -111,6 +116,12 @@ def compute_warnings(settings: Settings, state: str) -> list[str]:
     if state == "running":
         locked = ", ".join(sorted(RESTART_REQUIRED_FIELDS))
         warnings.append(f"Capture is running — {locked} require stopping capture first.")
+    if settings.imgsz > 960:
+        warnings.append(
+            "imgsz above 960 sharply raises inference latency; small/fast-moving "
+            "objects detect better at higher imgsz, but confirm the live infer fps "
+            "still keeps up after starting capture."
+        )
     if (settings.capture_width, settings.capture_height) not in _COMMON_CAPTURE_MODES:
         warnings.append(
             "Camera may not support the requested resolution; cheap webcams often "

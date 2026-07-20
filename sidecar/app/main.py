@@ -40,7 +40,10 @@ def _default_source_factory(settings: Settings):
 
 
 def _default_detector_factory(settings: Settings, device: str):
-    return YoloDetector(settings.active_model, device=device, conf=settings.conf_threshold)
+    return YoloDetector(
+        settings.active_model, device=device,
+        conf=settings.conf_threshold, imgsz=settings.imgsz,
+    )
 
 
 class WSManager:
@@ -126,6 +129,7 @@ def _settings_response(state: "AppState") -> SettingsResponse:
         capture_height=state.settings.capture_height,
         capture_fps=state.settings.capture_fps,
         conf_threshold=state.settings.conf_threshold,
+        imgsz=state.settings.imgsz,
         infer_frame_skip=state.settings.infer_frame_skip,
         device=state.settings.device,
         preview_height=state.settings.preview_height,

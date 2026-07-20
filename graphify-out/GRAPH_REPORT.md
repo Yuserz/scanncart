@@ -1,16 +1,16 @@
-# Graph Report - scanncart  (2026-07-15)
+# Graph Report - scanncart  (2026-07-20)
 
 ## Corpus Check
-- 88 files · ~46,511 words
+- 90 files · ~48,091 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 744 nodes · 1177 edges · 49 communities (46 shown, 3 thin omitted)
-- Extraction: 83% EXTRACTED · 17% INFERRED · 0% AMBIGUOUS · INFERRED: 205 edges (avg confidence: 0.67)
+- 771 nodes · 1211 edges · 50 communities (47 shown, 3 thin omitted)
+- Extraction: 82% EXTRACTED · 18% INFERRED · 0% AMBIGUOUS · INFERRED: 213 edges (avg confidence: 0.68)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `bf0933f1`
+- Built from commit: `5fb5774c`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -54,9 +54,10 @@
 - index.d.ts
 - tsconfig.json
 - index.ts
+- Run the SCANnCART desktop app
 
 ## God Nodes (most connected - your core abstractions)
-1. `Settings` - 43 edges
+1. `Settings` - 45 edges
 2. `AppState` - 28 edges
 3. `Detection` - 28 edges
 4. `Pipeline` - 24 edges
@@ -82,11 +83,11 @@
 ## Import Cycles
 - None detected.
 
-## Communities (49 total, 3 thin omitted)
+## Communities (50 total, 3 thin omitted)
 
 ### Community 0 - "api.ts"
-Cohesion: 0.08
-Nodes (32): errorMessage(), SettingsDeps, SidecarSettings, baseSettings(), makeDeps(), useSidecarSettings(), ApiClient, createApiClient() (+24 more)
+Cohesion: 0.07
+Nodes (35): AppShell(), AppShellProps, NoopWS, View, errorMessage(), SettingsDeps, SidecarSettings, baseSettings() (+27 more)
 
 ### Community 1 - "devDependencies"
 Cohesion: 0.04
@@ -94,23 +95,23 @@ Nodes (49): devDependencies, electron, electron-builder, @electron-toolkit/eslin
 
 ### Community 2 - "Detection"
 Cohesion: 0.09
-Nodes (27): encode_preview_jpeg(), Pipeline, Detection, ndarray, Detection, FrameMessage, Stats, _frame() (+19 more)
+Nodes (24): encode_preview_jpeg(), Pipeline, Detection, ndarray, Detection, _frame(), FakeClock, FakeStore (+16 more)
 
 ### Community 3 - "useSidecarStream.ts"
-Cohesion: 0.08
-Nodes (23): LoggedItem, SidecarStream, StreamDeps, useSidecarStream(), boxToPercent(), boxToPixels(), LabeledRect, layoutDetections() (+15 more)
+Cohesion: 0.06
+Nodes (28): App(), AppProps, NoopWS, Spinner(), LoggedItem, SidecarStream, StreamDeps, useSidecarStream() (+20 more)
 
 ### Community 4 - "AppState"
-Cohesion: 0.10
-Nodes (26): BaseModel, FastAPI, AppState, build_app(), WSManager, ApplyPresetRequest, HardwareInfo, HealthResponse (+18 more)
+Cohesion: 0.09
+Nodes (28): BaseModel, AppState, build_app(), WSManager, ApplyPresetRequest, FrameMessage, HardwareInfo, HealthResponse (+20 more)
 
 ### Community 5 - "CameraCapture"
 Cohesion: 0.07
-Nodes (19): CameraCapture, FakeFrameSource, FrameSource, LatestFrameBuffer, ndarray, Protocol, Test double that yields the provided frames in order, then None., Owns an OpenCV device and runs a background capture thread. (+11 more)
+Nodes (20): CameraCapture, _default_capture(), FakeFrameSource, FrameSource, LatestFrameBuffer, ndarray, Protocol, Test double that yields the provided frames in order, then None. (+12 more)
 
 ### Community 6 - "Settings"
-Cohesion: 0.12
-Nodes (35): Any, SettingsResponse, _apply_settings_patch(), _settings_response(), resolve_device(), Settings, compute_warnings(), load_settings() (+27 more)
+Cohesion: 0.10
+Nodes (41): Any, FastAPI, SettingsResponse, _apply_settings_patch(), _default_detector_factory(), _settings_response(), resolve_device(), Settings (+33 more)
 
 ### Community 7 - "test_presets.py"
 Cohesion: 0.12
@@ -125,8 +126,8 @@ Cohesion: 0.14
 Nodes (20): _fake_hardware(), _make_client(), _StubDetector, _StubSource, test_apply_preset_while_idle_applies_settings(), test_apply_preset_while_running_is_rejected(), test_apply_unknown_preset_returns_404(), test_get_settings_returns_current_values_and_field_classification() (+12 more)
 
 ### Community 10 - "YoloDetector"
-Cohesion: 0.13
-Nodes (15): _clamp01(), Detector, normalize_detections(), Detection, ndarray, Protocol, YoloDetector, _default_detector_factory() (+7 more)
+Cohesion: 0.14
+Nodes (15): _clamp01(), Detector, normalize_detections(), Detection, ndarray, Protocol, YoloDetector, _FakeBoxes (+7 more)
 
 ### Community 11 - "SidecarSupervisor"
 Cohesion: 0.11
@@ -141,8 +142,8 @@ Cohesion: 0.14
 Nodes (9): EventRow, LoggingStore, Sole SQLite writer for the sidecar. One connection guarded by a lock so     the, _store(), test_current_session_id_none_when_empty(), test_query_events_scoped_to_session_and_ordered(), test_record_detection_inserts_one_row_per_track(), test_resolve_left_sets_left_at_once() (+1 more)
 
 ### Community 14 - "AppShell.tsx"
-Cohesion: 0.13
-Nodes (8): App(), AppProps, NoopWS, AppShell(), AppShellProps, NoopWS, View, Spinner()
+Cohesion: 0.20
+Nodes (6): APP_DIR, { _electron: electron }, electronBin, REPO_ROOT, require, SKILL_DIR
 
 ### Community 15 - "SCANnCART — Hardware-class detection + CPU/GPU choice — Design"
 Cohesion: 0.12
@@ -177,8 +178,8 @@ Cohesion: 0.18
 Nodes (10): Definition of Done (Phase 2), Global constraints, SCANnCART Phase 2 — Electron Shell + Live View Implementation Plan, Stack (from official electron-vite scaffold; tool-picked versions), Task 1 — REST client `src/renderer/src/lib/api.ts`, Task 2 — WebSocket client `src/renderer/src/lib/ws.ts`, Task 3 — Overlay geometry `src/renderer/src/lib/overlay.ts`, Task 4 — LiveView + hook `src/renderer/src/views/LiveView.tsx` + `hooks/useSidecarStream.ts` (+2 more)
 
 ### Community 23 - "Architecture"
-Cohesion: 0.20
-Nodes (8): Architecture, Commands, Desktop (`desktop/src/`), Desktop (Electron + React + TypeScript, in `desktop/`), Sidecar (Python, in `sidecar/`), Sidecar (`sidecar/app/`), Testing conventions, What this is
+Cohesion: 0.18
+Nodes (9): Architecture, Commands, Desktop (`desktop/src/`), Desktop (Electron + React + TypeScript, in `desktop/`), graphify, Sidecar (Python, in `sidecar/`), Sidecar (`sidecar/app/`), Testing conventions (+1 more)
 
 ### Community 24 - "Design"
 Cohesion: 0.20
@@ -228,22 +229,26 @@ Nodes (5): Architecture, Run the full app (manual — needs the StreamCam), SCAN
 Cohesion: 0.50
 Nodes (4): Architecture, For agents, Quick start, SCANnCART
 
+### Community 49 - "Run the SCANnCART desktop app"
+Cohesion: 0.25
+Nodes (7): Build, Gotchas (all actually hit), Prerequisites, Run (agent path), Run (human path), Run the SCANnCART desktop app, UI handles
+
 ## Knowledge Gaps
-- **213 isolated node(s):** `name`, `version`, `description`, `main`, `author` (+208 more)
+- **226 isolated node(s):** `SKILL_DIR`, `REPO_ROOT`, `APP_DIR`, `require`, `{ _electron: electron }` (+221 more)
   These have ≤1 connection - possible missing edges or undocumented components.
 - **3 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
+- **Why does `Settings` connect `Settings` to `Detection`, `AppState`, `CameraCapture`, `test_settings_api.py`, `test_main.py`?**
+  _High betweenness centrality (0.031) - this node is a cross-community bridge._
 - **Why does `AppState` connect `AppState` to `Detection`, `CameraCapture`, `Settings`, `test_presets.py`, `test_settings_api.py`, `YoloDetector`, `LoggingStore`, `test_main.py`?**
-  _High betweenness centrality (0.032) - this node is a cross-community bridge._
-- **Why does `Settings` connect `Settings` to `Detection`, `AppState`, `CameraCapture`, `test_settings_api.py`, `YoloDetector`, `test_main.py`?**
   _High betweenness centrality (0.031) - this node is a cross-community bridge._
 - **Why does `CameraCapture` connect `CameraCapture` to `Detection`, `AppState`?**
-  _High betweenness centrality (0.022) - this node is a cross-community bridge._
-- **Are the 37 inferred relationships involving `Settings` (e.g. with `AppState` and `WSManager`) actually correct?**
-  _`Settings` has 37 INFERRED edges - model-reasoned connections that need verification._
+  _High betweenness centrality (0.021) - this node is a cross-community bridge._
+- **Are the 39 inferred relationships involving `Settings` (e.g. with `AppState` and `WSManager`) actually correct?**
+  _`Settings` has 39 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 25 inferred relationships involving `AppState` (e.g. with `CameraCapture` and `HardwareInfo`) actually correct?**
   _`AppState` has 25 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 26 inferred relationships involving `Detection` (e.g. with `Detector` and `YoloDetector`) actually correct?**

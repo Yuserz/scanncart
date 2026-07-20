@@ -9,6 +9,7 @@ class Settings:
     capture_height: int = 720
     capture_fps: int = 60
     conf_threshold: float = 0.5
+    imgsz: int = 640
     infer_frame_skip: int = 0
     device: str = "auto"
     preview_height: int = 720
