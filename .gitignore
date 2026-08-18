@@ -2,3 +2,20 @@
 graphify-out/cache/
 .claude/settings.json
 .claude/skills/run-desktop/shots/
+
+# Credentials
+scanncart/.env
+
+# Raw dataset source images (archives + cleaned/augmented output)
+scanncart/*.zip
+scanncart/raw/
+scanncart/cleaned/
+scanncart/dataset/
+scanncart/yolo11-grocery/
+sidecar/data/custom/
+sidecar/data/settings.json
+sidecar/data/scanncart.db
+
+# Pretrained weights too large for GitHub (>100MB limit) — download via Ultralytics
+sidecar/yolo11x.pt
+sidecar/yolo26m.pt

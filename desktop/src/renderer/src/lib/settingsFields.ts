@@ -13,7 +13,13 @@ export const ALLOWED_MODELS = [
   'yolo11x.pt',
   'yolo26n.pt',
   'yolo26s.pt',
-  'yolo26m.pt'
+  'yolo26m.pt',
+  // Custom trained models — deploy via: python scanncart/deploy_model.py --name <name>
+  'data/custom/grocery-v1.pt',
+  'data/custom/grocery-v2.pt',
+  'data/custom/experiment-1.pt',
+  'data/custom/experiment-2.pt',
+  'data/custom/experiment-3.pt',
 ] as const
 export const ALLOWED_DEVICES = ['auto', 'cpu', 'cuda'] as const
 
@@ -30,7 +36,17 @@ export const MODEL_SPEC_HINTS: Record<string, string> = {
   'yolo26s.pt':
     'Experimental — needs a strong CPU (8+ cores) or an entry CUDA GPU (≥2 GB VRAM) to hold ~30 fps. Weights auto-download on first capture start (internet needed once).',
   'yolo26m.pt':
-    'Experimental — needs a discrete CUDA GPU (≥4 GB VRAM); CPU-only machines will fall behind in real time. Weights auto-download on first capture start (internet needed once).'
+    'Experimental — needs a discrete CUDA GPU (≥4 GB VRAM); CPU-only machines will fall behind in real time. Weights auto-download on first capture start (internet needed once).',
+  'data/custom/grocery-v1.pt':
+    'Custom model slot 1 — deploy via: python scanncart/deploy_model.py --name grocery-v1',
+  'data/custom/grocery-v2.pt':
+    'Custom model slot 2 — deploy via: python scanncart/deploy_model.py --name grocery-v2',
+  'data/custom/experiment-1.pt':
+    'Experiment slot 1 — deploy via: python scanncart/deploy_model.py --name experiment-1',
+  'data/custom/experiment-2.pt':
+    'Experiment slot 2 — deploy via: python scanncart/deploy_model.py --name experiment-2',
+  'data/custom/experiment-3.pt':
+    'Experiment slot 3 — deploy via: python scanncart/deploy_model.py --name experiment-3'
 }
 
 export interface FieldMeta {

@@ -13,13 +13,22 @@ DEFAULT_SETTINGS_PATH = "data/settings.json"
 # selecting one surfaces a soft warning via compute_warnings(). Mirrored by
 # hand in desktop settingsFields.ts (EXPERIMENTAL_MODELS / MODEL_SPEC_HINTS).
 EXPERIMENTAL_MODELS = {"yolo26n.pt", "yolo26s.pt", "yolo26m.pt"}
+# Custom trained models — drop .pt files into sidecar/data/custom/ and add them here.
+# Naming convention: data/custom/<name>.pt
+CUSTOM_MODELS = {
+    "data/custom/grocery-v1.pt",
+    "data/custom/grocery-v2.pt",
+    "data/custom/experiment-1.pt",
+    "data/custom/experiment-2.pt",
+    "data/custom/experiment-3.pt",
+}
 ALLOWED_MODELS = {
     "yolo11n.pt",
     "yolo11s.pt",
     "yolo11m.pt",
     "yolo11l.pt",
     "yolo11x.pt",
-} | EXPERIMENTAL_MODELS
+} | EXPERIMENTAL_MODELS | CUSTOM_MODELS
 ALLOWED_DEVICES = {"auto", "cpu", "cuda"}
 
 # Fields the running Pipeline re-reads from `settings` every frame/track update,
