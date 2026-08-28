@@ -16,9 +16,18 @@ function baseSettings(overrides: Partial<SettingsResponse> = {}): SettingsRespon
     device: 'auto',
     preview_height: 720,
     track_expiry_s: 1.5,
+    detector_backend: 'ultralytics',
+    roboflow_workspace: '',
+    roboflow_workflow_id: '',
+    local_api_url: '',
+    cloud_api_url: '',
+    remote_infer_size: 640,
+    remote_timeout_s: 10,
+    remote_max_retries: 3,
     hot_reloadable_fields: ['infer_frame_skip', 'preview_height', 'track_expiry_s'],
     restart_required_fields: ['active_model', 'device'],
     warnings: [],
+    roboflow_api_key_present: false,
     ...overrides
   }
 }
@@ -45,6 +54,7 @@ function makeDeps(overrides: Partial<ApiClient> = {}): { deps: SettingsDeps; api
       recommended: 'mid_range'
     })),
     applyPreset: vi.fn(async (name) => baseSettings({ active_model: `${name}.pt` })),
+    probeDetector: vi.fn(async () => ({ backend: 'ultralytics', reachable: true, detail: 'ok', latency_ms: 10, class_names: ['banana'] })),
     ...overrides
   }
   return { deps: { apiFactory: () => api, healthPollMs: 10_000, retryDelayMs: 10 }, api }
