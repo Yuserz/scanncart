@@ -88,7 +88,6 @@ def _default_detector_factory(settings: Settings, device: str):
         # when a track is gone.
         tracker=IouTracker(expiry_s=settings.track_expiry_s),
     )
-    )
 
 
 class WSManager:
