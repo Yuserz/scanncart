@@ -15,6 +15,20 @@ class Settings:
     preview_height: int = 720
     track_expiry_s: float = 1.5
 
+    # Which detector implementation backs capture. "native" runs the weights in
+    # this process (the only backend that satisfies the PRD's offline promise);
+    # the two remote backends differ only by URL. See docs/DETECTOR_BACKENDS.md.
+    detector_backend: str = "native"
+    roboflow_workspace: str = "yusri-caloyloy"
+    roboflow_workflow_id: str = "scanncart-grocery-vscanncart-grocery-1-yolo11n-t1-logic"
+    local_api_url: str = "http://127.0.0.1:9001"
+    cloud_api_url: str = "https://serverless.roboflow.com"
+    # Frames are downscaled to this longest edge before transmit. YOLO11 infers
+    # at 640 regardless, so sending full 1080p frames is pure bandwidth waste.
+    remote_infer_size: int = 640
+    remote_timeout_s: float = 5.0
+    remote_max_retries: int = 2
+
 
 def resolve_device(pref: str) -> str:
     # "cpu" is always honored. "auto" and an explicit "cuda" both want the GPU,

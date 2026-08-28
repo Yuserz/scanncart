@@ -21,6 +21,11 @@ ALLOWED_MODELS = {
     "yolo11x.pt",
 } | EXPERIMENTAL_MODELS
 ALLOWED_DEVICES = {"auto", "cpu", "cuda"}
+# Detector backends. "native" runs weights in-process; "local_api" talks to a
+# Roboflow inference server on this machine; "cloud_api" talks to Roboflow's
+# serverless endpoint. Mirrored by hand in desktop settingsFields.ts.
+ALLOWED_BACKENDS = {"native", "local_api", "cloud_api"}
+REMOTE_BACKENDS = {"local_api", "cloud_api"}
 
 # Fields the running Pipeline re-reads from `settings` every frame/track update,
 # so mutating them in place takes effect without stopping capture. Everything
@@ -35,9 +40,23 @@ RESTART_REQUIRED_FIELDS = {
     "conf_threshold",
     "imgsz",
     "device",
+    # Every backend field is baked into the detector object at
+    # /api/capture/start time, so none of them can be swapped mid-session.
+    "detector_backend",
+    "roboflow_workspace",
+    "roboflow_workflow_id",
+    "local_api_url",
+    "cloud_api_url",
+    "remote_infer_size",
+    "remote_timeout_s",
+    "remote_max_retries",
 }
 
 _COMMON_CAPTURE_MODES = {(640, 480), (1280, 720), (1920, 1080)}
+
+# A remote round trip must not outlast the tracker's memory of a track.
+# Phase 0 measured 600-3250 ms against the serverless endpoint.
+MIN_REMOTE_TRACK_EXPIRY_S = 5.0
 
 _lock = threading.Lock()
 
@@ -67,6 +86,18 @@ def _valid_field(name: str, value: Any) -> bool:
         return isinstance(value, int) and 120 <= value <= 1080
     if name == "track_expiry_s":
         return isinstance(value, (int, float)) and 0.0 < value <= 30.0
+    if name == "detector_backend":
+        return isinstance(value, str) and value in ALLOWED_BACKENDS
+    if name in ("roboflow_workspace", "roboflow_workflow_id"):
+        return isinstance(value, str) and bool(value.strip())
+    if name in ("local_api_url", "cloud_api_url"):
+        return isinstance(value, str) and value.startswith(("http://", "https://"))
+    if name == "remote_infer_size":
+        return isinstance(value, int) and 128 <= value <= 1920
+    if name == "remote_timeout_s":
+        return isinstance(value, (int, float)) and 0.1 <= value <= 60.0
+    if name == "remote_max_retries":
+        return isinstance(value, int) and 0 <= value <= 5
     return False
 
 
@@ -104,8 +135,47 @@ def save_settings(settings: Settings, path: str = DEFAULT_SETTINGS_PATH) -> None
         os.replace(tmp_path, path)
 
 
-def compute_warnings(settings: Settings, state: str) -> list[str]:
+def compute_warnings(
+    settings: Settings, state: str, api_key_present: bool | None = None
+) -> list[str]:
+    """Soft warnings surfaced in SettingsResponse. `api_key_present` is passed
+    in rather than read here so tests stay off the filesystem; None means
+    "look it up"."""
     warnings: list[str] = []
+    if settings.detector_backend in REMOTE_BACKENDS:
+        if api_key_present is None:
+            from app.credentials import has_api_key
+
+            api_key_present = has_api_key()
+        if not api_key_present:
+            warnings.append(
+                f"{settings.detector_backend} needs a Roboflow API key, but none is set. "
+                "Add ROBOFLOW_API_KEY to sidecar/.env (see .env.example); capture will "
+                "fail to start without it."
+            )
+        # Measured cloud round trips ran 600–3250 ms. If a round trip outlasts
+        # track_expiry_s, the tracker forgets a stationary item between calls
+        # and re-issues its id — one physical item, several log rows.
+        if settings.track_expiry_s < MIN_REMOTE_TRACK_EXPIRY_S:
+            warnings.append(
+                f"track_expiry_s={settings.track_expiry_s}s is too low for "
+                f"{settings.detector_backend}: a slow round trip will expire a stationary "
+                f"item and log it twice. Use at least {MIN_REMOTE_TRACK_EXPIRY_S}s."
+            )
+    if settings.detector_backend == "cloud_api":
+        warnings.append(
+            "cloud_api sends every inference frame to Roboflow's servers: it requires a "
+            "live internet connection, bills per inference, and contradicts the PRD's "
+            "offline guarantee. Intended for demos, not deployment."
+        )
+        if settings.cloud_api_url.startswith("http://"):
+            warnings.append("cloud_api_url should be https — plain http is rejected upstream.")
+    if settings.detector_backend == "local_api":
+        warnings.append(
+            f"local_api expects a Roboflow inference server reachable at "
+            f"{settings.local_api_url} (`inference server start`). Use Test Connection "
+            "before starting capture."
+        )
     if settings.active_model in EXPERIMENTAL_MODELS:
         warnings.append(
             f"{settings.active_model} is experimental: presets and tuning guidance "

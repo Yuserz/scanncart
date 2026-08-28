@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   createApiClient,
   type ApiClient,
+  type DetectorProbeResponse,
   type PresetInfo,
   type SettingsResponse,
   type SettingsUpdate,
@@ -28,6 +29,9 @@ export interface SidecarSettings {
   update: (patch: SettingsUpdate) => Promise<SettingsResponse>
   applyPreset: (name: string) => Promise<SettingsResponse>
   restoreDefaults: () => Promise<SettingsResponse>
+  probe: () => Promise<DetectorProbeResponse>
+  probing: boolean
+  probeResult: DetectorProbeResponse | null
 }
 
 function errorMessage(e: unknown): string {
@@ -51,6 +55,8 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [probing, setProbing] = useState(false)
+  const [probeResult, setProbeResult] = useState<DetectorProbeResponse | null>(null)
 
   const apiRef = useRef<ApiClient | null>(null)
 
@@ -154,6 +160,31 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
     await load()
   }, [load])
 
+  // An unreachable backend is a normal answer here, not an error: the sidecar
+  // returns reachable:false rather than a non-2xx, so only a transport failure
+  // lands in the catch.
+  const probe = useCallback(async (): Promise<DetectorProbeResponse> => {
+    setProbing(true)
+    setProbeResult(null)
+    try {
+      const r = await apiRef.current!.probeDetector()
+      setProbeResult(r)
+      return r
+    } catch (e) {
+      const failed = {
+        backend: 'unknown',
+        reachable: false,
+        detail: errorMessage(e),
+        latency_ms: null,
+        class_names: []
+      }
+      setProbeResult(failed)
+      return failed
+    } finally {
+      setProbing(false)
+    }
+  }, [])
+
   return {
     settings,
     systemInfo,
@@ -166,6 +197,9 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
     refresh,
     update,
     applyPreset,
-    restoreDefaults
+    restoreDefaults,
+    probe,
+    probing,
+    probeResult
   }
 }
