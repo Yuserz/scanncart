@@ -183,7 +183,7 @@ verdict. Reached from a button in the Admin panel's camera section.
 | 2 Lighting | brightness | 110–160 |
 | 3 Focus | sharpness + drift over ~10 s | above min, stable |
 | 4 Framerate | measured fps, auto vs capped exposure | ≥ 25 |
-| 5 Distance | detection confidence near and far | ≥ 0.6 at both |
+| 5 Distance | detection confidence near **and** far | ≥ 0.6 at both; a near/far gap drives an `imgsz` proposal |
 
 It ends on the **review card** — the settings it recommends, the measured
 evidence for each, and Apply. Consistent with the existing preset cards, and it
@@ -231,9 +231,40 @@ Each phase is independently useful, so value lands before the wizard does.
    and its review card.
 3. **The five-step wizard.** Framing and distance guidance on top.
 
-## Open question for review
+## Detection at varying distance
 
-Step 5 asks the operator to place a real product to measure detection
-confidence. That makes it the only step needing a physical prop, and it is the
-step most likely to be skipped. Keep it, or drop step 5 and let the Live view's
-existing confidence display serve that purpose?
+Step 5 is kept, and it earns its keep beyond a pass/fail: measuring confidence
+at **near and far** is what turns "detection is bad when the object is far" from
+an anecdote into a number the app can act on.
+
+A distant item is a small item — it occupies fewer pixels, and small-object
+recall is the first thing to collapse. Three levers exist, in increasing cost:
+
+1. **Inference size (`imgsz`).** The cheapest and most direct. At `imgsz=640` a
+   1280x720 frame is downscaled 2x before the model ever sees it, so a distant
+   SKU may arrive only a few pixels across. Raising to 960 keeps more of it.
+   This was previously unaffordable — at ~95 ms on CPU the frame budget was
+   already gone — but CUDA now runs the custom model at ~20 ms, so there is
+   headroom to spend. **Step 5 drives this**: if far-distance confidence is
+   materially below near-distance confidence, `derive_camera_settings` proposes
+   a higher `imgsz` and reports the measured latency cost on the review card,
+   still subject to the same fps floor as every other recommendation.
+2. **Capture resolution.** Raising capture to 1080p gives the downscale more to
+   work with. Measured cost on this camera is small (12 fps at both 720p and
+   1080p, i.e. exposure-bound rather than resolution-bound), so it is worth
+   proposing when the fps floor allows.
+3. **Sliced inference.** Running the detector over overlapping crops recovers
+   small objects the full-frame pass misses. It multiplies inference cost per
+   frame and is **out of scope here** — noted so the option is not forgotten,
+   not planned.
+
+The durable fix is training-side: the dataset needs examples at the distances
+the counter actually uses, with scale augmentation. `MODEL_TRAINING.md` gains a
+short section recording that, and step 5's near/far numbers are exactly the
+evidence for whether it is needed — a model that is strong near and weak far has
+a data problem that no capture setting will fix.
+
+**The honest boundary:** calibration can tell you the working distance range
+this model supports, and tune `imgsz`/resolution to widen it a little. It cannot
+make the model detect at a distance it was never trained for. Reporting that
+clearly is more useful than tuning silently and leaving the operator to wonder.
