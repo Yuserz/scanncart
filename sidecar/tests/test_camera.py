@@ -1,3 +1,4 @@
+import threading
 import time
 
 import numpy as np
@@ -149,3 +150,39 @@ def test_measured_fps_is_zero_before_any_frame():
 
     c = CameraCapture(0, 640, 480, 30, cap_factory=lambda i: _Cap())
     assert c.measured_fps == 0.0
+
+
+def test_measured_fps_survives_concurrent_reads():
+    """measured_fps used to iterate _read_times directly while the capture
+    thread appended to it, which can raise 'deque mutated during iteration'.
+    Hammer both from separate threads and confirm no exception surfaces."""
+    class _Cap:
+        def isOpened(self): return True
+        def set(self, prop, value): return True
+        def get(self, prop): return 0
+        def read(self):
+            return True, np.zeros((4, 4, 3), dtype=np.uint8)
+        def release(self): pass
+
+    c = CameraCapture(0, 640, 480, 30, cap_factory=lambda i: _Cap())
+    c.open()
+
+    errors: list[BaseException] = []
+
+    def _hammer():
+        deadline = time.monotonic() + 0.5
+        while time.monotonic() < deadline:
+            try:
+                c.measured_fps
+            except BaseException as exc:  # noqa: BLE001 - pin the race, not a specific type
+                errors.append(exc)
+                return
+
+    readers = [threading.Thread(target=_hammer) for _ in range(4)]
+    for t in readers:
+        t.start()
+    for t in readers:
+        t.join()
+    c.release()
+
+    assert errors == []

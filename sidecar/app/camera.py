@@ -147,7 +147,11 @@ class CameraCapture:
     def measured_fps(self) -> float:
         """Frames delivered per second over the last second, 0.0 until known."""
         now = time.monotonic()
-        recent = [t for t in self._read_times if now - t <= 1.0]
+        # Snapshot before iterating: the capture thread appends to
+        # _read_times concurrently, and deque raises "deque mutated during
+        # iteration" if a mutation lands mid-comprehension.
+        snapshot = list(self._read_times)
+        recent = [t for t in snapshot if now - t <= 1.0]
         if len(recent) < 2:
             return 0.0
         span = recent[-1] - recent[0]
