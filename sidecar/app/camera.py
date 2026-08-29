@@ -1,5 +1,6 @@
 import threading
 import time
+from collections import deque
 from typing import Protocol
 import cv2
 import numpy as np
@@ -91,6 +92,9 @@ class CameraCapture:
         self.failure: str | None = None
         self._consecutive_failures = 0
         self._failing_since: float | None = None
+        # Timestamps of recent successful reads, for the measured rate. The
+        # requested fps is a request; this is what arrived.
+        self._read_times: deque[float] = deque(maxlen=120)
 
     def open(self) -> bool:
         self._cap = self._cap_factory(self.index)
@@ -135,8 +139,19 @@ class CameraCapture:
                 continue
             self._consecutive_failures = 0
             self._failing_since = None
+            self._read_times.append(time.monotonic())
             self._seq += 1
             self._buffer.put(self._seq, frame)
+
+    @property
+    def measured_fps(self) -> float:
+        """Frames delivered per second over the last second, 0.0 until known."""
+        now = time.monotonic()
+        recent = [t for t in self._read_times if now - t <= 1.0]
+        if len(recent) < 2:
+            return 0.0
+        span = recent[-1] - recent[0]
+        return (len(recent) - 1) / span if span > 0 else 0.0
 
     def latest(self):
         return self._buffer.get()

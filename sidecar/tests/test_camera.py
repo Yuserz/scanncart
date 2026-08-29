@@ -112,3 +112,40 @@ def test_pipeline_reports_a_dead_camera_instead_of_freezing():
     pipe = Pipeline(_DeadSource(), None, Settings(), on_message=lambda m: None)
     with pytest.raises(RuntimeError, match="stopped delivering frames"):
         pipe.process_once()
+
+
+# --- measured delivery rate ------------------------------------------------
+
+
+def test_capture_reports_the_rate_it_actually_delivers():
+    """capture_fps used to report the *requested* value: the UI showed 60
+    while the camera delivered 12, hiding a 5x shortfall all session."""
+    class _Cap:
+        def isOpened(self): return True
+        def set(self, prop, value): return True
+        def get(self, prop): return 0
+        def read(self):
+            time.sleep(0.01)  # ~100 fps ceiling
+            return True, np.zeros((4, 4, 3), dtype=np.uint8)
+        def release(self): pass
+
+    c = CameraCapture(0, 640, 480, 30, cap_factory=lambda i: _Cap())
+    c.open()
+    time.sleep(1.2)
+    rate = c.measured_fps
+    c.release()
+
+    assert rate > 10.0          # it is measuring something real
+    assert rate < 300.0         # and not nonsense
+
+
+def test_measured_fps_is_zero_before_any_frame():
+    class _Cap:
+        def isOpened(self): return True
+        def set(self, prop, value): return True
+        def get(self, prop): return 0
+        def read(self): return False, None
+        def release(self): pass
+
+    c = CameraCapture(0, 640, 480, 30, cap_factory=lambda i: _Cap())
+    assert c.measured_fps == 0.0
