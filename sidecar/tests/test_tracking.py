@@ -199,3 +199,69 @@ def test_empty_input_returns_empty_list():
 
 def test_default_threshold_is_exposed():
     assert 0.0 < DEFAULT_IOU_THRESHOLD < 1.0
+
+
+# --- live expiry (track_expiry_s is hot-reloadable) -----------------------
+
+
+def test_tracker_reads_expiry_live_from_the_provider():
+    # Pipeline re-reads track_expiry_s every call, so a snapshot here would
+    # desync the two the moment an operator raised it mid-capture.
+    expiry = {"v": 1.0}
+    now = {"t": 0.0}
+    t = IouTracker(expiry_provider=lambda: expiry["v"], clock=lambda: now["t"])
+    box = (0.1, 0.1, 0.2, 0.2)
+    first = t.assign([Detection(track_id=None, cls="apple", conf=0.9, box=box)])
+
+    # Raise the expiry the way the Admin Panel tells the operator to.
+    expiry["v"] = 10.0
+    now["t"] = 5.0
+    again = t.assign([Detection(track_id=None, cls="apple", conf=0.9, box=box)])
+
+    # 5 s > the old 1.0 s but < the new 10 s: the track must survive.
+    assert again[0].track_id == first[0].track_id
+
+
+def test_tracker_still_expires_when_the_live_expiry_is_lowered():
+    expiry = {"v": 10.0}
+    now = {"t": 0.0}
+    t = IouTracker(expiry_provider=lambda: expiry["v"], clock=lambda: now["t"])
+    box = (0.1, 0.1, 0.2, 0.2)
+    first = t.assign([Detection(track_id=None, cls="apple", conf=0.9, box=box)])
+
+    expiry["v"] = 1.0
+    now["t"] = 5.0
+    again = t.assign([Detection(track_id=None, cls="apple", conf=0.9, box=box)])
+
+    assert again[0].track_id != first[0].track_id
+
+
+def test_tracker_falls_back_when_the_provider_raises():
+    def boom():
+        raise RuntimeError("settings gone")
+
+    t = IouTracker(expiry_s=2.0, expiry_provider=boom)
+    # A broken provider must not stop tracking outright.
+    assert t.expiry_s == 2.0
+
+
+def test_expiry_s_without_a_provider_is_the_plain_value():
+    assert IouTracker(expiry_s=3.5).expiry_s == 3.5
+
+
+# --- id reservation -------------------------------------------------------
+
+
+def test_reserve_id_stops_a_local_id_colliding_with_a_server_id():
+    t = IouTracker()
+    t.reserve_id(1)
+    assigned = t.assign([Detection(track_id=None, cls="apple", conf=0.9, box=(0.1, 0.1, 0.2, 0.2))])
+    assert assigned[0].track_id != 1
+
+
+def test_reserve_id_ignores_ids_below_the_counter():
+    t = IouTracker()
+    t.assign([Detection(track_id=None, cls="a", conf=0.9, box=(0.1, 0.1, 0.2, 0.2))])
+    before = t._next_id
+    t.reserve_id(0)
+    assert t._next_id == before

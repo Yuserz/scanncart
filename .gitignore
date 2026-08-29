@@ -2,3 +2,8 @@
 graphify-out/cache/
 .claude/settings.json
 .claude/skills/run-desktop/shots/
+
+# Ultralytics auto-downloads weights into the CWD; the real copy lives in
+# sidecar/. A stray root copy is a 5.6 MB duplicate.
+/yolo11n.pt
+/yolo*.pt

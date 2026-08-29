@@ -284,3 +284,34 @@ def test_close_closes_the_client():
     det, client = make()
     det.close()
     assert client.closed is True
+
+
+def test_a_server_supplied_id_survives_a_frame_that_also_has_a_new_detection():
+    """A mixed response must not have its server ids overwritten.
+
+    ByteTrack (the tracker a Roboflow Workflow would use) reports `tracker_id`
+    only for confirmed tracks, so a frame holding one confirmed and one new
+    detection is the normal case, not a corner case. Assigning locally over the
+    whole list flipped the confirmed item's id every such frame.
+    """
+    resp = copy.deepcopy(REAL_RESPONSE)
+    preds = resp["predictions"]["predictions"]
+    preds[0].update(tracker_id=77)
+    fresh = copy.deepcopy(preds[0])
+    fresh.update(x=500.0, y=500.0, tracker_id=None)
+    preds.append(fresh)
+
+    det, _ = make(resp)
+    out = det.infer(frame())
+
+    assert out[0].track_id == 77
+    assert out[1].track_id is not None
+    # ...and the locally minted id must not collide with the server's.
+    assert out[1].track_id != 77
+
+
+def test_a_locally_minted_id_never_reuses_a_server_id():
+    det, client = make(resp_with(tracker_id=1))
+    det.infer(frame())
+    client.response = resp_with()  # server stops supplying an id
+    assert det.infer(frame())[0].track_id != 1

@@ -54,10 +54,17 @@ class _Track:
 class IouTracker:
     """Assigns stable `track_id`s to detections across calls.
 
-    `expiry_s` should match the pipeline's `track_expiry_s`. If the tracker
+    The expiry must match the pipeline's `track_expiry_s`. If the tracker
     forgets a track sooner than the pipeline does, the next sighting gets a
     fresh id and the item logs twice; if it forgets later, a returning item is
     silently merged into a track the pipeline already resolved as "left".
+
+    Keeping them in step is why `expiry_provider` exists. `track_expiry_s` is
+    hot-reloadable — `Pipeline` re-reads it from the settings object every call
+    — so a snapshot taken here at construction silently desynchronised the two
+    the moment an operator changed it mid-capture. Pass a provider that reads
+    the live settings; the plain `expiry_s` remains for tests and callers with
+    nothing to track against.
     """
 
     def __init__(
@@ -65,12 +72,24 @@ class IouTracker:
         expiry_s: float = 1.5,
         iou_threshold: float = DEFAULT_IOU_THRESHOLD,
         clock: Callable[[], float] = time.monotonic,
+        expiry_provider: Callable[[], float] | None = None,
     ) -> None:
         self._expiry_s = expiry_s
+        self._expiry_provider = expiry_provider
         self._iou_threshold = iou_threshold
         self._clock = clock
         self._tracks: dict[int, _Track] = {}
         self._next_id = 1
+
+    @property
+    def expiry_s(self) -> float:
+        """The expiry in force right now — live from settings when provided."""
+        if self._expiry_provider is None:
+            return self._expiry_s
+        try:
+            return float(self._expiry_provider())
+        except Exception:  # noqa: BLE001 - a bad provider must not stop tracking
+            return self._expiry_s
 
     def assign(self, detections: list[Detection], now: float | None = None) -> list[Detection]:
         """Return copies of `detections` with `track_id` populated."""
@@ -112,6 +131,16 @@ class IouTracker:
             out.append(det.model_copy(update={"track_id": track_id}))
         return out
 
+    def reserve_id(self, track_id: int) -> None:
+        """Ensure this id is never minted locally.
+
+        Only matters when a response carries some ids and not others: the
+        locally-minted counter starts at 1 and would otherwise hand a new
+        detection an id the server is already using for a different item.
+        """
+        if track_id >= self._next_id:
+            self._next_id = track_id + 1
+
     def reset(self) -> None:
         """Forget every track and restart ids. Call between capture sessions."""
         self._tracks.clear()
@@ -122,6 +151,7 @@ class IouTracker:
         return len(self._tracks)
 
     def _expire(self, now: float) -> None:
-        stale = [tid for tid, t in self._tracks.items() if now - t.last_seen > self._expiry_s]
+        expiry_s = self.expiry_s
+        stale = [tid for tid, t in self._tracks.items() if now - t.last_seen > expiry_s]
         for tid in stale:
             del self._tracks[tid]

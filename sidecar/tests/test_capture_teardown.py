@@ -258,3 +258,87 @@ def test_stop_after_a_mid_capture_failure_does_not_error(state):
         while time.time() < deadline and state.state == "running":
             time.sleep(0.05)
         assert client.post("/api/capture/stop").json() == {"state": "idle"}
+
+
+# --- teardown races -------------------------------------------------------
+
+
+def test_stop_races_the_pipelines_own_error_teardown(state):
+    """Both callers tear down; the loser must no-op, not crash.
+
+    The pipeline thread's error handler and POST /api/capture/stop both run
+    teardown. Without the lock, one cleared `state.pipeline` between the
+    other's `is not None` check and its use, raising
+    `AttributeError: 'NoneType' object has no attribute 'resolve_open_tracks'`
+    out of the stop endpoint as a 500.
+    """
+    with TestClient(build_app(lambda: state)) as client:
+        client.post("/api/capture/start")
+        # Fire Stop and the failure at the same moment.
+        stop_result: list = []
+
+        def do_stop():
+            stop_result.append(client.post("/api/capture/stop"))
+
+        t = threading.Thread(target=do_stop)
+        state._gate.set()
+        t.start()
+        t.join(timeout=20)
+
+    assert stop_result and stop_result[0].status_code == 200
+    assert state.state == "idle"
+
+
+def test_teardown_is_safe_to_call_twice_concurrently():
+    from app.main import _teardown_capture
+
+    st = AppState(
+        source_factory=lambda s: TrackingSource(),
+        detector_factory=lambda s, d: OkDetector(),
+        db_path=":memory:",
+    )
+    with TestClient(build_app(lambda: st)) as client:
+        client.post("/api/capture/start")
+        threads = [threading.Thread(target=_teardown_capture, args=(st,)) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+
+    assert st.state == "idle"
+    assert st.pipeline is None
+
+
+def test_start_does_not_block_the_event_loop_on_a_slow_camera():
+    """A slow camera open must not freeze the rest of the sidecar.
+
+    A Logitech StreamCam takes ~28 s to open. Inline on the event loop that
+    stalled /api/health and the WebSocket handshake for the whole duration.
+    """
+    opening = threading.Event()
+    release_open = threading.Event()
+
+    class SlowSource(TrackingSource):
+        def open(self) -> None:
+            self.opened = True
+            opening.set()
+            release_open.wait(timeout=10)
+
+    st = AppState(
+        source_factory=lambda s: SlowSource(),
+        detector_factory=lambda s, d: OkDetector(),
+        db_path=":memory:",
+    )
+    with TestClient(build_app(lambda: st)) as client:
+        started: list = []
+        t = threading.Thread(target=lambda: started.append(client.post("/api/capture/start")))
+        t.start()
+        assert opening.wait(timeout=5), "start never reached source.open()"
+
+        # The camera is still opening; health must still answer.
+        assert client.get("/api/health").status_code == 200
+
+        release_open.set()
+        t.join(timeout=15)
+        assert started and started[0].status_code == 200
+        client.post("/api/capture/stop")

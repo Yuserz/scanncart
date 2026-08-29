@@ -1,5 +1,6 @@
 import asyncio
 import queue
+import threading
 
 import numpy as np
 from dataclasses import dataclass, field
@@ -88,9 +89,15 @@ def _default_detector_factory(settings: Settings, device: str):
         infer_size=settings.remote_infer_size,
         conf=settings.conf_threshold,
         # The workflow has no tracking block, so this is the only source of
-        # stable track ids. Expiry matches the pipeline's so the two agree on
-        # when a track is gone.
-        tracker=IouTracker(expiry_s=settings.track_expiry_s),
+        # stable track ids. Read expiry live rather than snapshotting it:
+        # track_expiry_s is hot-reloadable and Pipeline re-reads it every call,
+        # so a snapshot here desynchronised the two as soon as an operator
+        # raised it mid-capture — which the Admin Panel actively tells them to
+        # do for a remote backend.
+        tracker=IouTracker(
+            expiry_s=settings.track_expiry_s,
+            expiry_provider=lambda: settings.track_expiry_s,
+        ),
     )
 
 
@@ -171,6 +178,9 @@ class AppState:
     # capture holds the camera.
     camera_lister: Callable[[], list[CameraDevice]] = list_cameras
     cameras: list[CameraDevice] | None = None
+    # Serializes capture teardown between the HTTP handler and the pipeline
+    # thread's error handler.
+    teardown_lock: threading.Lock = field(default_factory=threading.Lock)
 
     def __post_init__(self):
         if self.settings is None:
@@ -198,28 +208,41 @@ def _release(obj: object, *names: str) -> None:
 def _teardown_capture(state: "AppState", join_thread: bool = True) -> None:
     """Return to idle and free every resource capture acquired.
 
-    `join_thread=False` is the path taken from the pipeline thread's own error
-    handler, which must not join the thread it is running on.
+    Two callers race here: the HTTP stop handler and the pipeline thread's own
+    error handler. Claim the resources under a lock and clear them in one step,
+    so whichever arrives second gets Nones and no-ops instead of tripping over
+    half-torn-down state (it used to raise AttributeError on a None pipeline).
+
+    The join happens *outside* the lock deliberately. The error handler runs on
+    the pipeline thread, so holding the lock across a join would deadlock: the
+    HTTP caller would wait on a thread that is itself waiting for the lock.
+    `join_thread=False` is that in-thread path — it must never join itself.
     """
-    if state.pipeline is not None:
-        if join_thread:
-            state.pipeline.stop()
-        else:
-            state.pipeline.is_running = False
-        state.pipeline.resolve_open_tracks()
+    with state.teardown_lock:
+        pipeline = state.pipeline
+        source = state.source
+        detector = state.detector
+        session_id = state.session_id
         state.pipeline = None
+        state.source = None
+        state.detector = None
+        state.session_id = None
+        state.state = "idle"
+
+    if pipeline is not None:
+        if join_thread:
+            pipeline.stop()
+        else:
+            pipeline.is_running = False
+        pipeline.resolve_open_tracks()
     # Order matters: the detector's client can be mid-request until the thread
     # is done, so release only after the pipeline has stopped.
-    if state.detector is not None:
-        _release(state.detector, "close")
-        state.detector = None
-    if state.source is not None:
-        _release(state.source, "release", "close")
-        state.source = None
-    if state.session_id is not None:
-        state.logging_store.end_session(state.session_id)
-        state.session_id = None
-    state.state = "idle"
+    if detector is not None:
+        _release(detector, "close")
+    if source is not None:
+        _release(source, "release", "close")
+    if session_id is not None:
+        state.logging_store.end_session(session_id)
 
 
 def _settings_response(state: "AppState") -> SettingsResponse:
@@ -430,17 +453,28 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
     @app.post("/api/capture/start")
     async def start():
         if state.state != "running":
-            source = state.source_factory(state.settings)
-            if hasattr(source, "open"):
-                source.open()
+            def _acquire():
+                """Opening a camera blocks — measured 43.5 s for a Logitech
+                StreamCam (~9.5 s to open plus ~18.7 s for the 1080p mode-set,
+                plus detector setup). Inline on the event loop that froze the
+                whole sidecar: /api/health stopped answering and the renderer's
+                WebSocket could not even complete its handshake."""
+                source = state.source_factory(state.settings)
+                if hasattr(source, "open"):
+                    source.open()
+                try:
+                    return source, state.detector_factory(state.settings, state.device)
+                except RoboflowError:
+                    # `source.open()` already started the capture thread, and
+                    # frame sources expose release(), not close() — the old
+                    # getattr(source, "close") never matched, so every failed
+                    # start leaked the camera device and its thread.
+                    _release(source, "release", "close")
+                    raise
+
             try:
-                detector = state.detector_factory(state.settings, state.device)
+                source, detector = await run_in_threadpool(_acquire)
             except RoboflowError as exc:
-                # `source.open()` above already started the capture thread, and
-                # frame sources expose release(), not close() — the old
-                # getattr(source, "close") never matched, so every failed start
-                # leaked the camera device and its thread.
-                _release(source, "release", "close")
                 raise _http_from_roboflow(exc) from None
             state.session_id = state.logging_store.start_session(
                 state.settings.active_model, state.device

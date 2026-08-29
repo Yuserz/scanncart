@@ -135,17 +135,28 @@ class RoboflowRemoteDetector:
         ref_w, ref_h = ref
 
         out: list[Detection] = []
-        needs_tracking = False
         for p in predictions:
             detection = self._to_detection(p, ref_w, ref_h)
-            if detection is None:
-                continue
-            if detection.track_id is None:
-                needs_tracking = True
-            out.append(detection)
+            if detection is not None:
+                out.append(detection)
 
-        if needs_tracking and self._tracker is not None:
-            return self._tracker.assign(out)
+        if self._tracker is None:
+            return out
+
+        # Track only what the server did not. Assigning over the whole list
+        # would overwrite a server-supplied `tracker_id`, so a workflow with a
+        # tracking block that reports ids for confirmed tracks only (ByteTrack
+        # does exactly this) would see its stable ids replaced on any frame
+        # containing one new detection — the same item flipping id between
+        # frames, and duplicate rows in the session log.
+        untracked = [i for i, d in enumerate(out) if d.track_id is None]
+        for d in out:
+            if d.track_id is not None:
+                self._tracker.reserve_id(d.track_id)
+        # Called even when `untracked` is empty: that is what ages out local
+        # tracks for an item that has left frame.
+        for i, assigned in zip(untracked, self._tracker.assign([out[i] for i in untracked])):
+            out[i] = assigned
         return out
 
     def _to_detection(self, p: dict, ref_w: int, ref_h: int) -> Detection | None:

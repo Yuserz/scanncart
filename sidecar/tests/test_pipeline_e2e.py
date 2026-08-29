@@ -26,10 +26,16 @@ class _FakeFrameSource:
     height = 96
     fps = 30.0
 
+    def __init__(self):
+        # Counts frames handed to the pipeline, so a skip test can assert the
+        # ratio it actually cares about instead of a magic call-count bound.
+        self.pulls = 0
+
     def open(self):
         return True
 
     def latest(self):
+        self.pulls += 1
         return (1, np.full((96, 128, 3), 50, dtype=np.uint8))
 
     def read(self):
@@ -94,14 +100,17 @@ def _make_client(
         settings = Settings()
     detector = _FakeDetector(**detector_kw)
 
+    source = _FakeFrameSource()
     state = AppState(
         settings=settings,
-        source_factory=lambda s: _FakeFrameSource(),
+        source_factory=lambda s: source,
         detector_factory=lambda s, d: detector,
         db_path=":memory:",
         hardware_prober=_fake_hardware,
     )
-    return TestClient(build_app(lambda: state)), detector
+    client = TestClient(build_app(lambda: state))
+    client.source = source
+    return client, detector
 
 
 # ---------------------------------------------------------------------------
@@ -239,9 +248,16 @@ class TestCaptureE2E:
                 assert msg["type"] == "frame"
         client.post("/api/capture/stop")
 
-        # With skip=1, roughly half the frames are inferred
+        # Assert the ratio, not an absolute call count. The pipeline keeps
+        # running between the WS closing and the stop landing, so how many
+        # extra iterations it gets is pure scheduling luck — the old
+        # `calls < 4` bound tripped roughly one run in eight.
         assert detector.calls >= 1
-        assert detector.calls < 4
+        pulls = client.source.pulls
+        assert pulls >= 2
+        # skip=1 infers every other pulled frame; allow one for the frame
+        # in flight when stop landed.
+        assert detector.calls <= pulls // 2 + 1
 
     def test_stop_resolves_open_tracks(self):
         """When capture stops, open tracks get left_at set."""

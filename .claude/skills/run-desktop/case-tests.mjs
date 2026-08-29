@@ -153,7 +153,12 @@ if (CASE === 'D') {
   log('\n-- Start with the inference server DOWN --');
   const before = await ui();
   await page.evaluate(() => document.querySelector('button[aria-label="Start"]').click());
-  await page.waitForTimeout(20000);
+  // The StreamCam takes ~37 s just to open, so a short wait samples the run
+  // before Start has even returned. Wait for the error banner, or long enough
+  // that its absence is meaningful.
+  await page
+    .waitForSelector('[data-testid="live-error"]', { timeout: 90000 })
+    .catch(() => console.log('  (no error banner within 90s)'));
   const after = await ui();
   log('  ui before:', JSON.stringify(before));
   log('  ui after :', JSON.stringify(after));
