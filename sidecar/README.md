@@ -91,6 +91,44 @@ use **Test connection** in the Admin Panel (`POST /api/detector/probe`) before
 starting capture. Measured ~90 ms warm on the same PC; the first call is slower
 because it downloads and loads the model.
 
+### ONNX on the GPU (the custom grocery model)
+
+The custom model is ONNX, so it runs under **onnxruntime**, not torch — a
+separate runtime from the one the CUDA section above configures. Getting it onto
+the GPU takes two things, and it is worth doing: measured 19.7 ms vs 66.3 ms on
+CPU (50.7 vs 15.1 fps).
+
+```bash
+uv pip uninstall --python .venv/Scripts/python.exe onnxruntime
+uv pip install --python .venv/Scripts/python.exe "onnxruntime-gpu==1.22.0"
+```
+
+1. **The CUDA major version must match torch's.** `onnxruntime-gpu` 1.29 wants
+   CUDA 13 (`cublasLt64_13.dll`); 1.22 wants CUDA 12. Check with
+   `python -c "import torch; print(torch.version.cuda)"` and pick the build to
+   match — a mismatch reports `CUDAExecutionProvider` as available and then
+   fails on the first frame with *"no data transfer registered"*.
+2. **onnxruntime-gpu does not ship its CUDA runtime.** It dlopen's cublas,
+   cublasLt, cudart and cudnn from the loader path. torch already ships matching
+   builds in `torch/lib`, so `inference.enable_onnx_cuda()` adds that directory
+   before the session is created. No CUDA toolkit install is needed.
+
+> Never have both `onnxruntime` and `onnxruntime-gpu` installed: they share the
+> `onnxruntime` import name, so both present breaks either, and uninstalling one
+> deletes the shared package directory. If imports start failing, delete
+> `.venv/Lib/site-packages/onnxruntime*` and reinstall exactly one.
+
+Verify:
+
+```bash
+python -c "import onnxruntime as o; print(o.get_available_providers())"
+```
+
+`ultralytics` also pip-installs dependencies at import time and will swap the
+CPU build back in on a CUDA machine, which breaks capture mid-session. `run.py`
+sets `YOLO_AUTOINSTALL=false` to stop it; keep that if you write another
+entrypoint.
+
 ### Windows Defender / antivirus (silent native-import crashes)
 
 On some Windows machines, Defender's real-time protection **intermittently

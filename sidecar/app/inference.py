@@ -1,3 +1,5 @@
+import os
+import sys
 from typing import Protocol
 import numpy as np
 from app.roboflow import RoboflowError, find_image_size, find_predictions
@@ -51,6 +53,35 @@ class Detector(Protocol):
 DEFAULT_TRACKER = "bytetrack.yaml"
 
 
+def enable_onnx_cuda() -> bool:
+    """Let onnxruntime-gpu find the CUDA/cuDNN DLLs that torch already ships.
+
+    onnxruntime-gpu does not bundle its CUDA runtime; it dlopen's cublas,
+    cublasLt, cudart and cudnn from the loader path. A stock install therefore
+    reports CUDAExecutionProvider as "available" and then fails on the first
+    frame with "no data transfer registered", because the DLLs are not
+    anywhere it looks. torch already ships matching CUDA 12 / cuDNN 9 builds in
+    its own lib directory, so adding that directory is all that is needed —
+    no CUDA toolkit install.
+
+    Note the *version* has to line up: onnxruntime-gpu 1.29 wants CUDA 13
+    (cublasLt64_13.dll) which torch does not ship, while 1.22 wants CUDA 12,
+    which it does. Returns whether the directory was added.
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        import torch
+
+        lib = os.path.join(os.path.dirname(torch.__file__), "lib")
+        if os.path.isdir(lib):
+            os.add_dll_directory(lib)
+            return True
+    except Exception:  # noqa: BLE001 - CPU inference must still work
+        pass
+    return False
+
+
 class YoloDetector:
     def __init__(self, model_path, device, conf, imgsz=640, model_factory=None,
                  tracker=DEFAULT_TRACKER, resize_mode="letterbox"):
@@ -63,6 +94,9 @@ class YoloDetector:
         self._imgsz = imgsz
         self._tracker = tracker
         self._is_onnx = str(model_path).lower().endswith(".onnx")
+        if self._is_onnx:
+            # Must run before ultralytics builds the ONNX session.
+            enable_onnx_cuda()
         self._stretch = resize_mode == "stretch"
         self.names = self._model.names
 
@@ -71,11 +105,7 @@ class YoloDetector:
             persist=True, conf=self._conf, imgsz=self._imgsz,
             verbose=False, tracker=self._tracker,
         )
-        # An ONNX session fixes its execution provider at load time, so `device`
-        # cannot move it and only costs ultralytics a per-call device
-        # resolution — measured ~10 ms/frame on the custom grocery model.
-        if not self._is_onnx:
-            kwargs["device"] = self._device
+        kwargs["device"] = self._device
         if self._stretch:
             # Feed an already-square frame so ultralytics' letterbox adds no
             # padding — reproducing the "Stretch to" preprocessing the model was

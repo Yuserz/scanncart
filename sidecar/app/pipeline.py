@@ -57,6 +57,12 @@ class Pipeline:
         self._last_emit_ts = 0.0
 
     def process_once(self) -> dict | None:
+        # A source that has given up is reported, not waited on: otherwise
+        # capture sits in "running" with a frozen image and no explanation.
+        failure = getattr(self._source, "failure", None)
+        if failure:
+            raise RuntimeError(failure)
+
         got = self._source.latest()
         if got is None:
             return None

@@ -1,5 +1,9 @@
+import time
+
 import numpy as np
-from app.camera import LatestFrameBuffer, FakeFrameSource
+import pytest
+
+from app.camera import CameraCapture, LatestFrameBuffer, FakeFrameSource
 
 
 def _frame(val: int) -> np.ndarray:
@@ -28,3 +32,83 @@ def test_fake_frame_source_yields_then_none():
     assert src.read() is None
     assert src.fps == 30.0
     src.release()
+
+
+# --- a device that goes away ---------------------------------------------
+
+
+class _FailingCap:
+    """Opens fine, then never yields a frame — an invalidated device."""
+
+    def __init__(self, fail_after=0):
+        self.reads = 0
+        self._fail_after = fail_after
+
+    def isOpened(self):
+        return True
+
+    def set(self, prop, value):
+        return True
+
+    def read(self):
+        self.reads += 1
+        if self.reads <= self._fail_after:
+            return True, np.zeros((4, 4, 3), dtype=np.uint8)
+        return False, None
+
+    def release(self):
+        pass
+
+
+def test_capture_gives_up_on_a_device_that_stopped_delivering():
+    """It used to retry ~200x/second forever, burning a core and writing
+    ~23,000 OpenCV warnings while the app looked like it was running."""
+    cap = _FailingCap()
+    c = CameraCapture(0, 640, 480, 30, cap_factory=lambda i: cap)
+    c.FAILURE_TIMEOUT_S = 0.3  # the real 3 s deadline, shortened for the test
+    c.open()
+    deadline = time.time() + 5
+    while time.time() < deadline and not c.failure:
+        time.sleep(0.02)
+    c.release()
+
+    assert c.failure is not None
+    assert "stopped delivering frames" in c.failure
+    # Backed off rather than spinning: ~200/s unthrottled would be far more.
+    assert cap.reads < 100
+
+
+def test_a_transient_read_failure_does_not_kill_capture():
+    # One bad read among good ones must not take the camera down.
+    class _Flaky(_FailingCap):
+        def read(self):
+            self.reads += 1
+            if self.reads % 10 == 0:
+                return False, None
+            return True, np.zeros((4, 4, 3), dtype=np.uint8)
+
+    cap = _Flaky()
+    c = CameraCapture(0, 640, 480, 30, cap_factory=lambda i: cap)
+    c.open()
+    time.sleep(0.3)
+    failure = c.failure
+    c.release()
+
+    assert failure is None
+
+
+def test_pipeline_reports_a_dead_camera_instead_of_freezing():
+    """Otherwise capture stays 'running' with a frozen image and no reason."""
+    from app.pipeline import Pipeline
+    from app.settings import Settings
+
+    class _DeadSource:
+        width, height, fps = 128, 96, 30.0
+        failure = "Camera 0 stopped delivering frames after 150 attempts."
+
+        def latest(self):
+            return None
+
+    pipe = Pipeline(_DeadSource(), None, Settings(), on_message=lambda m: None)
+    with pytest.raises(RuntimeError, match="stopped delivering frames"):
+        pipe.process_once()

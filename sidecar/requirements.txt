@@ -11,7 +11,8 @@ psutil>=6.0
 # Only needed to run a custom Roboflow-exported model as `native` (see
 # docs/DETECTOR_BACKENDS.md §1a). The .onnx the local inference server caches
 # is a stock Ultralytics export, so YOLO() loads it directly.
-# CPU build on purpose: onnxruntime-gpu wants its own matching CUDA/cuDNN that
-# torch's bundled libraries do not satisfy, and the two share the `onnxruntime`
-# import name, so installing both breaks either.
+# CPU build: portable default. For NVIDIA, swap it for a CUDA-12 build of
+# onnxruntime-gpu — see README "ONNX on the GPU". Do not install both; they
+# share the `onnxruntime` import name, so having both breaks either and
+# uninstalling one deletes the shared package directory.
 onnxruntime>=1.20

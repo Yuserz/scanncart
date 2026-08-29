@@ -83,6 +83,14 @@ class CameraCapture:
         self._running = False
         self._seq = 0
         self.is_open = False
+        # A device can be invalidated while open — unplugged, taken by another
+        # process, or suspended by USB power management. read() then fails
+        # instantly and forever. Retrying flat out burned a core and wrote
+        # ~23,000 OpenCV warnings to stderr in one session while the app sat
+        # there looking like it was running.
+        self.failure: str | None = None
+        self._consecutive_failures = 0
+        self._failing_since: float | None = None
 
     def open(self) -> bool:
         self._cap = self._cap_factory(self.index)
@@ -98,12 +106,35 @@ class CameraCapture:
         self._thread.start()
         return True
 
+    # A stalled read is normal for a frame or two; a device that has gone away
+    # never recovers. Give up on a deadline rather than a retry count, so the
+    # time a user stares at a frozen image does not depend on the backoff.
+    FAILURE_TIMEOUT_S = 3.0
+    MAX_FAILURE_BACKOFF_S = 0.2
+
     def _loop(self) -> None:
         while self._running:
             ok, frame = self._cap.read()
             if not ok:
-                time.sleep(0.005)
+                now = time.monotonic()
+                if self._failing_since is None:
+                    self._failing_since = now
+                self._consecutive_failures += 1
+                if now - self._failing_since >= self.FAILURE_TIMEOUT_S:
+                    self.failure = (
+                        f"Camera {self.index} stopped delivering frames for "
+                        f"{self.FAILURE_TIMEOUT_S:.0f}s ({self._consecutive_failures} "
+                        "attempts) — it may have been unplugged, suspended, or taken "
+                        "by another program."
+                    )
+                    self._running = False
+                    return
+                # Back off instead of spinning: the first few failures retry
+                # promptly, a dead device settles at 5 reads/second.
+                time.sleep(min(0.005 * self._consecutive_failures, self.MAX_FAILURE_BACKOFF_S))
                 continue
+            self._consecutive_failures = 0
+            self._failing_since = None
             self._seq += 1
             self._buffer.put(self._seq, frame)
 

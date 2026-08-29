@@ -127,9 +127,14 @@ def test_yolo_detector_tracker_is_overridable():
     assert model.kw["tracker"] == "botsort.yaml"
 
 
-def test_onnx_model_is_not_given_a_device():
-    """An ONNX session fixes its execution provider at load, so `device`
-    cannot move it and only costs a per-call resolution (~10 ms measured)."""
+def test_onnx_model_is_given_its_device():
+    """`device` is what selects the CUDA execution provider for an ONNX model.
+
+    It was briefly omitted as a ~10 ms saving, back when onnxruntime here could
+    only ever run on CPU. With a CUDA-12 onnxruntime-gpu and torch's bundled
+    DLLs the GPU works (19.7 ms vs 66.3 ms), and omitting device would pin the
+    model to CPU and throw that away.
+    """
     seen = {}
 
     class FakeModel:
@@ -143,7 +148,7 @@ def test_onnx_model_is_not_given_a_device():
 
     d = YoloDetector("models/x.onnx", device="cuda", conf=0.5, model_factory=lambda p: FakeModel())
     d.infer(np.zeros((8, 8, 3), dtype=np.uint8))
-    assert "device" not in seen
+    assert seen["device"] == "cuda"
 
 
 def test_pt_model_still_gets_its_device():
