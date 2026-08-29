@@ -66,7 +66,8 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
     camerasLoading,
     stopCapture,
     startCapture,
-    stopping
+    stopping,
+    cameraQuality
   } = useSidecarSettings(port, deps)
 
   // Holds only *unsaved* edits; reset whenever the server-confirmed settings
@@ -448,6 +449,40 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
           </p>
         )}
       </section>
+
+      {cameraQuality?.available && (
+        <section className="camera-quality" data-testid="camera-quality">
+          <h4>Live image</h4>
+          <div className="quality-row">
+            {[
+              [
+                'Brightness',
+                cameraQuality.brightness,
+                cameraQuality.verdicts.brightness,
+                '110–160'
+              ],
+              [
+                'Sharpness',
+                cameraQuality.sharpness,
+                cameraQuality.verdicts.sharpness,
+                'higher is sharper'
+              ],
+              ['Capture fps', cameraQuality.capture_fps, cameraQuality.verdicts.capture_fps, '≥ 25']
+            ].map(([label, value, verdict, hint]) => (
+              <div key={String(label)} className="quality-metric">
+                <span className="quality-label">{label}</span>
+                <span
+                  className={verdict === 'ok' ? 'quality-value' : 'quality-value bad'}
+                  data-testid={verdict === 'ok' ? 'quality-ok' : 'quality-low'}
+                >
+                  {value}
+                </span>
+                <span className="field-hint">{hint}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       <div className="admin-groups">
         {visibleGroups.map((group) => (

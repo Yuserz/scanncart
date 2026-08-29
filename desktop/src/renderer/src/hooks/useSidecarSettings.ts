@@ -3,6 +3,7 @@ import {
   createApiClient,
   type ApiClient,
   type CameraInfo,
+  type CameraQualityResponse,
   type DetectorProbeResponse,
   type PresetInfo,
   type SettingsResponse,
@@ -42,6 +43,7 @@ export interface SidecarSettings {
   camerasLoading: boolean
   probing: boolean
   probeResult: DetectorProbeResponse | null
+  cameraQuality: CameraQualityResponse | null
 }
 
 function errorMessage(e: unknown): string {
@@ -73,6 +75,7 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
   const [stopping, setStopping] = useState(false)
   const [probing, setProbing] = useState(false)
   const [probeResult, setProbeResult] = useState<DetectorProbeResponse | null>(null)
+  const [cameraQuality, setCameraQuality] = useState<CameraQualityResponse | null>(null)
 
   const apiRef = useRef<ApiClient | null>(null)
 
@@ -139,12 +142,20 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
     // reach the sidecar first, since the scan can hold it for ~30 s.
     const cameraTimer = setTimeout(() => void refreshCameras(), 0)
 
+    // Cheap enough (a few frame stats, no device I/O) to piggyback on the
+    // same interval as health rather than run its own timer.
     const pollHealth = async (): Promise<void> => {
       try {
         const h = await api.health()
         if (!cancelled) setCaptureState(h.state)
       } catch {
         // Sidecar not reachable yet; keep the last known capture state.
+      }
+      try {
+        const q = await api.getCameraQuality()
+        if (!cancelled) setCameraQuality(q)
+      } catch {
+        // Sidecar not reachable yet; keep the last known reading.
       }
     }
     void pollHealth()
@@ -283,6 +294,7 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
     camerasLoading,
     stopCapture,
     startCapture,
-    stopping
+    stopping,
+    cameraQuality
   }
 }

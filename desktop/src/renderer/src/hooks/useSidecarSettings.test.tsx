@@ -69,6 +69,15 @@ function makeDeps(overrides: Partial<ApiClient> = {}): { deps: SettingsDeps; api
       latency_ms: 10,
       class_names: ['banana']
     })),
+    getCameraQuality: vi.fn(async () => ({
+      available: false,
+      brightness: 0,
+      contrast: 0,
+      sharpness: 0,
+      capture_fps: 0,
+      verdicts: {},
+      detail: ''
+    })),
     ...overrides
   }
   return { deps: { apiFactory: () => api, healthPollMs: 10_000, retryDelayMs: 10 }, api }

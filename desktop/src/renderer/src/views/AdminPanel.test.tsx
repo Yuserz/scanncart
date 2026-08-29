@@ -86,6 +86,15 @@ function makeDeps(
       latency_ms: 10,
       class_names: ['banana']
     })),
+    getCameraQuality: vi.fn(async () => ({
+      available: false,
+      brightness: 0,
+      contrast: 0,
+      sharpness: 0,
+      capture_fps: 0,
+      verdicts: {},
+      detail: ''
+    })),
     ...overrides
   }
   return { deps: { apiFactory: () => api, healthPollMs: 10_000 }, api }
@@ -548,5 +557,43 @@ describe('AdminPanel', () => {
 
     await userEvent.selectOptions(screen.getByLabelText(/Model/i), 'yolo11m.pt')
     expect(screen.getByTestId('pending-count')).not.toHaveTextContent('Saved')
+  })
+
+  it('shows live image quality with a warning when the frame is too dark', async () => {
+    // Brightness 23/255 was the real cause of "detection is broken".
+    const { deps } = makeDeps('running', {
+      getCameraQuality: vi.fn(async () => ({
+        available: true,
+        brightness: 23,
+        contrast: 27,
+        sharpness: 4.8,
+        capture_fps: 12,
+        verdicts: { brightness: 'low', sharpness: 'low', capture_fps: 'low' },
+        detail: ''
+      }))
+    })
+    render(<AdminPanel port={8765} deps={deps} />)
+
+    const panel = await screen.findByTestId('camera-quality')
+    expect(panel).toHaveTextContent('23')
+    expect(within(panel).getAllByTestId('quality-low').length).toBeGreaterThan(0)
+  })
+
+  it('hides the quality readout when capture is not running', async () => {
+    const { deps } = makeDeps('idle', {
+      getCameraQuality: vi.fn(async () => ({
+        available: false,
+        brightness: 0,
+        contrast: 0,
+        sharpness: 0,
+        capture_fps: 0,
+        verdicts: {},
+        detail: 'Start capture to measure the image.'
+      }))
+    })
+    render(<AdminPanel port={8765} deps={deps} />)
+
+    await screen.findByTestId('hardware-info')
+    expect(screen.queryByTestId('camera-quality')).not.toBeInTheDocument()
   })
 })

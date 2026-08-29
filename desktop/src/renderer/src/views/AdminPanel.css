@@ -372,3 +372,49 @@
   font-size: 12px;
   color: var(--muted);
 }
+
+/* Live image quality readout (brightness/sharpness/fps), so a bad frame
+   shows up here instead of only surfacing as "detection is broken". */
+.camera-quality {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+
+.camera-quality h4 {
+  margin: 0 0 12px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--dim);
+  font-weight: 600;
+}
+
+.quality-row {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.quality-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.quality-label {
+  font-size: 11px;
+  color: var(--dim);
+}
+
+.quality-value {
+  font-size: 16px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+
+.quality-value.bad {
+  color: #ffb020;
+}

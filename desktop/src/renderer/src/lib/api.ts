@@ -89,6 +89,16 @@ export interface DetectorProbeResponse {
 
 export type SettingsUpdate = Partial<SettingsPayload>
 
+export interface CameraQualityResponse {
+  available: boolean
+  brightness: number
+  contrast: number
+  sharpness: number
+  capture_fps: number
+  verdicts: Record<string, string>
+  detail: string
+}
+
 export interface SystemInfoResponse {
   cpu_count: number
   ram_gb: number
@@ -124,6 +134,7 @@ export interface ApiClient {
   probeDetector(): Promise<DetectorProbeResponse>
   // rescan re-opens every device (slow); omit it to take the cached list.
   getCameras(rescan?: boolean): Promise<CamerasResponse>
+  getCameraQuality(): Promise<CameraQualityResponse>
 }
 
 export function createApiClient(port: number): ApiClient {
@@ -162,6 +173,7 @@ export function createApiClient(port: number): ApiClient {
     applyPreset: (name) => request<SettingsResponse>('/settings/preset', 'POST', { name }),
     probeDetector: () => request<DetectorProbeResponse>('/detector/probe', 'POST'),
     getCameras: (rescan) =>
-      request<CamerasResponse>(`/cameras${rescan ? '?rescan=true' : ''}`, 'GET')
+      request<CamerasResponse>(`/cameras${rescan ? '?rescan=true' : ''}`, 'GET'),
+    getCameraQuality: () => request<CameraQualityResponse>('/camera/quality', 'GET')
   }
 }

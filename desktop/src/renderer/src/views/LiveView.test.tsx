@@ -41,6 +41,15 @@ const makeHarness = (): {
         cameras: [{ index: 0, name: 'Fake Cam', width: 1280, height: 720 }],
         probed: true,
         detail: ''
+      })),
+      getCameraQuality: vi.fn(async () => ({
+        available: false,
+        brightness: 0,
+        contrast: 0,
+        sharpness: 0,
+        capture_fps: 0,
+        verdicts: {},
+        detail: ''
       }))
     }),
     streamFactory: (opts: StreamClientOptions) => {

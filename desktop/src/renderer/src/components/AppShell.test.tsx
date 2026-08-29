@@ -59,6 +59,17 @@ function bodyForUrl(url: string): unknown {
   if (url.includes('/api/health')) {
     return { state: 'idle', active_model: 'yolo11n.pt', device: 'cpu' }
   }
+  if (url.includes('/api/camera/quality')) {
+    return {
+      available: false,
+      brightness: 0,
+      contrast: 0,
+      sharpness: 0,
+      capture_fps: 0,
+      verdicts: {},
+      detail: ''
+    }
+  }
   return {}
 }
 
