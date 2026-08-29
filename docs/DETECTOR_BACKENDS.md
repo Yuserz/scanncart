@@ -83,10 +83,13 @@ longer the recommended interim.
 
 ## 1. Why
 
-The custom grocery model lives in Roboflow. Its `.pt` weights are gated behind a paid Core plan, so
-until we either subscribe or retrain from a free dataset export, the model is only reachable over an
-API. Meanwhile the PRD's core promise is **one PC, no cloud, no network dependency** — which an API
-in the hot path would break.
+The custom grocery model lives in Roboflow. Its **`.pt`** weights are gated behind a paid Core plan,
+which is why this document originally treated an API as the only way to reach the model. Meanwhile
+the PRD's core promise is **one PC, no cloud, no network dependency** — which an API in the hot path
+would break.
+
+> **Correction (2026-08-29): the weights are already obtainable, without subscribing.** See §1a.
+> `.pt` is gated; **ONNX is not**, and running `local_api` once puts it on disk.
 
 Rather than pick one and rewrite later, make the detector a swappable backend. The seam already
 exists: `Detector` in `sidecar/app/inference.py` is a `Protocol`, and `AppState.detector_factory` is
@@ -110,6 +113,54 @@ already an injection point.
   against the hosted one.
 
 ---
+
+## 1a. The custom weights are already on disk (no subscription)
+
+Running the `local_api` server once makes it pull the model from Roboflow and cache it. On this
+machine that landed in `MODEL_CACHE_DIR` (defaults to `/tmp/cache`, i.e. `C:\tmp\cache`):
+
+```
+C:\tmp\cache\yusri-caloyloy\scanncart-grocery-1-yolo11n-t1\
+    weights.onnx        10.6 MB
+    class_names.txt     the 7 grocery SKUs
+    model_type.json     {"model_type": "yolov11n", "project_task_type": "object-detection"}
+    environment.json    RESOLUTION 640, and the dataset export link
+```
+
+**It is a stock Ultralytics export**, not a Roboflow-specific format: input `images [1,3,640,640]`,
+output `output0 [1,11,8400]` (4 box + 7 classes), and it carries embedded Ultralytics metadata
+(`names`, `stride`, `imgsz`, `task`). So `YOLO("weights.onnx", task="detect")` loads it directly,
+class names included, and `.track()` works on it unchanged.
+
+### Measured, on this machine
+
+| Path | ms/frame | infer fps | Classes | Offline |
+|------|---------:|----------:|---------|---------|
+| `local_api` (current) | ~100 | 9.5 | 7 grocery | ✅ (needs the server process) |
+| **custom ONNX, CPU only** | **51** | **19.6** | **7 grocery** | ✅ fully |
+| `native` yolo11n `.pt`, CUDA | 38 | 26 | 80 COCO — *not the grocery model* | ✅ fully |
+
+The custom model on **CPU alone** is already twice `local_api`, because that ~100 ms is an HTTP
+round trip, not inference.
+
+### Two caveats before treating this as the answer
+
+1. **ONNX on the GPU needs plumbing this machine does not have.** `onnxruntime-gpu` loads and
+   reports `CUDAExecutionProvider`, then fails at `bind_input` with "no data transfer registered"
+   — it wants its own matching CUDA/cuDNN runtime, which torch's bundled libraries do not satisfy.
+   Note `onnxruntime` and `onnxruntime-gpu` share the `onnxruntime` import name, so installing both
+   breaks either; uninstalling one deletes the shared package directory.
+2. **Preprocessing differs.** `environment.json` records `"resize": {"format": "Stretch to"}` — the
+   model was trained on stretched 640x640, while Ultralytics letterboxes by default. Detections
+   will work, but accuracy is not identical to what the Roboflow server produces. Worth measuring
+   against a labelled clip before trusting the numbers.
+
+### The clean long-term path
+
+`environment.json` also carries the **dataset export link**, and dataset export is free on any plan.
+Training `yolo11n` from it yields a real `.pt` that runs on torch + CUDA — the fastest option, no
+ONNX runtime, no preprocessing mismatch, and the model the PRD wants. See `MODEL_TRAINING.md`.
+
 
 ## 2. Non-goals
 
