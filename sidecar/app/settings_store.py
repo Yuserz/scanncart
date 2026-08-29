@@ -21,6 +21,11 @@ ALLOWED_MODELS = {
     "yolo11x.pt",
 } | EXPERIMENTAL_MODELS
 ALLOWED_DEVICES = {"auto", "cpu", "cuda"}
+# Detector backends. "native" runs weights in-process; "local_api" talks to a
+# Roboflow inference server on this machine; "cloud_api" talks to Roboflow's
+# serverless endpoint. Mirrored by hand in desktop settingsFields.ts.
+ALLOWED_BACKENDS = {"native", "local_api", "cloud_api"}
+REMOTE_BACKENDS = {"local_api", "cloud_api"}
 
 # Fields the running Pipeline re-reads from `settings` every frame/track update,
 # so mutating them in place takes effect without stopping capture. Everything
@@ -33,10 +38,40 @@ RESTART_REQUIRED_FIELDS = {
     "capture_height",
     "capture_fps",
     "conf_threshold",
+    "imgsz",
     "device",
+    # Every backend field is baked into the detector object at
+    # /api/capture/start time, so none of them can be swapped mid-session.
+    "detector_backend",
+    "roboflow_workspace",
+    "roboflow_workflow_id",
+    "local_api_url",
+    "cloud_api_url",
+    "remote_infer_size",
+    "remote_timeout_s",
+    "remote_max_retries",
 }
 
 _COMMON_CAPTURE_MODES = {(640, 480), (1280, 720), (1920, 1080)}
+
+# A remote round trip must not outlast the tracker's memory of a track, or a
+# stationary item expires between calls and is logged twice. The safe floor is
+# therefore per-backend, because the two remote backends are an order of
+# magnitude apart: measured 600-3250 ms against the serverless endpoint, but
+# ~90 ms warm against a local inference server on the same PC. Holding
+# local_api to the cloud's 5 s floor would delay every "item left" by 5 s for
+# no reason.
+MIN_TRACK_EXPIRY_S_BY_BACKEND = {
+    "local_api": 2.0,
+    "cloud_api": 5.0,
+}
+# Kept as the conservative fallback for any backend not listed above.
+MIN_REMOTE_TRACK_EXPIRY_S = 5.0
+
+
+def min_track_expiry_s(backend: str) -> float:
+    """The lowest track_expiry_s that is safe for `backend`."""
+    return MIN_TRACK_EXPIRY_S_BY_BACKEND.get(backend, MIN_REMOTE_TRACK_EXPIRY_S)
 
 _lock = threading.Lock()
 
@@ -56,12 +91,28 @@ def _valid_field(name: str, value: Any) -> bool:
         return isinstance(value, int) and 1 <= value <= 120
     if name == "conf_threshold":
         return isinstance(value, (int, float)) and 0.0 <= value <= 1.0
+    if name == "imgsz":
+        # YOLO requires the inference size to be a multiple of the model stride
+        # (32); ultralytics silently rounds otherwise, so reject up front.
+        return isinstance(value, int) and 320 <= value <= 1920 and value % 32 == 0
     if name == "infer_frame_skip":
         return isinstance(value, int) and 0 <= value <= 30
     if name == "preview_height":
         return isinstance(value, int) and 120 <= value <= 1080
     if name == "track_expiry_s":
         return isinstance(value, (int, float)) and 0.0 < value <= 30.0
+    if name == "detector_backend":
+        return isinstance(value, str) and value in ALLOWED_BACKENDS
+    if name in ("roboflow_workspace", "roboflow_workflow_id"):
+        return isinstance(value, str) and bool(value.strip())
+    if name in ("local_api_url", "cloud_api_url"):
+        return isinstance(value, str) and value.startswith(("http://", "https://"))
+    if name == "remote_infer_size":
+        return isinstance(value, int) and 128 <= value <= 1920
+    if name == "remote_timeout_s":
+        return isinstance(value, (int, float)) and 0.1 <= value <= 60.0
+    if name == "remote_max_retries":
+        return isinstance(value, int) and 0 <= value <= 5
     return False
 
 
@@ -99,8 +150,48 @@ def save_settings(settings: Settings, path: str = DEFAULT_SETTINGS_PATH) -> None
         os.replace(tmp_path, path)
 
 
-def compute_warnings(settings: Settings, state: str) -> list[str]:
+def compute_warnings(
+    settings: Settings, state: str, api_key_present: bool | None = None
+) -> list[str]:
+    """Soft warnings surfaced in SettingsResponse. `api_key_present` is passed
+    in rather than read here so tests stay off the filesystem; None means
+    "look it up"."""
     warnings: list[str] = []
+    if settings.detector_backend in REMOTE_BACKENDS:
+        if api_key_present is None:
+            from app.credentials import has_api_key
+
+            api_key_present = has_api_key()
+        if not api_key_present:
+            warnings.append(
+                f"{settings.detector_backend} needs a Roboflow API key, but none is set. "
+                "Add ROBOFLOW_API_KEY to sidecar/.env (see .env.example); capture will "
+                "fail to start without it."
+            )
+        # If a round trip outlasts track_expiry_s, the tracker forgets a
+        # stationary item between calls and re-issues its id — one physical
+        # item, several log rows. The floor is per-backend; see above.
+        floor = min_track_expiry_s(settings.detector_backend)
+        if settings.track_expiry_s < floor:
+            warnings.append(
+                f"track_expiry_s={settings.track_expiry_s}s is too low for "
+                f"{settings.detector_backend}: a slow round trip will expire a stationary "
+                f"item and log it twice. Use at least {floor}s."
+            )
+    if settings.detector_backend == "cloud_api":
+        warnings.append(
+            "cloud_api sends every inference frame to Roboflow's servers: it requires a "
+            "live internet connection, bills per inference, and contradicts the PRD's "
+            "offline guarantee. Intended for demos, not deployment."
+        )
+        if settings.cloud_api_url.startswith("http://"):
+            warnings.append("cloud_api_url should be https — plain http is rejected upstream.")
+    if settings.detector_backend == "local_api":
+        warnings.append(
+            f"local_api expects a Roboflow inference server reachable at "
+            f"{settings.local_api_url} (`inference server start`). Use Test Connection "
+            "before starting capture."
+        )
     if settings.active_model in EXPERIMENTAL_MODELS:
         warnings.append(
             f"{settings.active_model} is experimental: presets and tuning guidance "
@@ -111,6 +202,12 @@ def compute_warnings(settings: Settings, state: str) -> list[str]:
     if state == "running":
         locked = ", ".join(sorted(RESTART_REQUIRED_FIELDS))
         warnings.append(f"Capture is running — {locked} require stopping capture first.")
+    if settings.imgsz > 960:
+        warnings.append(
+            "imgsz above 960 sharply raises inference latency; small/fast-moving "
+            "objects detect better at higher imgsz, but confirm the live infer fps "
+            "still keeps up after starting capture."
+        )
     if (settings.capture_width, settings.capture_height) not in _COMMON_CAPTURE_MODES:
         warnings.append(
             "Camera may not support the requested resolution; cheap webcams often "

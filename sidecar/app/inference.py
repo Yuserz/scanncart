@@ -1,5 +1,6 @@
 from typing import Protocol
 import numpy as np
+from app.roboflow import RoboflowError, find_image_size, find_predictions
 from app.schemas import Detection
 
 
@@ -36,18 +37,20 @@ class Detector(Protocol):
 
 
 class YoloDetector:
-    def __init__(self, model_path, device, conf, model_factory=None):
+    def __init__(self, model_path, device, conf, imgsz=640, model_factory=None):
         if model_factory is None:
             from ultralytics import YOLO
             model_factory = YOLO
         self._model = model_factory(model_path)
         self._device = device
         self._conf = conf
+        self._imgsz = imgsz
         self.names = self._model.names
 
     def infer(self, frame: np.ndarray) -> list[Detection]:
         results = self._model.track(
-            frame, persist=True, conf=self._conf, device=self._device, verbose=False
+            frame, persist=True, conf=self._conf, imgsz=self._imgsz,
+            device=self._device, verbose=False,
         )
         if not results:
             return []
@@ -63,3 +66,121 @@ class YoloDetector:
             ids = boxes.id.tolist() if hasattr(boxes.id, "tolist") else boxes.id
         h, w = frame.shape[0], frame.shape[1]
         return normalize_detections(xyxy, confs, clss, ids, r.names, w, h)
+
+
+class RoboflowRemoteDetector:
+    """Runs detection through a Roboflow Workflow — cloud or self-hosted.
+
+    Satisfies the same `Detector` protocol as `YoloDetector`, so `Pipeline`
+    cannot tell the difference. See docs/DETECTOR_BACKENDS.md.
+
+    Three things this has to do that the native detector gets for free:
+
+    * **Downscale before transmit.** YOLO11 infers at 640 regardless, so
+      sending a full 1080p frame is wasted bandwidth. Quality 80 matches
+      `pipeline.encode_preview_jpeg`.
+    * **Filter by confidence client-side.** The workflow declares no
+      parameters (verified in Phase 0), so `conf_threshold` cannot be pushed
+      to the server and must be applied here.
+    * **Assign track ids.** The workflow has no tracking block, so responses
+      carry no `tracker_id` and the injected tracker is the only source of
+      stable ids. A response that *does* carry one wins, so adding a tracking
+      block upstream later needs no code change here.
+    """
+
+    def __init__(
+        self,
+        client,
+        infer_size: int = 640,
+        conf: float = 0.5,
+        tracker=None,
+        jpeg_quality: int = 80,
+    ):
+        self._client = client
+        self._infer_size = infer_size
+        self._conf = conf
+        self._tracker = tracker
+        self._jpeg_quality = jpeg_quality
+        # No model manifest to read over HTTP; filled in as classes are seen.
+        self.names: dict = {}
+
+    def _encode(self, frame: np.ndarray) -> tuple[str, int, int]:
+        import base64
+
+        import cv2
+
+        h, w = frame.shape[0], frame.shape[1]
+        longest = max(h, w)
+        if longest > self._infer_size:
+            scale = self._infer_size / longest
+            frame = cv2.resize(frame, (max(1, int(w * scale)), max(1, int(h * scale))))
+            h, w = frame.shape[0], frame.shape[1]
+        ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self._jpeg_quality])
+        if not ok:
+            raise RoboflowError("Failed to JPEG-encode the frame for transmit.")
+        return base64.b64encode(buf).decode("ascii"), w, h
+
+    def infer(self, frame: np.ndarray) -> list[Detection]:
+        image_b64, sent_w, sent_h = self._encode(frame)
+        result = self._client.run(image_b64)
+        predictions = find_predictions(result)
+        if not predictions:
+            # Still age out tracks, or an item that leaves frame keeps its slot
+            # until something else happens to be detected.
+            return self._tracker.assign([]) if self._tracker is not None else []
+
+        # Coordinates are relative to the frame the server saw. It echoes those
+        # dimensions back; trust that over our own when present.
+        ref = find_image_size(result) or (sent_w, sent_h)
+        ref_w, ref_h = ref
+
+        out: list[Detection] = []
+        needs_tracking = False
+        for p in predictions:
+            detection = self._to_detection(p, ref_w, ref_h)
+            if detection is None:
+                continue
+            if detection.track_id is None:
+                needs_tracking = True
+            out.append(detection)
+
+        if needs_tracking and self._tracker is not None:
+            return self._tracker.assign(out)
+        return out
+
+    def _to_detection(self, p: dict, ref_w: int, ref_h: int) -> Detection | None:
+        try:
+            conf = float(p["confidence"])
+            cx, cy = float(p["x"]), float(p["y"])
+            bw, bh = float(p["width"]), float(p["height"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        if conf < self._conf:
+            return None
+        # Phase 0 verified this workflow emits `class`; `class_name` is the
+        # spelling used elsewhere in Roboflow's stack.
+        label = p.get("class") or p.get("class_name")
+        if not label:
+            return None
+        class_id = p.get("class_id")
+        if isinstance(class_id, int):
+            self.names.setdefault(class_id, label)
+
+        box = (
+            _clamp01((cx - bw / 2) / ref_w),
+            _clamp01((cy - bh / 2) / ref_h),
+            _clamp01((cx + bw / 2) / ref_w),
+            _clamp01((cy + bh / 2) / ref_h),
+        )
+        tracker_id = p.get("tracker_id")
+        return Detection(
+            track_id=int(tracker_id) if isinstance(tracker_id, int) else None,
+            cls=str(label),
+            conf=conf,
+            box=box,
+        )
+
+    def close(self) -> None:
+        closer = getattr(self._client, "close", None)
+        if callable(closer):
+            closer()

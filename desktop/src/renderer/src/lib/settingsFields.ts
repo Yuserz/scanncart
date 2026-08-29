@@ -17,6 +17,43 @@ export const ALLOWED_MODELS = [
 ] as const
 export const ALLOWED_DEVICES = ['auto', 'cpu', 'cuda'] as const
 
+// Mirrors the sidecar's ALLOWED_BACKENDS. 'native' runs the weights in the
+// sidecar process; the two remote backends call a Roboflow Workflow over HTTP
+// and differ only by base URL. See docs/DETECTOR_BACKENDS.md.
+export const ALLOWED_BACKENDS = ['native', 'local_api', 'cloud_api'] as const
+export const REMOTE_BACKENDS: readonly string[] = ['local_api', 'cloud_api']
+
+export const BACKEND_LABELS: Record<string, string> = {
+  native: 'Native (local weights)',
+  local_api: 'Self-hosted API',
+  cloud_api: 'Roboflow Cloud'
+}
+
+export const BACKEND_HINTS: Record<string, string> = {
+  native:
+    'Runs the model inside the sidecar. Fastest (~5-10 ms), works fully offline, and the only backend that meets the "no cloud" requirement. Needs the weights file on disk.',
+  local_api:
+    'Calls a Roboflow inference server running on this same PC. Stays offline, costs nothing, and measured ~90 ms warm, but adds a second process and an HTTP hop per inference. See docs/DETECTOR_BACKENDS.md to run it without Docker.',
+  cloud_api:
+    "Calls Roboflow's serverless endpoint. Needs no GPU and no setup, but requires internet, bills per inference, and measured 600-3250 ms per call — demo use, not deployment."
+}
+
+// Below this, a slow remote round trip can outlast the tracker's memory and
+// re-issue a stationary item's track id, logging one item twice. The floor is
+// per-backend because the two are an order of magnitude apart: ~90 ms warm
+// against a local inference server, 600-3250 ms against the cloud. Mirrors the
+// sidecar's MIN_TRACK_EXPIRY_S_BY_BACKEND.
+export const MIN_TRACK_EXPIRY_S_BY_BACKEND: Record<string, number> = {
+  local_api: 2.0,
+  cloud_api: 5.0
+}
+// Conservative fallback for a backend not listed above.
+export const MIN_REMOTE_TRACK_EXPIRY_S = 5.0
+
+export function minTrackExpiryS(backend: string): number {
+  return MIN_TRACK_EXPIRY_S_BY_BACKEND[backend] ?? MIN_REMOTE_TRACK_EXPIRY_S
+}
+
 // YOLO26 is offered as an experimental lane: the detector loads it fine, but
 // presets and tuning guidance are calibrated for YOLO11. Mirrors the
 // sidecar's EXPERIMENTAL_MODELS set.
@@ -37,7 +74,7 @@ export interface FieldMeta {
   key: keyof SettingsPayload
   label: string
   hint: string
-  type: 'select' | 'number'
+  type: 'select' | 'number' | 'text'
   options?: readonly string[]
   min?: number
   max?: number
@@ -106,6 +143,15 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
     step: 0.05
   },
   {
+    key: 'imgsz',
+    label: 'Inference size (px)',
+    hint: 'Size each frame is scaled to before detection (square, multiple of 32). Bigger sees small and fast-moving items better — the key lever for catching thrown objects — but raises latency. 640 is the default; 960 is a good accuracy step on a discrete GPU.',
+    type: 'number',
+    min: 320,
+    max: 1920,
+    step: 32
+  },
+  {
     key: 'infer_frame_skip',
     label: 'Frame skip',
     hint: "Skip N frames between inferences. Higher means less CPU/GPU load but staler tracking — pair with a larger track expiry so items aren't marked 'left' between inferences.",
@@ -121,6 +167,64 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
     type: 'number',
     min: 120,
     max: 1080,
+    step: 1
+  },
+  {
+    key: 'detector_backend',
+    label: 'Detector backend',
+    hint: 'Where inference runs. Native is the target for deployment; the API backends exist so the custom Roboflow model can be used without downloading its weights.',
+    type: 'select',
+    options: ALLOWED_BACKENDS
+  },
+  {
+    key: 'local_api_url',
+    label: 'Self-hosted API URL',
+    hint: 'Where the local Roboflow inference server is listening. Start it with `inference server start`.',
+    type: 'text'
+  },
+  {
+    key: 'cloud_api_url',
+    label: 'Cloud API URL',
+    hint: "Roboflow's serverless endpoint. Must be https.",
+    type: 'text'
+  },
+  {
+    key: 'roboflow_workspace',
+    label: 'Roboflow workspace',
+    hint: 'Workspace slug that owns the workflow.',
+    type: 'text'
+  },
+  {
+    key: 'roboflow_workflow_id',
+    label: 'Roboflow workflow ID',
+    hint: 'Workflow slug (not the document id) to run for each frame.',
+    type: 'text'
+  },
+  {
+    key: 'remote_infer_size',
+    label: 'Transmit size (px)',
+    hint: 'Frames are downscaled to this longest edge before being sent. The model infers at 640 regardless, so larger values only cost bandwidth.',
+    type: 'number',
+    min: 128,
+    max: 1920,
+    step: 32
+  },
+  {
+    key: 'remote_timeout_s',
+    label: 'Request timeout (seconds)',
+    hint: 'How long to wait for one inference before giving up. Measured cloud calls ranged 0.6-3.3 s.',
+    type: 'number',
+    min: 0.1,
+    max: 60,
+    step: 0.5
+  },
+  {
+    key: 'remote_max_retries',
+    label: 'Max retries',
+    hint: 'Retries on timeout or server error only — never on an auth or bad-request failure. Each retry adds latency, so keep this low.',
+    type: 'number',
+    min: 0,
+    max: 5,
     step: 1
   },
   {
@@ -142,11 +246,23 @@ export interface FieldGroup {
 export const SETTINGS_GROUPS: FieldGroup[] = [
   { label: 'Model & Device', keys: ['active_model', 'device'] },
   {
+    label: 'Roboflow API backends',
+    keys: [
+      'local_api_url',
+      'cloud_api_url',
+      'roboflow_workspace',
+      'roboflow_workflow_id',
+      'remote_infer_size',
+      'remote_timeout_s',
+      'remote_max_retries'
+    ]
+  },
+  {
     label: 'Camera & Capture',
     keys: ['camera_index', 'capture_width', 'capture_height', 'capture_fps', 'preview_height']
   },
   {
     label: 'Detection & Tracking',
-    keys: ['conf_threshold', 'infer_frame_skip', 'track_expiry_s']
+    keys: ['conf_threshold', 'imgsz', 'infer_frame_skip', 'track_expiry_s']
   }
 ]

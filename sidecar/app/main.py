@@ -1,5 +1,7 @@
 import asyncio
 import queue
+
+import numpy as np
 from dataclasses import dataclass, field
 from typing import Callable
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -13,22 +15,32 @@ from app.settings_store import (
     load_settings,
     save_settings,
 )
+from app.credentials import has_api_key, load_api_key
 from app.hardware import HardwareInfo, probe_hardware
 from app.presets import PRESETS, recommend_preset
 from app.pipeline import Pipeline
+from app.roboflow import (
+    RoboflowAuthError,
+    RoboflowError,
+    RoboflowTimeout,
+    RoboflowUnavailable,
+    WorkflowClient,
+)
+from app.tracking import IouTracker
 from app.schemas import (
     ApplyPresetRequest,
     HealthResponse,
     LogEvent,
     LogsResponse,
     PresetInfo,
+    DetectorProbeResponse,
     PresetsResponse,
     SettingsResponse,
     SettingsUpdateRequest,
     SystemInfoResponse,
 )
 from app.camera import CameraCapture
-from app.inference import YoloDetector
+from app.inference import RoboflowRemoteDetector, YoloDetector
 from app.logging_store import LoggingStore
 
 
@@ -39,8 +51,43 @@ def _default_source_factory(settings: Settings):
     )
 
 
+def backend_url(settings: Settings) -> str:
+    return (
+        settings.local_api_url
+        if settings.detector_backend == "local_api"
+        else settings.cloud_api_url
+    )
+
+
 def _default_detector_factory(settings: Settings, device: str):
-    return YoloDetector(settings.active_model, device=device, conf=settings.conf_threshold)
+    if settings.detector_backend == "native":
+        return YoloDetector(
+            settings.active_model, device=device,
+            conf=settings.conf_threshold, imgsz=settings.imgsz,
+        )
+    api_key = load_api_key()
+    if api_key is None and settings.detector_backend == "cloud_api":
+        # Fail here with an actionable message rather than as a 401 mid-capture.
+        raise RoboflowAuthError(
+            "No Roboflow API key. Set ROBOFLOW_API_KEY in sidecar/.env (see .env.example)."
+        )
+    client = WorkflowClient(
+        api_url=backend_url(settings),
+        workspace=settings.roboflow_workspace,
+        workflow_id=settings.roboflow_workflow_id,
+        api_key=api_key,
+        timeout_s=settings.remote_timeout_s,
+        max_retries=settings.remote_max_retries,
+    )
+    return RoboflowRemoteDetector(
+        client,
+        infer_size=settings.remote_infer_size,
+        conf=settings.conf_threshold,
+        # The workflow has no tracking block, so this is the only source of
+        # stable track ids. Expiry matches the pipeline's so the two agree on
+        # when a track is gone.
+        tracker=IouTracker(expiry_s=settings.track_expiry_s),
+    )
 
 
 class WSManager:
@@ -108,6 +155,9 @@ class AppState:
     # Injection seam so tests can supply a fake instead of the real probe
     # (which shells out to PowerShell and reads torch.cuda).
     hardware_prober: Callable[[], HardwareInfo] = probe_hardware
+    # Same seam for the API key, so settings tests never touch sidecar/.env.
+    # Only ever reports presence — the key itself stays inside this process.
+    api_key_probe: Callable[[], bool] = has_api_key
 
     def __post_init__(self):
         if self.settings is None:
@@ -119,6 +169,7 @@ class AppState:
 
 
 def _settings_response(state: "AppState") -> SettingsResponse:
+    api_key_present = state.api_key_probe()
     return SettingsResponse(
         active_model=state.settings.active_model,
         camera_index=state.settings.camera_index,
@@ -126,13 +177,23 @@ def _settings_response(state: "AppState") -> SettingsResponse:
         capture_height=state.settings.capture_height,
         capture_fps=state.settings.capture_fps,
         conf_threshold=state.settings.conf_threshold,
+        imgsz=state.settings.imgsz,
         infer_frame_skip=state.settings.infer_frame_skip,
         device=state.settings.device,
         preview_height=state.settings.preview_height,
         track_expiry_s=state.settings.track_expiry_s,
+        detector_backend=state.settings.detector_backend,
+        roboflow_workspace=state.settings.roboflow_workspace,
+        roboflow_workflow_id=state.settings.roboflow_workflow_id,
+        local_api_url=state.settings.local_api_url,
+        cloud_api_url=state.settings.cloud_api_url,
+        remote_infer_size=state.settings.remote_infer_size,
+        remote_timeout_s=state.settings.remote_timeout_s,
+        remote_max_retries=state.settings.remote_max_retries,
         hot_reloadable_fields=sorted(HOT_RELOADABLE_FIELDS),
         restart_required_fields=sorted(RESTART_REQUIRED_FIELDS),
-        warnings=compute_warnings(state.settings, state.state),
+        warnings=compute_warnings(state.settings, state.state, api_key_present),
+        roboflow_api_key_present=api_key_present,
     )
 
 
@@ -226,13 +287,81 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
             raise HTTPException(status_code=404, detail=f"Unknown preset: {body.name}")
         return _apply_settings_patch(state, preset.settings)
 
+    _ERROR_STATUS = {
+        RoboflowAuthError: 401,
+        RoboflowUnavailable: 503,
+        RoboflowTimeout: 504,
+    }
+
+    def _http_from_roboflow(exc: RoboflowError) -> HTTPException:
+        for exc_type, status in _ERROR_STATUS.items():
+            if isinstance(exc, exc_type):
+                return HTTPException(status_code=status, detail=str(exc))
+        return HTTPException(status_code=502, detail=str(exc))
+
+    @app.post("/api/detector/probe", response_model=DetectorProbeResponse)
+    async def probe_detector():
+        """Validate the selected backend before the user hits Start, so a bad
+        URL or missing key surfaces in the Admin Panel rather than as a failed
+        capture."""
+        backend = state.settings.detector_backend
+        if backend == "native":
+            import os
+
+            model = state.settings.active_model
+            found = os.path.exists(model)
+            return DetectorProbeResponse(
+                backend=backend,
+                reachable=True,
+                detail=(
+                    f"{model} present."
+                    if found
+                    else f"{model} not on disk; ultralytics will download it on first start."
+                ),
+            )
+
+        def _run_probe():
+            import time as _time
+
+            detector = state.detector_factory(state.settings, state.device)
+            try:
+                frame = np.zeros((64, 64, 3), dtype=np.uint8)
+                started = _time.perf_counter()
+                detector.infer(frame)
+                elapsed = (_time.perf_counter() - started) * 1000.0
+                return elapsed, sorted(str(v) for v in detector.names.values())
+            finally:
+                closer = getattr(detector, "close", None)
+                if callable(closer):
+                    closer()
+
+        try:
+            latency_ms, class_names = await run_in_threadpool(_run_probe)
+        except RoboflowError as exc:
+            return DetectorProbeResponse(
+                backend=backend, reachable=False, detail=str(exc)
+            )
+        return DetectorProbeResponse(
+            backend=backend,
+            reachable=True,
+            detail=f"Reached {backend_url(state.settings)}",
+            latency_ms=round(latency_ms, 1),
+            class_names=class_names,
+        )
+
     @app.post("/api/capture/start")
     async def start():
         if state.state != "running":
             source = state.source_factory(state.settings)
             if hasattr(source, "open"):
                 source.open()
-            detector = state.detector_factory(state.settings, state.device)
+            try:
+                detector = state.detector_factory(state.settings, state.device)
+            except RoboflowError as exc:
+                closer = getattr(source, "close", None)
+                if callable(closer):
+                    closer()
+                raise _http_from_roboflow(exc) from None
             state.session_id = state.logging_store.start_session(
                 state.settings.active_model, state.device
             )

@@ -57,8 +57,10 @@ class _FakeModel:
     def __init__(self, path):
         self.path = path
         self.names = {0: "bottle"}
+        self.track_kwargs = None
 
     def track(self, frame, **kwargs):
+        self.track_kwargs = kwargs
         return [_FakeResult()]
 
 
@@ -70,3 +72,11 @@ def test_yolo_detector_infer_converts_results():
     assert out[0].cls == "bottle"
     assert out[0].track_id == 3
     assert out[0].box[0] == 10.0 / 30.0
+
+
+def test_yolo_detector_forwards_imgsz_to_track():
+    det = YoloDetector(
+        "yolo11n.pt", device="cpu", conf=0.5, imgsz=960, model_factory=_FakeModel
+    )
+    det.infer(np.zeros((40, 30, 3), dtype=np.uint8))
+    assert det._model.track_kwargs["imgsz"] == 960

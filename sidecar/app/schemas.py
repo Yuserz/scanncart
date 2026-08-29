@@ -1,7 +1,7 @@
 from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
-from app.settings_store import ALLOWED_DEVICES, ALLOWED_MODELS
+from app.settings_store import ALLOWED_BACKENDS, ALLOWED_DEVICES, ALLOWED_MODELS
 
 
 class Detection(BaseModel):
@@ -59,16 +59,28 @@ class SettingsPayload(BaseModel):
     capture_height: int
     capture_fps: int
     conf_threshold: float
+    imgsz: int
     infer_frame_skip: int
     device: str
     preview_height: int
     track_expiry_s: float
+    detector_backend: str
+    roboflow_workspace: str
+    roboflow_workflow_id: str
+    local_api_url: str
+    cloud_api_url: str
+    remote_infer_size: int
+    remote_timeout_s: float
+    remote_max_retries: int
 
 
 class SettingsResponse(SettingsPayload):
     hot_reloadable_fields: list[str]
     restart_required_fields: list[str]
     warnings: list[str] = []
+    # Whether a Roboflow API key is configured. The key itself must never be
+    # serialized — this response goes straight to the renderer.
+    roboflow_api_key_present: bool = False
 
 
 class SettingsUpdateRequest(BaseModel):
@@ -78,10 +90,33 @@ class SettingsUpdateRequest(BaseModel):
     capture_height: int | None = Field(default=None, ge=120, le=2160)
     capture_fps: int | None = Field(default=None, ge=1, le=120)
     conf_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    imgsz: int | None = Field(default=None, ge=320, le=1920)
     infer_frame_skip: int | None = Field(default=None, ge=0, le=30)
     device: str | None = None
     preview_height: int | None = Field(default=None, ge=120, le=1080)
     track_expiry_s: float | None = Field(default=None, gt=0.0, le=30.0)
+    detector_backend: str | None = None
+    roboflow_workspace: str | None = Field(default=None, min_length=1)
+    roboflow_workflow_id: str | None = Field(default=None, min_length=1)
+    local_api_url: str | None = None
+    cloud_api_url: str | None = None
+    remote_infer_size: int | None = Field(default=None, ge=128, le=1920)
+    remote_timeout_s: float | None = Field(default=None, ge=0.1, le=60.0)
+    remote_max_retries: int | None = Field(default=None, ge=0, le=5)
+
+    @field_validator("detector_backend")
+    @classmethod
+    def _validate_detector_backend(cls, v: str | None) -> str | None:
+        if v is not None and v not in ALLOWED_BACKENDS:
+            raise ValueError(f"detector_backend must be one of {sorted(ALLOWED_BACKENDS)}")
+        return v
+
+    @field_validator("local_api_url", "cloud_api_url")
+    @classmethod
+    def _validate_api_url(cls, v: str | None) -> str | None:
+        if v is not None and not v.startswith(("http://", "https://")):
+            raise ValueError("url must start with http:// or https://")
+        return v
 
     @field_validator("active_model")
     @classmethod
@@ -96,6 +131,22 @@ class SettingsUpdateRequest(BaseModel):
         if v is not None and v not in ALLOWED_DEVICES:
             raise ValueError(f"device must be one of {sorted(ALLOWED_DEVICES)}")
         return v
+
+    @field_validator("imgsz")
+    @classmethod
+    def _validate_imgsz(cls, v: int | None) -> int | None:
+        if v is not None and v % 32 != 0:
+            raise ValueError("imgsz must be a multiple of 32 (the YOLO model stride)")
+        return v
+
+
+class DetectorProbeResponse(BaseModel):
+    """Result of checking the selected backend before capture starts."""
+    backend: str
+    reachable: bool
+    detail: str = ""
+    latency_ms: float | None = None
+    class_names: list[str] = []
 
 
 class ApplyPresetRequest(BaseModel):

@@ -7,8 +7,13 @@ import type {
   SystemInfoResponse
 } from '../lib/api'
 import {
+  ALLOWED_BACKENDS,
+  BACKEND_HINTS,
+  BACKEND_LABELS,
   EXPERIMENTAL_MODELS,
+  minTrackExpiryS,
   MODEL_SPEC_HINTS,
+  REMOTE_BACKENDS,
   SETTINGS_FIELDS,
   SETTINGS_GROUPS,
   type FieldMeta
@@ -51,7 +56,10 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
     update,
     applyPreset,
     restoreDefaults,
-    refresh
+    refresh,
+    probe,
+    probing,
+    probeResult
   } = useSidecarSettings(port, deps)
 
   // Holds only *unsaved* edits; reset whenever the server-confirmed settings
@@ -106,6 +114,12 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
     settings.restart_required_fields.includes(f)
   )
   const blockedByRunning = running && pendingRestartFields.length > 0
+  const selectedBackend = String(valueOf('detector_backend'))
+  const backendIsRemote = REMOTE_BACKENDS.includes(selectedBackend)
+  // The Roboflow URL/workspace fields are noise when running native weights.
+  const visibleGroups = SETTINGS_GROUPS.filter(
+    (g) => g.label !== 'Roboflow API backends' || backendIsRemote
+  )
   const canSave = pendingFields.length > 0 && !blockedByRunning
 
   const handleSave = async (): Promise<void> => {
@@ -179,7 +193,14 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
             {isRestartField ? 'restart required' : 'live'}
           </span>
         </div>
-        {field.type === 'select' ? (
+        {field.type === 'text' ? (
+          <input
+            id={field.key}
+            type="text"
+            value={String(value)}
+            onChange={(e) => setField(field.key, e.target.value)}
+          />
+        ) : field.type === 'select' ? (
           <select
             id={field.key}
             value={String(value)}
@@ -263,8 +284,70 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
         {running && <p className="admin-warning">Stop capture to apply a preset.</p>}
       </section>
 
+      <section className="admin-backend" data-testid="backend-picker">
+        <h4>Detector backend</h4>
+        <div className="backend-toggle">
+          {ALLOWED_BACKENDS.map((b) => (
+            <label key={b} className={selectedBackend === b ? 'selected' : ''}>
+              <input
+                type="radio"
+                name="detector_backend"
+                value={b}
+                checked={selectedBackend === b}
+                onChange={() => setField('detector_backend', b)}
+              />
+              {BACKEND_LABELS[b] ?? b}
+            </label>
+          ))}
+          <span className="badge restart">restart required</span>
+        </div>
+        <p className="field-hint">{BACKEND_HINTS[selectedBackend]}</p>
+
+        {backendIsRemote && !settings.roboflow_api_key_present && (
+          <p className="admin-warning" data-testid="missing-api-key">
+            No Roboflow API key found. Add <code>ROBOFLOW_API_KEY</code> to{' '}
+            <code>sidecar/.env</code> (see <code>.env.example</code>) — capture will not start
+            without it.
+          </p>
+        )}
+
+        {backendIsRemote &&
+          Number(valueOf('track_expiry_s')) < minTrackExpiryS(selectedBackend) && (
+            <p className="admin-warning" data-testid="expiry-warning">
+              Track expiry is {String(valueOf('track_expiry_s'))}s. A slow API round trip can
+              outlast that and log one item twice — use at least {minTrackExpiryS(selectedBackend)}s
+              with {BACKEND_LABELS[selectedBackend]}.
+            </p>
+          )}
+
+        <div className="backend-actions">
+          <button
+            className="btn-outline"
+            disabled={probing || pendingFields.length > 0}
+            onClick={() => void probe()}
+            data-testid="test-connection"
+          >
+            {probing ? <Spinner /> : null} Test connection
+          </button>
+          {pendingFields.length > 0 && (
+            <span className="field-hint">Save your changes before testing.</span>
+          )}
+        </div>
+
+        {probeResult && (
+          <p
+            className={probeResult.reachable ? 'probe-ok' : 'admin-error'}
+            data-testid="probe-result"
+          >
+            {probeResult.reachable ? '✓' : '✗'} {probeResult.detail}
+            {probeResult.latency_ms !== null && ` — ${probeResult.latency_ms} ms`}
+            {probeResult.class_names.length > 0 && ` — ${probeResult.class_names.length} classes`}
+          </p>
+        )}
+      </section>
+
       <div className="admin-groups">
-        {SETTINGS_GROUPS.map((group) => (
+        {visibleGroups.map((group) => (
           <section className="admin-group" key={group.label}>
             <h4>{group.label}</h4>
             <div className="admin-grid">

@@ -263,3 +263,49 @@
   border: 1px solid var(--border);
   color: var(--dim);
 }
+
+/* Detector backend picker (see docs/DETECTOR_BACKENDS.md) */
+.admin-backend {
+  margin: 1rem 0;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 8px;
+}
+
+.admin-backend h4 {
+  margin: 0 0 0.6rem;
+}
+
+.backend-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.backend-toggle label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.6rem;
+  border: 1px solid var(--border, #2a2f3a);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.backend-toggle label.selected {
+  border-color: var(--accent, #4c8dff);
+}
+
+.backend-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.6rem;
+}
+
+.probe-ok {
+  margin: 0.5rem 0 0;
+  font-size: 0.85rem;
+  color: var(--ok, #3fb950);
+}

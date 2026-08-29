@@ -34,16 +34,37 @@ export interface SettingsPayload {
   capture_height: number
   capture_fps: number
   conf_threshold: number
+  imgsz: number
   infer_frame_skip: number
   device: string
   preview_height: number
   track_expiry_s: number
+  detector_backend: string
+  roboflow_workspace: string
+  roboflow_workflow_id: string
+  local_api_url: string
+  cloud_api_url: string
+  remote_infer_size: number
+  remote_timeout_s: number
+  remote_max_retries: number
 }
 
 export interface SettingsResponse extends SettingsPayload {
   hot_reloadable_fields: string[]
   restart_required_fields: string[]
   warnings: string[]
+  // Presence only — the sidecar never sends the key itself.
+  roboflow_api_key_present: boolean
+}
+
+// Result of POST /api/detector/probe: checks the selected backend is usable
+// before the user starts capture.
+export interface DetectorProbeResponse {
+  backend: string
+  reachable: boolean
+  detail: string
+  latency_ms: number | null
+  class_names: string[]
 }
 
 export type SettingsUpdate = Partial<SettingsPayload>
@@ -80,6 +101,7 @@ export interface ApiClient {
   getSystemInfo(): Promise<SystemInfoResponse>
   getPresets(): Promise<PresetsResponse>
   applyPreset(name: string): Promise<SettingsResponse>
+  probeDetector(): Promise<DetectorProbeResponse>
 }
 
 export function createApiClient(port: number): ApiClient {
@@ -115,6 +137,7 @@ export function createApiClient(port: number): ApiClient {
     updateSettings: (patch) => request<SettingsResponse>('/settings', 'PATCH', patch),
     getSystemInfo: () => request<SystemInfoResponse>('/system-info', 'GET'),
     getPresets: () => request<PresetsResponse>('/presets', 'GET'),
-    applyPreset: (name) => request<SettingsResponse>('/settings/preset', 'POST', { name })
+    applyPreset: (name) => request<SettingsResponse>('/settings/preset', 'POST', { name }),
+    probeDetector: () => request<DetectorProbeResponse>('/detector/probe', 'POST')
   }
 }

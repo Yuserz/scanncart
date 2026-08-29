@@ -21,6 +21,18 @@ class LatestFrameBuffer:
             return self._item
 
 
+def _default_capture(index):
+    # Pin the Media Foundation backend on Windows: it delivers the StreamCam's
+    # full 60 fps at 1080p, whereas OpenCV's DirectShow path caps around 15 fps
+    # for the same mode. Fall back to OpenCV's auto backend if MSMF can't open
+    # the device (e.g. a non-Windows host or a camera with no MSMF driver).
+    cap = cv2.VideoCapture(index, cv2.CAP_MSMF)
+    if not cap.isOpened():
+        cap.release()
+        cap = cv2.VideoCapture(index)
+    return cap
+
+
 class FrameSource(Protocol):
     width: int
     height: int
@@ -59,7 +71,7 @@ class FakeFrameSource:
 class CameraCapture:
     """Owns an OpenCV device and runs a background capture thread."""
 
-    def __init__(self, index, width, height, fps, cap_factory=cv2.VideoCapture):
+    def __init__(self, index, width, height, fps, cap_factory=_default_capture):
         self.index = index
         self.width = width
         self.height = height

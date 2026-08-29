@@ -36,7 +36,8 @@ const makeDeps = (
       updateSettings: vi.fn(),
       getSystemInfo: vi.fn(),
       getPresets: vi.fn(),
-      applyPreset: vi.fn()
+      applyPreset: vi.fn(),
+      probeDetector: vi.fn()
     }),
     streamFactory: (o: StreamClientOptions) => {
       opts = o
