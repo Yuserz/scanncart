@@ -212,6 +212,25 @@ class ApplyPresetRequest(BaseModel):
     name: str
 
 
+class ControlSupportPayload(BaseModel):
+    brightness: bool = False
+    exposure: bool = False
+    gain: bool = False
+    focus: bool = False
+
+
+class CameraProfileResponse(BaseModel):
+    device_key: str
+    backend: str
+    width: int
+    height: int
+    fps_auto_exposure: float
+    fps_capped_exposure: float
+    controls: ControlSupportPayload
+    recommended: dict = {}
+    measured_at: float = 0.0
+
+
 class HardwareInfo(BaseModel):
     cpu_count: int
     ram_gb: float

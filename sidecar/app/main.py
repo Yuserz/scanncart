@@ -1,9 +1,10 @@
 import asyncio
+import os
 import queue
 import threading
 
 import numpy as np
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Callable
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.concurrency import run_in_threadpool
@@ -39,6 +40,7 @@ from app.tracking import IouTracker
 from app.schemas import (
     ApplyPresetRequest,
     CameraInfo,
+    CameraProfileResponse,
     CameraQualityResponse,
     CamerasResponse,
     HealthResponse,
@@ -53,6 +55,8 @@ from app.schemas import (
     SystemInfoResponse,
 )
 from app.camera import CameraCapture
+from app.camera_caps import CameraProfile
+from app.camera_profiles import save_profile
 from app.cameras import CameraDevice, list_cameras, list_device_names
 from app.inference import RoboflowRemoteDetector, YoloDetector
 from app.logging_store import LoggingStore
@@ -200,6 +204,12 @@ class AppState:
     # Serializes capture teardown between the HTTP handler and the pipeline
     # thread's error handler.
     teardown_lock: threading.Lock = field(default_factory=threading.Lock)
+    # Injection seam, like camera_lister: tests supply a profile instead of
+    # opening a device. calibrate() itself is Task 11 — this route only
+    # measures-and-reports, never applies, so tests can exercise the review
+    # step without a real camera.
+    calibrator: Callable[[], CameraProfile] | None = None
+    last_profile: CameraProfile | None = None
 
     def __post_init__(self):
         if self.settings is None:
@@ -480,6 +490,33 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
             },
             detail="",
         )
+
+    @app.post("/api/camera/calibrate", response_model=CameraProfileResponse)
+    async def calibrate_camera():
+        """Measure the camera and return a recommendation. Applies nothing —
+        the operator reviews it first (review-first design)."""
+        if state.state == "running":
+            raise HTTPException(
+                status_code=409,
+                detail="Stop capture before calibrating; the camera is exclusive.",
+            )
+        if state.calibrator is None:
+            raise HTTPException(status_code=503, detail="No calibrator configured.")
+        profile = await run_in_threadpool(state.calibrator)
+        state.last_profile = profile
+        # Sibling of settings_path (like save_settings(state.settings, state.
+        # settings_path)) rather than camera_profiles.py's hardcoded default,
+        # so tests that point settings_path at tmp_path never touch the real
+        # data/ directory.
+        profiles_path = os.path.join(os.path.dirname(state.settings_path) or ".", "camera_profiles.json")
+        save_profile(profile, profiles_path)
+        return CameraProfileResponse(**asdict(profile))
+
+    @app.post("/api/camera/profile/apply", response_model=SettingsResponse)
+    async def apply_camera_profile():
+        if state.last_profile is None:
+            raise HTTPException(status_code=404, detail="Calibrate the camera first.")
+        return _apply_settings_patch(state, state.last_profile.recommended)
 
     @app.post("/api/detector/probe", response_model=DetectorProbeResponse)
     async def probe_detector():
