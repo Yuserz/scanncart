@@ -75,6 +75,7 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
   // useEffect, per React's guidance on resetting state when a prop changes.
   const [settingsAtLastReset, setSettingsAtLastReset] = useState<SettingsResponse | null>(null)
   const [draft, setDraft] = useState<SettingsUpdate>({})
+  const [justSaved, setJustSaved] = useState(false)
   if (settings !== settingsAtLastReset) {
     setSettingsAtLastReset(settings)
     setDraft({})
@@ -113,6 +114,7 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
   }
 
   const setField = (key: keyof SettingsPayload, value: string | number): void => {
+    setJustSaved(false)
     setDraft((prev) => ({ ...prev, [key]: value }) as SettingsUpdate)
   }
 
@@ -128,10 +130,18 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
     (g) => g.label !== 'Roboflow API backends' || backendIsRemote
   )
   const canSave = pendingFields.length > 0 && !blockedByRunning
+  const selectedCamera = cameras.find((c) => c.index === Number(valueOf('camera_index')))
+
+  // The sidecar emits one warning that lists every restart-required field by
+  // name whenever capture runs. It is 16 items of comma-separated prose, and
+  // the per-field badges plus the inline restart warning already say it
+  // better and only for the fields actually being edited.
+  const visibleWarnings = settings.warnings.filter((w) => !w.startsWith('Capture is running —'))
 
   const handleSave = async (): Promise<void> => {
     if (!canSave) return
     await update(draft)
+    setJustSaved(true)
   }
 
   // Most settings are restart-required, so the common path is: stop, save,
@@ -141,6 +151,7 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
     if (pendingFields.length === 0) return
     await stopCapture()
     await update(draft)
+    setJustSaved(true)
     await startCapture()
   }
 
@@ -165,9 +176,7 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
         <div className="admin-field" key={field.key}>
           <div className="admin-field-label">
             <span className="admin-field-labeltext">{field.label}</span>
-            <span className={`badge ${isRestartField ? 'restart' : 'live'}`}>
-              {isRestartField ? 'restart required' : 'live'}
-            </span>
+            {!isRestartField && <span className="badge live">applies instantly</span>}
           </div>
           <div className="device-toggle" data-testid="device-toggle">
             <label>
@@ -206,9 +215,12 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
       <div className="admin-field" key={field.key}>
         <div className="admin-field-label">
           <label htmlFor={field.key}>{field.label}</label>
-          <span className={`badge ${isRestartField ? 'restart' : 'live'}`}>
-            {isRestartField ? 'restart required' : 'live'}
-          </span>
+          {/* Only the exceptions are badged. 14 of 16 fields are
+              restart-required, so badging those made the badge meaningless;
+              the few that apply instantly are the surprising ones. The
+              restart-required set is still enforced server-side and surfaced
+              in the warning above the actions. */}
+          {!isRestartField && <span className="badge live">applies instantly</span>}
         </div>
         {field.key === 'camera_index' && cameras.length === 0 && running ? (
           // Scanning opens every device, so the sidecar refuses while capture
@@ -251,7 +263,7 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
               )}
               {cameras.map((c) => (
                 <option key={c.index} value={c.index}>
-                  {`${c.index} — ${c.name} (${c.width}×${c.height})`}
+                  {`${c.index} — ${c.name}`}
                 </option>
               ))}
             </select>
@@ -301,6 +313,12 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
             }}
           />
         )}
+        {field.key === 'camera_index' && selectedCamera && (
+          <p className="field-hint" data-testid="camera-resolution">
+            Opens at {selectedCamera.width}×{selectedCamera.height} — check this matches the camera
+            you expect.
+          </p>
+        )}
         {field.key === 'active_model' && MODEL_SPEC_HINTS[String(value)] && (
           <p className="field-hint experimental" data-testid="model-spec-hint">
             {MODEL_SPEC_HINTS[String(value)]}
@@ -329,7 +347,6 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
         <span className="state" data-testid="capture-state">
           {captureState}
         </span>
-        {running && stopButton('stop-capture-header')}
       </header>
 
       <section className="admin-hardware" data-testid="hardware-info">
@@ -386,7 +403,6 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
               {BACKEND_LABELS[b] ?? b}
             </label>
           ))}
-          <span className="badge restart">restart required</span>
         </div>
         <p className="field-hint">{BACKEND_HINTS[selectedBackend]}</p>
 
@@ -447,29 +463,19 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
         ))}
       </div>
 
-      {settings.warnings.length > 0 && (
+      {visibleWarnings.length > 0 && (
         <ul className="admin-warnings" data-testid="server-warnings">
-          {settings.warnings.map((w) => (
+          {visibleWarnings.map((w) => (
             <li key={w}>{w}</li>
           ))}
         </ul>
       )}
 
       {blockedByRunning && (
-        <div className="admin-warning admin-warning-action" data-testid="restart-warning">
-          <span>These need a capture restart: {pendingRestartFields.join(', ')}.</span>
-          <span className="admin-warning-buttons">
-            <button
-              className="btn-primary btn-small"
-              disabled={stopping || saving}
-              onClick={() => void handleSaveAndRestart()}
-              data-testid="save-and-restart"
-            >
-              {stopping || saving ? <Spinner /> : null} Save &amp; restart capture
-            </button>
-            {stopButton('stop-capture-inline')}
-          </span>
-        </div>
+        <p className="admin-warning" data-testid="restart-warning">
+          These need a capture restart: {pendingRestartFields.join(', ')}. Use{' '}
+          <strong>Save &amp; restart capture</strong> below.
+        </p>
       )}
 
       {error && (
@@ -478,14 +484,32 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
         </p>
       )}
 
-      <div className="admin-actions">
+      <div className="admin-actions" data-testid="admin-actions">
+        <span className="admin-actions-status" data-testid="pending-count">
+          {pendingFields.length > 0
+            ? `${pendingFields.length} unsaved change${pendingFields.length === 1 ? '' : 's'}`
+            : justSaved
+              ? 'Saved'
+              : 'No changes'}
+        </span>
+        {running && stopButton('stop-capture-inline')}
+        {blockedByRunning && (
+          <button
+            className="btn-primary btn-small"
+            disabled={stopping || saving}
+            onClick={() => void handleSaveAndRestart()}
+            data-testid="save-and-restart"
+          >
+            {stopping || saving ? <Spinner /> : null} Save &amp; restart capture
+          </button>
+        )}
         <button
           className="btn-primary"
           disabled={!canSave || saving}
           onClick={() => void handleSave()}
           data-testid="save-settings"
         >
-          Save
+          {saving ? <Spinner /> : null} Save
         </button>
         <button
           className="btn-outline"

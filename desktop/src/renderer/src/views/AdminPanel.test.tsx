@@ -369,10 +369,16 @@ describe('AdminPanel', () => {
     render(<AdminPanel port={8765} deps={deps} />)
 
     const select = await screen.findByTestId('camera-select')
+    expect(select).toHaveTextContent('1 — Logitech StreamCam')
+    expect(select).toHaveTextContent('0 — USB2.0 HD UVC WebCam')
     // The resolution is what tells the operator the name landed on the right
-    // index, so it has to be visible, not just the name.
-    expect(select).toHaveTextContent('1 — Logitech StreamCam (1920×1080)')
-    expect(select).toHaveTextContent('0 — USB2.0 HD UVC WebCam (1280×720)')
+    // index, so it still has to be visible — but on the hint line, where it
+    // is not truncated by the narrow two-column select. It reflects the
+    // *selected* camera, which the fixture leaves at index 0.
+    expect(screen.getByTestId('camera-resolution')).toHaveTextContent('1280×720')
+
+    await userEvent.selectOptions(select, '1')
+    expect(screen.getByTestId('camera-resolution')).toHaveTextContent('1920×1080')
   })
 
   it('keeps a saved camera index selectable when no device matches it', async () => {
@@ -411,11 +417,13 @@ describe('AdminPanel', () => {
     expect(await screen.findByTestId('rescan-cameras')).toBeDisabled()
   })
 
-  it('offers Stop capture in the header while running', async () => {
+  it('offers Stop capture in the action bar while running', async () => {
+    // The bar is sticky, so unlike the header it cannot scroll out of view.
     const { deps } = makeDeps('running')
     render(<AdminPanel port={8765} deps={deps} />)
 
-    expect(await screen.findByTestId('stop-capture-header')).toBeEnabled()
+    const bar = await screen.findByTestId('admin-actions')
+    expect(within(bar).getByTestId('stop-capture-inline')).toBeEnabled()
   })
 
   it('hides Stop capture when idle', async () => {
@@ -423,7 +431,7 @@ describe('AdminPanel', () => {
     render(<AdminPanel port={8765} deps={deps} />)
 
     await screen.findByTestId('hardware-info')
-    expect(screen.queryByTestId('stop-capture-header')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('stop-capture-inline')).not.toBeInTheDocument()
   })
 
   it('puts Stop capture inside the restart-required warning', async () => {
@@ -437,7 +445,11 @@ describe('AdminPanel', () => {
 
     const warning = await screen.findByTestId('restart-warning')
     expect(warning).toHaveTextContent('active_model')
-    expect(within(warning).getByTestId('stop-capture-inline')).toBeInTheDocument()
+    // The warning explains; the sticky bar carries the action, so the two are
+    // not duplicated on screen.
+    expect(within(warning).queryByRole('button')).not.toBeInTheDocument()
+    const bar = screen.getByTestId('admin-actions')
+    expect(within(bar).getByTestId('save-and-restart')).toBeInTheDocument()
   })
 
   it('stopping capture keeps unsaved edits', async () => {
@@ -449,7 +461,7 @@ describe('AdminPanel', () => {
 
     const model = await screen.findByLabelText(/Model/i)
     await userEvent.selectOptions(model, 'yolo11s.pt')
-    await userEvent.click(screen.getByTestId('stop-capture-header'))
+    await userEvent.click(screen.getByTestId('stop-capture-inline'))
 
     expect(api.stop).toHaveBeenCalled()
     await waitFor(() => expect(screen.getByLabelText(/Model/i)).toHaveValue('yolo11s.pt'))
@@ -482,5 +494,58 @@ describe('AdminPanel', () => {
 
     await screen.findByTestId('hardware-info')
     expect(screen.queryByTestId('save-and-restart')).not.toBeInTheDocument()
+  })
+
+  it('badges only the fields that apply instantly, not the restart-required ones', async () => {
+    // 14 of 16 fields are restart-required, so badging those made the badge
+    // carry no information. The exceptions are the surprising ones.
+    const { deps } = makeDeps('idle')
+    render(<AdminPanel port={8765} deps={deps} />)
+
+    await screen.findByTestId('hardware-info')
+    expect(screen.queryByText(/restart required/i)).not.toBeInTheDocument()
+    expect(screen.getAllByText(/applies instantly/i).length).toBeGreaterThan(0)
+  })
+
+  it('hides the server warning that lists every restart-required field', async () => {
+    // 16 items of comma-separated prose the badges and inline warning cover.
+    const { deps } = makeDeps('running', {
+      getSettings: vi.fn(async () =>
+        baseSettings({
+          warnings: [
+            'Capture is running — active_model, camera_index, capture_fps require stopping capture first.',
+            'cloud_api sends every inference frame to Roboflow.'
+          ]
+        })
+      )
+    })
+    render(<AdminPanel port={8765} deps={deps} />)
+
+    const list = await screen.findByTestId('server-warnings')
+    expect(list).toHaveTextContent('cloud_api sends every inference frame')
+    expect(list).not.toHaveTextContent('require stopping capture first')
+  })
+
+  it('counts unsaved changes in the action bar', async () => {
+    const { deps } = makeDeps('idle')
+    render(<AdminPanel port={8765} deps={deps} />)
+
+    expect(await screen.findByTestId('pending-count')).toHaveTextContent('No changes')
+
+    await userEvent.selectOptions(await screen.findByLabelText(/Model/i), 'yolo11s.pt')
+    expect(screen.getByTestId('pending-count')).toHaveTextContent('1 unsaved change')
+  })
+
+  it('confirms a save, and clears the confirmation on the next edit', async () => {
+    // Saving used to just go quiet, leaving no signal it had worked.
+    const { deps } = makeDeps('idle')
+    render(<AdminPanel port={8765} deps={deps} />)
+
+    await userEvent.selectOptions(await screen.findByLabelText(/Model/i), 'yolo11s.pt')
+    await userEvent.click(screen.getByTestId('save-settings'))
+    await waitFor(() => expect(screen.getByTestId('pending-count')).toHaveTextContent('Saved'))
+
+    await userEvent.selectOptions(screen.getByLabelText(/Model/i), 'yolo11m.pt')
+    expect(screen.getByTestId('pending-count')).not.toHaveTextContent('Saved')
   })
 })

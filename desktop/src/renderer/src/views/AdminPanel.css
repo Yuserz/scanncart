@@ -348,3 +348,27 @@
   align-items: center;
   flex-shrink: 0;
 }
+
+/* Sticky action bar. The form is four groups tall, so Save at the very bottom
+   meant scrolling to it after every edit made near the top. */
+.admin-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  border-radius: 8px 8px 0 0;
+  background: var(--panel);
+  box-shadow: 0 -6px 16px rgb(0 0 0 / 35%);
+}
+
+/* Pushes the buttons right and carries the unsaved/saved state. */
+.admin-actions-status {
+  margin-right: auto;
+  font-size: 12px;
+  color: var(--muted);
+}
