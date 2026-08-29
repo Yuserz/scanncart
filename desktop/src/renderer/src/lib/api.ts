@@ -49,6 +49,12 @@ export interface SettingsPayload {
   remote_infer_size: number
   remote_timeout_s: number
   remote_max_retries: number
+  // Device controls. null means "leave the camera alone" — calibration owns
+  // these, they are not hand-editable in the settings form.
+  camera_brightness: number | null
+  camera_exposure: number | null
+  camera_autofocus: boolean | null
+  camera_focus: number | null
 }
 
 export interface SettingsResponse extends SettingsPayload {

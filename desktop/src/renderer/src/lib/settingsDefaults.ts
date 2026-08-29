@@ -25,5 +25,9 @@ export const DEFAULT_SETTINGS: SettingsPayload = {
   cloud_api_url: 'https://serverless.roboflow.com',
   remote_infer_size: 640,
   remote_timeout_s: 5.0,
-  remote_max_retries: 2
+  remote_max_retries: 2,
+  camera_brightness: null,
+  camera_exposure: null,
+  camera_autofocus: null,
+  camera_focus: null
 }

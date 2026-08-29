@@ -14,6 +14,10 @@ def test_settings_defaults():
     assert s.infer_frame_skip == 0
     assert s.device == "auto"
     assert s.preview_height == 720
+    assert s.camera_brightness is None
+    assert s.camera_exposure is None
+    assert s.camera_autofocus is None
+    assert s.camera_focus is None
 
 
 def _fake_torch(monkeypatch, cuda_available: bool):

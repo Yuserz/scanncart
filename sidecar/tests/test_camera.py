@@ -1,6 +1,7 @@
 import threading
 import time
 
+import cv2
 import numpy as np
 import pytest
 
@@ -150,6 +151,48 @@ def test_measured_fps_is_zero_before_any_frame():
 
     c = CameraCapture(0, 640, 480, 30, cap_factory=lambda i: _Cap())
     assert c.measured_fps == 0.0
+
+
+def test_open_applies_configured_controls():
+    """Auto exposure and face-tracking autofocus are wrong for a counter:
+    the StreamCam's smart AF/AE follows faces, and there is no face here."""
+    sets = []
+
+    class _Cap:
+        def isOpened(self): return True
+        def set(self, prop, value):
+            sets.append((prop, value)); return True
+        def get(self, prop): return 0
+        def read(self): return True, np.zeros((4, 4, 3), dtype=np.uint8)
+        def release(self): pass
+
+    c = CameraCapture(0, 640, 480, 30, cap_factory=lambda i: _Cap(),
+                      brightness=180.0, exposure=-6.0, autofocus=False, focus=30.0)
+    c.open(); c.release()
+
+    assert (cv2.CAP_PROP_BRIGHTNESS, 180.0) in sets
+    assert (cv2.CAP_PROP_EXPOSURE, -6.0) in sets
+    assert (cv2.CAP_PROP_AUTOFOCUS, 0) in sets
+    assert (cv2.CAP_PROP_FOCUS, 30.0) in sets
+
+
+def test_unset_controls_are_left_alone():
+    """None means 'do not touch', so existing behaviour is unchanged."""
+    sets = []
+
+    class _Cap:
+        def isOpened(self): return True
+        def set(self, prop, value):
+            sets.append(prop); return True
+        def get(self, prop): return 0
+        def read(self): return True, np.zeros((4, 4, 3), dtype=np.uint8)
+        def release(self): pass
+
+    c = CameraCapture(0, 640, 480, 30, cap_factory=lambda i: _Cap())
+    c.open(); c.release()
+
+    assert cv2.CAP_PROP_BRIGHTNESS not in sets
+    assert cv2.CAP_PROP_EXPOSURE not in sets
 
 
 def test_measured_fps_survives_concurrent_reads():

@@ -35,6 +35,15 @@ class Settings:
     preview_max_fps: int = 30
     track_expiry_s: float = 1.5
 
+    # Device controls. None means "leave the camera alone", so behaviour is
+    # unchanged until calibration proposes values. The StreamCam's automatic
+    # focus and exposure track faces; a counter has none, which is why locked
+    # manual values suit this app.
+    camera_brightness: float | None = None
+    camera_exposure: float | None = None
+    camera_autofocus: bool | None = None
+    camera_focus: float | None = None
+
     # Which detector implementation backs capture. "native" runs the weights in
     # this process (the only backend that satisfies the PRD's offline promise);
     # the two remote backends differ only by URL. See docs/DETECTOR_BACKENDS.md.

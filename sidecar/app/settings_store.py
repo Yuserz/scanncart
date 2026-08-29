@@ -98,6 +98,11 @@ RESTART_REQUIRED_FIELDS = {
     "remote_infer_size",
     "remote_timeout_s",
     "remote_max_retries",
+    # Baked into the camera at open() time — see CameraCapture.open().
+    "camera_brightness",
+    "camera_exposure",
+    "camera_autofocus",
+    "camera_focus",
 }
 
 _COMMON_CAPTURE_MODES = {(640, 480), (1280, 720), (1920, 1080)}
@@ -165,6 +170,10 @@ def _valid_field(name: str, value: Any) -> bool:
         return isinstance(value, (int, float)) and 0.1 <= value <= 60.0
     if name == "remote_max_retries":
         return isinstance(value, int) and 0 <= value <= 5
+    if name in ("camera_brightness", "camera_exposure", "camera_focus"):
+        return value is None or isinstance(value, (int, float))
+    if name == "camera_autofocus":
+        return value is None or isinstance(value, bool)
     return False
 
 

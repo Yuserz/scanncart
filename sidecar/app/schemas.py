@@ -81,6 +81,10 @@ class SettingsPayload(BaseModel):
     remote_infer_size: int
     remote_timeout_s: float
     remote_max_retries: int
+    camera_brightness: float | None
+    camera_exposure: float | None
+    camera_autofocus: bool | None
+    camera_focus: float | None
 
 
 class SettingsResponse(SettingsPayload):
@@ -114,6 +118,10 @@ class SettingsUpdateRequest(BaseModel):
     remote_infer_size: int | None = Field(default=None, ge=128, le=1920)
     remote_timeout_s: float | None = Field(default=None, ge=0.1, le=60.0)
     remote_max_retries: int | None = Field(default=None, ge=0, le=5)
+    camera_brightness: float | None = None
+    camera_exposure: float | None = None
+    camera_autofocus: bool | None = None
+    camera_focus: float | None = None
 
     @field_validator("detector_backend")
     @classmethod

@@ -63,6 +63,10 @@ def _default_source_factory(settings: Settings):
     return CameraCapture(
         settings.camera_index, settings.capture_width,
         settings.capture_height, settings.capture_fps,
+        brightness=settings.camera_brightness,
+        exposure=settings.camera_exposure,
+        autofocus=settings.camera_autofocus,
+        focus=settings.camera_focus,
     )
 
 
@@ -285,6 +289,10 @@ def _settings_response(state: "AppState") -> SettingsResponse:
         remote_infer_size=state.settings.remote_infer_size,
         remote_timeout_s=state.settings.remote_timeout_s,
         remote_max_retries=state.settings.remote_max_retries,
+        camera_brightness=state.settings.camera_brightness,
+        camera_exposure=state.settings.camera_exposure,
+        camera_autofocus=state.settings.camera_autofocus,
+        camera_focus=state.settings.camera_focus,
         hot_reloadable_fields=sorted(HOT_RELOADABLE_FIELDS),
         restart_required_fields=sorted(RESTART_REQUIRED_FIELDS),
         warnings=compute_warnings(state.settings, state.state, api_key_present),

@@ -29,6 +29,10 @@ function baseSettings(overrides: Partial<SettingsResponse> = {}): SettingsRespon
     remote_infer_size: 640,
     remote_timeout_s: 10,
     remote_max_retries: 3,
+    camera_brightness: null,
+    camera_exposure: null,
+    camera_autofocus: null,
+    camera_focus: null,
     hot_reloadable_fields: ['infer_frame_skip', 'preview_height', 'track_expiry_s'],
     restart_required_fields: [
       'active_model',

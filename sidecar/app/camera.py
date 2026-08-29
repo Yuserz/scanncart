@@ -72,12 +72,23 @@ class FakeFrameSource:
 class CameraCapture:
     """Owns an OpenCV device and runs a background capture thread."""
 
-    def __init__(self, index, width, height, fps, cap_factory=_default_capture):
+    def __init__(
+        self, index, width, height, fps, cap_factory=_default_capture,
+        brightness: float | None = None, exposure: float | None = None,
+        autofocus: bool | None = None, focus: float | None = None,
+    ):
         self.index = index
         self.width = width
         self.height = height
         self.fps = float(fps)
         self._cap_factory = cap_factory
+        # None means "leave the camera alone" — see Settings.camera_brightness
+        # et al. The StreamCam's automatic focus/exposure track faces, which a
+        # checkout counter never has, so locked manual values suit this app.
+        self._brightness = brightness
+        self._exposure = exposure
+        self._autofocus = autofocus
+        self._focus = focus
         self._cap = None
         self._buffer = LatestFrameBuffer()
         self._thread = None
@@ -101,6 +112,16 @@ class CameraCapture:
         self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
         self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
         self._cap.set(cv2.CAP_PROP_FPS, self.fps)
+        # Order matters: turn autofocus off before writing a focus value, or
+        # the device may immediately hunt away from it.
+        if self._autofocus is not None:
+            self._cap.set(cv2.CAP_PROP_AUTOFOCUS, 1 if self._autofocus else 0)
+        if self._focus is not None:
+            self._cap.set(cv2.CAP_PROP_FOCUS, self._focus)
+        if self._brightness is not None:
+            self._cap.set(cv2.CAP_PROP_BRIGHTNESS, self._brightness)
+        if self._exposure is not None:
+            self._cap.set(cv2.CAP_PROP_EXPOSURE, self._exposure)
         if not self._cap.isOpened():
             self.is_open = False
             return False
