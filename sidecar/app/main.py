@@ -231,6 +231,14 @@ class AppState:
     # step without a real camera.
     calibrator: Callable[[], CameraProfile] | None = None
     last_profile: CameraProfile | None = None
+    # Marks the camera as exclusively held by an in-flight calibration (~80s).
+    # `state.state == "running"` already refuses calibration during capture,
+    # but nothing said the reverse until this: without it, /api/capture/start
+    # and /api/cameras (its rescan path) could open or probe the same device
+    # a calibration is mid-measurement on. Set for the duration of the
+    # calibrate request and always cleared in a finally, so an exception
+    # cannot strand it true.
+    calibrating: bool = False
 
     def __post_init__(self):
         if self.settings is None:
@@ -467,6 +475,12 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
         if state.state == "running":
             return _response(False, "Capture is running — stop it to rescan for cameras.")
 
+        if state.calibrating:
+            # A rescan opens every device in turn; hitting the one calibration
+            # is mid-measurement on used to break early (probe_index fails
+            # closed) and overwrite state.cameras with a truncated list.
+            return _response(False, "Calibration is in progress — wait for it to finish to rescan.")
+
         if state.cameras is not None and not rescan:
             # Cheap hotplug check: compare Windows' device names against the
             # ones present at the last scan. Without this a camera plugged in
@@ -528,9 +542,20 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
                 status_code=409,
                 detail="Stop capture before calibrating; the camera is exclusive.",
             )
+        if state.calibrating:
+            raise HTTPException(
+                status_code=409,
+                detail="Calibration is already in progress for this camera.",
+            )
         if state.calibrator is None:
             raise HTTPException(status_code=503, detail="No calibrator configured.")
-        profile = await run_in_threadpool(state.calibrator)
+        state.calibrating = True
+        try:
+            profile = await run_in_threadpool(state.calibrator)
+        finally:
+            # Always cleared, even on a raised exception, so a failed
+            # calibration cannot strand the camera permanently exclusive.
+            state.calibrating = False
         state.last_profile = profile
         # Sibling of settings_path (like save_settings(state.settings, state.
         # settings_path)) rather than camera_profiles.py's hardcoded default,
@@ -598,6 +623,15 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
 
     @app.post("/api/capture/start")
     async def start():
+        if state.calibrating:
+            # Calibration holds the device exclusively for ~80s (camera_caps.
+            # calibrate). Starting capture underneath it would open the same
+            # device twice: capture fails, or calibration measures a
+            # contended device and writes a bogus profile to disk.
+            raise HTTPException(
+                status_code=409,
+                detail="Calibration is in progress; the camera is exclusive. Wait for it to finish.",
+            )
         if state.state != "running":
             def _acquire():
                 """Opening a camera blocks — measured 43.5 s for a Logitech

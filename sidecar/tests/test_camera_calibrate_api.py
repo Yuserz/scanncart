@@ -1,3 +1,4 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from app.camera_caps import CameraProfile, ControlSupport
@@ -52,6 +53,76 @@ def test_calibrate_is_refused_while_capture_is_running(tmp_path):
 def test_apply_without_a_profile_is_a_404(tmp_path):
     client, _ = _client(tmp_path)
     assert client.post("/api/camera/profile/apply").status_code == 404
+
+
+# --- camera exclusivity is bidirectional ----------------------------------
+#
+# state.state == "running" already refused calibration while capture held the
+# camera. Nothing refused the reverse: /api/capture/start and /api/cameras
+# could open or probe the same device a calibration is mid-measurement on,
+# because AppState had no flag saying calibration owns the camera.
+
+
+def test_capture_start_is_refused_while_calibration_is_in_progress(tmp_path):
+    """Real scenario: operator starts calibration in Admin, switches to Live
+    view (the component unmounts but the server request keeps running),
+    presses Start. Without this refusal the device gets opened twice."""
+    client, state = _client(tmp_path)
+    state.calibrating = True
+
+    r = client.post("/api/capture/start")
+
+    assert r.status_code == 409
+    assert "calibrat" in r.json()["detail"].lower()
+    assert state.state != "running"  # never touched source_factory/detector_factory
+
+
+def test_calibrate_is_refused_while_another_calibration_is_in_progress(tmp_path):
+    """The UI's `calibrating` flag is per-component, not per-device — a
+    second concurrent request (two tabs, a stuck component) must still be
+    refused server-side."""
+    client, state = _client(tmp_path)
+    state.calibrating = True
+
+    r = client.post("/api/camera/calibrate")
+
+    assert r.status_code == 409
+    assert "already in progress" in r.json()["detail"].lower()
+
+
+def test_calibrating_flag_is_set_during_and_cleared_after_a_successful_calibration(tmp_path):
+    seen_during = {}
+
+    def calibrator():
+        seen_during["calibrating"] = state.calibrating
+        return _profile()
+
+    state = AppState(settings_path=str(tmp_path / "s.json"), db_path=":memory:",
+                     calibrator=calibrator)
+    client = TestClient(build_app(lambda: state))
+
+    assert state.calibrating is False
+    client.post("/api/camera/calibrate")
+
+    assert seen_during["calibrating"] is True  # held for the duration of the request
+    assert state.calibrating is False  # cleared once it completes
+
+
+def test_calibrating_flag_is_cleared_even_when_the_calibrator_raises(tmp_path):
+    """Set True before the calibrator runs, cleared in a finally — an
+    exception (a real camera going away mid-measurement, say) must not
+    strand the camera permanently exclusive."""
+    def boom():
+        raise RuntimeError("camera unplugged mid-calibration")
+
+    state = AppState(settings_path=str(tmp_path / "s.json"), db_path=":memory:",
+                     calibrator=boom)
+    client = TestClient(build_app(lambda: state))
+
+    with pytest.raises(RuntimeError):
+        client.post("/api/camera/calibrate")
+
+    assert state.calibrating is False
 
 
 # --- default calibrator wiring (the device_name regression) --------------

@@ -178,6 +178,22 @@ def test_cameras_endpoint_does_not_probe_while_capture_is_running(client):
     assert [c["index"] for c in body["cameras"]] == [0, 1]
 
 
+def test_cameras_endpoint_does_not_probe_while_calibration_is_in_progress(client):
+    """A rescan opens every device in turn; hitting the one calibration holds
+    exclusively used to break early (probe_index fails closed) and overwrite
+    state.cameras with a truncated list."""
+    client.get("/api/cameras")  # populate the cache while idle
+    calls = []
+    client.state.camera_lister = lambda: calls.append(1) or []
+    client.state.calibrating = True
+
+    body = client.get("/api/cameras?rescan=true").json()
+    assert calls == []
+    assert body["probed"] is False
+    assert "calibrat" in body["detail"].lower()
+    assert [c["index"] for c in body["cameras"]] == [0, 1]
+
+
 def test_cameras_endpoint_is_empty_when_running_before_any_scan(client):
     client.state.state = "running"
     body = client.get("/api/cameras").json()
