@@ -96,6 +96,7 @@ function makeDeps(
       contrast: 0,
       sharpness: 0,
       capture_fps: 0,
+      target_fps: 0,
       verdicts: {},
       detail: ''
     })),
@@ -572,6 +573,7 @@ describe('AdminPanel', () => {
         contrast: 27,
         sharpness: 4.8,
         capture_fps: 12,
+        target_fps: 60,
         verdicts: { brightness: 'low', sharpness: 'low', capture_fps: 'low' },
         detail: ''
       }))
@@ -591,6 +593,7 @@ describe('AdminPanel', () => {
         contrast: 0,
         sharpness: 0,
         capture_fps: 0,
+        target_fps: 0,
         verdicts: {},
         detail: 'Start capture to measure the image.'
       }))

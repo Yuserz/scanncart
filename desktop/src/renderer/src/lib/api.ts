@@ -101,6 +101,7 @@ export interface CameraQualityResponse {
   contrast: number
   sharpness: number
   capture_fps: number
+  target_fps: number
   verdicts: Record<string, string>
   detail: string
 }

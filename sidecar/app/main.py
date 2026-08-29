@@ -21,7 +21,6 @@ from app.settings_store import (
 from app.camera_quality import (
     BRIGHTNESS_MAX,
     BRIGHTNESS_MIN,
-    FPS_MIN,
     SHARPNESS_MIN,
     frame_quality,
 )
@@ -461,17 +460,23 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
 
         q = await run_in_threadpool(frame_quality, got[1])
         fps = float(getattr(source, "measured_fps", 0.0))
+        target_fps = float(state.settings.capture_fps)
         return CameraQualityResponse(
             available=True,
             brightness=round(q.brightness, 1),
             contrast=round(q.contrast, 1),
             sharpness=round(q.sharpness, 1),
             capture_fps=round(fps, 1),
+            target_fps=target_fps,
             verdicts={
                 "brightness": "low" if q.brightness < BRIGHTNESS_MIN
                 else "high" if q.brightness > BRIGHTNESS_MAX else "ok",
                 "sharpness": "low" if q.sharpness < SHARPNESS_MIN else "ok",
-                "capture_fps": "low" if fps < FPS_MIN else "ok",
+                # Relative to what was actually requested, not a fixed
+                # threshold: capture_fps is user-configurable (1-120) and the
+                # shipped low_end preset asks for 15, so a hardcoded minimum
+                # falsely flagged hardware hitting exactly its own target.
+                "capture_fps": "low" if fps < target_fps * 0.8 else "ok",
             },
             detail="",
         )

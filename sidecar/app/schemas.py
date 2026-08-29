@@ -194,6 +194,7 @@ class CameraQualityResponse(BaseModel):
     contrast: float = 0.0
     sharpness: float = 0.0
     capture_fps: float = 0.0
+    target_fps: float = 0.0
     verdicts: dict[str, str] = {}
     detail: str = ""
 

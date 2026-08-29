@@ -467,7 +467,12 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
                 cameraQuality.verdicts.sharpness,
                 'higher is sharper'
               ],
-              ['Capture fps', cameraQuality.capture_fps, cameraQuality.verdicts.capture_fps, '≥ 25']
+              [
+                'Capture fps',
+                cameraQuality.capture_fps,
+                cameraQuality.verdicts.capture_fps,
+                `≥ ${Math.round(cameraQuality.target_fps * 0.8)}`
+              ]
             ].map(([label, value, verdict, hint]) => (
               <div key={String(label)} className="quality-metric">
                 <span className="quality-label">{label}</span>

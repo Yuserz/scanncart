@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 
 from app.main import AppState, build_app
 from app.schemas import Detection
+from app.settings import Settings
 
 
 class _Src:
@@ -74,3 +75,24 @@ def test_a_stalled_camera_reports_capture_fps_as_low():
 
     assert body["capture_fps"] == 0.0
     assert body["verdicts"]["capture_fps"] == "low"
+
+
+def test_camera_hitting_its_configured_low_end_target_reports_capture_fps_as_ok():
+    """capture_fps is user-configurable (1-120) and the shipped low_end preset
+    sets it to 15. A camera delivering exactly the 15 fps it was asked for
+    must not be flagged 'low' against some unrelated fixed minimum."""
+    class _LowEnd(_Src):
+        measured_fps = 15.0
+
+    state = AppState(source_factory=lambda s: _LowEnd(),
+                     detector_factory=lambda s, d: _Det(), db_path=":memory:",
+                     settings=Settings(capture_fps=15))
+    client = TestClient(build_app(lambda: state))
+    with client:
+        client.post("/api/capture/start")
+        body = client.get("/api/camera/quality").json()
+        client.post("/api/capture/stop")
+
+    assert body["capture_fps"] == 15.0
+    assert body["target_fps"] == 15.0
+    assert body["verdicts"]["capture_fps"] == "ok"

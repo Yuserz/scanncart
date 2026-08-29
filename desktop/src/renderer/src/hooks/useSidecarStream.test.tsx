@@ -49,6 +49,7 @@ const makeDeps = (
         contrast: 0,
         sharpness: 0,
         capture_fps: 0,
+        target_fps: 0,
         verdicts: {},
         detail: ''
       }))
