@@ -174,3 +174,18 @@ def test_stats_fall_back_to_the_configured_rate_for_a_source_that_cannot_measure
     msg = pipe.process_once()
 
     assert msg["stats"]["capture_fps"] == _StubSource.fps
+
+
+def test_stats_report_zero_when_camera_stalls():
+    """A stalled camera has measured_fps == 0.0 (attribute present, value is zero).
+    We must report 0.0, NOT the requested rate — that is exactly the fabricated
+    number this task exists to remove."""
+    class _StallSource(_StubSource):
+        measured_fps = 0.0
+
+    sent = []
+    pipe = Pipeline(_StallSource(), _StubDetector(), Settings(capture_fps=60),
+                    on_message=sent.append)
+    msg = pipe.process_once()
+
+    assert msg["stats"]["capture_fps"] == 0.0

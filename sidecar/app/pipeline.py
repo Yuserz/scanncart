@@ -58,9 +58,14 @@ class Pipeline:
 
     def _capture_fps(self) -> float:
         """What the camera actually delivers, falling back to its nominal rate
-        for sources that cannot measure (test doubles)."""
+        for sources that cannot measure (test doubles).
+
+        When a camera stalls, measured_fps is 0.0: we report that, not the
+        requested rate. Only test doubles that lack measured_fps fall back
+        to source.fps.
+        """
         measured = getattr(self._source, "measured_fps", None)
-        if measured:
+        if measured is not None:
             return float(measured)
         return float(getattr(self._source, "fps", 0.0))
 
