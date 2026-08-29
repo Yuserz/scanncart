@@ -597,6 +597,38 @@ describe('AdminPanel', () => {
     expect(within(panel).getAllByTestId('quality-low').length).toBeGreaterThan(0)
   })
 
+  it('marks a failing metric with more than colour, for a colourblind operator', async () => {
+    // This panel's whole purpose is making a bad reading visible, so a
+    // failing metric must be identifiable without relying on hue: a visible
+    // symbol plus text a screen reader can announce.
+    const { deps } = makeDeps('running', {
+      getCameraQuality: vi.fn(async () => ({
+        available: true,
+        brightness: 23,
+        contrast: 27,
+        sharpness: 200,
+        capture_fps: 60,
+        target_fps: 60,
+        verdicts: { brightness: 'low', sharpness: 'ok', capture_fps: 'ok' },
+        detail: ''
+      }))
+    })
+    render(<AdminPanel port={8765} deps={deps} />)
+
+    const panel = await screen.findByTestId('camera-quality')
+    const failing = within(panel).getAllByTestId('quality-low')
+    expect(failing).toHaveLength(1)
+    // A symbol is present in the rendered text, not just a CSS colour class.
+    expect(failing[0].textContent).toMatch(/[^\d\s]/)
+    // And an accessible name conveys the failing state to a screen reader.
+    expect(failing[0]).toHaveTextContent(/outside the expected range/i)
+
+    const passing = within(panel).getAllByTestId('quality-ok')
+    for (const el of passing) {
+      expect(el).not.toHaveTextContent(/outside the expected range/i)
+    }
+  })
+
   it('shows the calibration result with its measured evidence, and applies on request', async () => {
     const { deps, api } = makeDeps('idle')
     render(<AdminPanel port={8765} deps={deps} />)

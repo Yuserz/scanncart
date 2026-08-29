@@ -524,18 +524,31 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
                 cameraQuality.verdicts.capture_fps,
                 `≥ ${Math.round(cameraQuality.target_fps * 0.8)}`
               ]
-            ].map(([label, value, verdict, hint]) => (
-              <div key={String(label)} className="quality-metric">
-                <span className="quality-label">{label}</span>
-                <span
-                  className={verdict === 'ok' ? 'quality-value' : 'quality-value bad'}
-                  data-testid={verdict === 'ok' ? 'quality-ok' : 'quality-low'}
-                >
-                  {value}
-                </span>
-                <span className="field-hint">{hint}</span>
-              </div>
-            ))}
+            ].map(([label, value, verdict, hint]) => {
+              const failing = verdict !== 'ok'
+              return (
+                <div key={String(label)} className="quality-metric">
+                  <span className="quality-label">{label}</span>
+                  <span
+                    className={failing ? 'quality-value bad' : 'quality-value'}
+                    data-testid={failing ? 'quality-low' : 'quality-ok'}
+                  >
+                    {/* Colour alone fails a colourblind operator reading a
+                        panel whose whole purpose is flagging a bad reading —
+                        a symbol carries the same signal without relying on
+                        hue, and the hidden text names it for screen readers. */}
+                    {failing && (
+                      <span className="quality-flag" aria-hidden="true">
+                        ▲{' '}
+                      </span>
+                    )}
+                    {value}
+                    {failing && <span className="sr-only"> — outside the expected range</span>}
+                  </span>
+                  <span className="field-hint">{hint}</span>
+                </div>
+              )
+            })}
           </div>
         </section>
       )}
