@@ -14,6 +14,7 @@ import { DEFAULT_SETTINGS } from '../lib/settingsDefaults'
 export interface SettingsDeps {
   apiFactory?: (port: number) => ApiClient
   healthPollMs?: number
+  cameraPollMs?: number
   retryDelayMs?: number
 }
 
@@ -54,6 +55,9 @@ function errorMessage(e: unknown): string {
 export function useSidecarSettings(port: number, deps: SettingsDeps = {}): SidecarSettings {
   const apiFactory = deps.apiFactory ?? createApiClient
   const healthPollMs = deps.healthPollMs ?? 2000
+  // Each poll costs the sidecar one ~550 ms device-name query, and only
+  // triggers the expensive scan when the device set actually changed.
+  const cameraPollMs = deps.cameraPollMs ?? 15000
   const retryDelayMs = deps.retryDelayMs ?? 1000
 
   const [settings, setSettings] = useState<SettingsResponse | null>(null)
@@ -145,14 +149,22 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
     }
     void pollHealth()
     const healthTimer = setInterval(() => void pollHealth(), healthPollMs)
+
+    // Notice a camera plugged in after startup. The sidecar compares device
+    // names (cheap) and only re-scans when they changed, so this is not the
+    // 30 s scan on a timer. It skips itself while capture holds a device.
+    const cameraTicker = setInterval(() => {
+      if (!cancelled) void refreshCameras()
+    }, cameraPollMs)
     return () => {
       cancelled = true
       if (retryTimer !== null) clearTimeout(retryTimer)
       clearTimeout(cameraTimer)
       clearInterval(healthTimer)
+      clearInterval(cameraTicker)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [port, apiFactory, healthPollMs, retryDelayMs])
+  }, [port, apiFactory, healthPollMs, retryDelayMs, cameraPollMs])
 
   const update = useCallback(async (patch: SettingsUpdate): Promise<SettingsResponse> => {
     setSaving(true)

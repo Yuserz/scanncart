@@ -183,4 +183,14 @@ describe('useSidecarSettings', () => {
     expect(result.current.error).toMatch(/409/)
     expect(result.current.saving).toBe(false)
   })
+
+  it('polls for a camera plugged in after startup', async () => {
+    // refreshCameras only ran on mount, so a camera plugged in later stayed
+    // invisible until the user pressed Rescan. The sidecar makes each poll
+    // cheap (device names only) and re-scans only when the set changed.
+    const { api } = makeDeps()
+    renderHook(() => useSidecarSettings(8765, { apiFactory: () => api, cameraPollMs: 40 }))
+
+    await waitFor(() => expect(vi.mocked(api.getCameras).mock.calls.length).toBeGreaterThan(2))
+  })
 })

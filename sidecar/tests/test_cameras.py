@@ -214,3 +214,98 @@ def test_cameras_endpoint_refuses_to_rescan_while_running(client):
     client.state.state = "running"
     client.get("/api/cameras?rescan=true")
     assert calls == []
+
+
+# --- hotplug -------------------------------------------------------------
+
+
+def _hotplug_client(devices, names):
+    """Client whose camera list and device names are both swappable, so a
+    camera can be 'plugged in' mid-test."""
+    state = AppState(
+        camera_lister=lambda: list(devices["v"]),
+        camera_namer=lambda: list(names["v"]),
+    )
+    app = build_app(lambda: state)
+    c = TestClient(app)
+    c.state = state
+    return c
+
+
+def test_a_camera_plugged_in_later_is_picked_up_without_pressing_rescan():
+    """The cache used to be returned unconditionally, so a camera plugged in
+    after startup stayed invisible until someone pressed Rescan."""
+    devices = {"v": [CameraDevice(index=0, name="Builtin", width=1280, height=720)]}
+    names = {"v": ["Builtin"]}
+    with _hotplug_client(devices, names) as client:
+        assert len(client.get("/api/cameras").json()["cameras"]) == 1
+
+        # Plug in a second camera.
+        devices["v"] = devices["v"] + [
+            CameraDevice(index=1, name="StreamCam", width=1920, height=1080)
+        ]
+        names["v"] = ["Builtin", "StreamCam"]
+
+        body = client.get("/api/cameras").json()
+        assert [c["name"] for c in body["cameras"]] == ["Builtin", "StreamCam"]
+        assert body["probed"] is True
+
+
+def test_an_unchanged_device_set_still_uses_the_cache():
+    scans = []
+    devices = {"v": [CameraDevice(index=0, name="Builtin", width=1280, height=720)]}
+    names = {"v": ["Builtin"]}
+    with _hotplug_client(devices, names) as client:
+        client.get("/api/cameras")
+        client.state.camera_lister = lambda: scans.append(1) or list(devices["v"])
+        body = client.get("/api/cameras").json()
+
+    # The expensive scan must not run just because someone asked again.
+    assert scans == []
+    assert body["probed"] is False
+
+
+def test_unplugging_a_camera_is_noticed_too():
+    devices = {
+        "v": [
+            CameraDevice(index=0, name="Builtin", width=1280, height=720),
+            CameraDevice(index=1, name="StreamCam", width=1920, height=1080),
+        ]
+    }
+    names = {"v": ["Builtin", "StreamCam"]}
+    with _hotplug_client(devices, names) as client:
+        assert len(client.get("/api/cameras").json()["cameras"]) == 2
+
+        devices["v"] = devices["v"][:1]
+        names["v"] = ["Builtin"]
+
+        assert [c["name"] for c in client.get("/api/cameras").json()["cameras"]] == ["Builtin"]
+
+
+def test_a_failing_name_probe_falls_back_to_the_cache():
+    devices = {"v": [CameraDevice(index=0, name="Builtin", width=1280, height=720)]}
+    names = {"v": ["Builtin"]}
+    with _hotplug_client(devices, names) as client:
+        client.get("/api/cameras")
+
+        def boom():
+            raise OSError("no powershell")
+
+        client.state.camera_namer = boom
+        body = client.get("/api/cameras").json()
+
+    # Degrades to the previous answer rather than erroring the panel.
+    assert len(body["cameras"]) == 1
+
+
+def test_hotplug_check_is_skipped_while_capture_is_running():
+    calls = []
+    devices = {"v": [CameraDevice(index=0, name="Builtin", width=1280, height=720)]}
+    names = {"v": ["Builtin"]}
+    with _hotplug_client(devices, names) as client:
+        client.get("/api/cameras")
+        client.state.camera_namer = lambda: calls.append(1) or ["Builtin", "New"]
+        client.state.state = "running"
+        client.get("/api/cameras")
+
+    assert calls == []

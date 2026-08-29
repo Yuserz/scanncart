@@ -46,7 +46,7 @@ from app.schemas import (
     SystemInfoResponse,
 )
 from app.camera import CameraCapture
-from app.cameras import CameraDevice, list_cameras
+from app.cameras import CameraDevice, list_cameras, list_device_names
 from app.inference import RoboflowRemoteDetector, YoloDetector
 from app.logging_store import LoggingStore
 
@@ -181,6 +181,11 @@ class AppState:
     # capture holds the camera.
     camera_lister: Callable[[], list[CameraDevice]] = list_cameras
     cameras: list[CameraDevice] | None = None
+    # Windows' device names at the time of the last scan. Re-reading them costs
+    # ~550 ms (one PowerShell call, opens nothing) against ~30 s for a full
+    # scan, so it is the cheap way to notice a camera plugged in after startup.
+    camera_namer: Callable[[], list[str]] = list_device_names
+    camera_signature: list[str] | None = None
     # Serializes capture teardown between the HTTP handler and the pipeline
     # thread's error handler.
     teardown_lock: threading.Lock = field(default_factory=threading.Lock)
@@ -407,8 +412,20 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
 
         if state.state == "running":
             return _response(False, "Capture is running — stop it to rescan for cameras.")
+
         if state.cameras is not None and not rescan:
-            return _response(False, f"{len(state.cameras)} camera(s), from the last scan.")
+            # Cheap hotplug check: compare Windows' device names against the
+            # ones present at the last scan. Without this a camera plugged in
+            # after startup stayed invisible until someone pressed Rescan,
+            # because every caller got the cache back.
+            try:
+                current = await run_in_threadpool(state.camera_namer)
+            except Exception:  # noqa: BLE001 - never fail the request over this
+                current = state.camera_signature
+            if current == state.camera_signature:
+                return _response(False, f"{len(state.cameras)} camera(s), from the last scan.")
+
+        state.camera_signature = await run_in_threadpool(state.camera_namer)
         state.cameras = await run_in_threadpool(state.camera_lister)
         return _response(True, f"Found {len(state.cameras)} camera(s).")
 
