@@ -179,6 +179,17 @@ class CamerasResponse(BaseModel):
     detail: str = ""
 
 
+class CameraQualityResponse(BaseModel):
+    """Live image metrics, for the setup wizard's readout."""
+    available: bool = False
+    brightness: float = 0.0
+    contrast: float = 0.0
+    sharpness: float = 0.0
+    capture_fps: float = 0.0
+    verdicts: dict[str, str] = {}
+    detail: str = ""
+
+
 class DetectorProbeResponse(BaseModel):
     """Result of checking the selected backend before capture starts."""
     backend: str

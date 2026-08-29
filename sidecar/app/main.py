@@ -18,6 +18,13 @@ from app.settings_store import (
     load_settings,
     save_settings,
 )
+from app.camera_quality import (
+    BRIGHTNESS_MAX,
+    BRIGHTNESS_MIN,
+    FPS_MIN,
+    SHARPNESS_MIN,
+    frame_quality,
+)
 from app.credentials import has_api_key, load_api_key
 from app.hardware import HardwareInfo, probe_hardware
 from app.presets import PRESETS, recommend_preset
@@ -33,6 +40,7 @@ from app.tracking import IouTracker
 from app.schemas import (
     ApplyPresetRequest,
     CameraInfo,
+    CameraQualityResponse,
     CamerasResponse,
     HealthResponse,
     LogEvent,
@@ -429,6 +437,36 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
         state.camera_signature = await run_in_threadpool(state.camera_namer)
         state.cameras = await run_in_threadpool(state.camera_lister)
         return _response(True, f"Found {len(state.cameras)} camera(s).")
+
+    @app.get("/api/camera/quality", response_model=CameraQualityResponse)
+    async def camera_quality():
+        """Live image metrics. Reads the pipeline's newest frame rather than
+        opening the device, so it works while capture holds it."""
+        source = state.source
+        if state.state != "running" or source is None:
+            return CameraQualityResponse(
+                available=False, detail="Start capture to measure the image."
+            )
+        got = source.latest()
+        if got is None:
+            return CameraQualityResponse(available=False, detail="No frame yet.")
+
+        q = await run_in_threadpool(frame_quality, got[1])
+        fps = float(getattr(source, "measured_fps", 0.0))
+        return CameraQualityResponse(
+            available=True,
+            brightness=round(q.brightness, 1),
+            contrast=round(q.contrast, 1),
+            sharpness=round(q.sharpness, 1),
+            capture_fps=round(fps, 1),
+            verdicts={
+                "brightness": "low" if q.brightness < BRIGHTNESS_MIN
+                else "high" if q.brightness > BRIGHTNESS_MAX else "ok",
+                "sharpness": "low" if q.sharpness < SHARPNESS_MIN else "ok",
+                "capture_fps": "low" if 0 < fps < FPS_MIN else "ok",
+            },
+            detail="",
+        )
 
     @app.post("/api/detector/probe", response_model=DetectorProbeResponse)
     async def probe_detector():
