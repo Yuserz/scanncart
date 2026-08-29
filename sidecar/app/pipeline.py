@@ -56,6 +56,14 @@ class Pipeline:
         self._latest_stats = None
         self._last_emit_ts = 0.0
 
+    def _capture_fps(self) -> float:
+        """What the camera actually delivers, falling back to its nominal rate
+        for sources that cannot measure (test doubles)."""
+        measured = getattr(self._source, "measured_fps", None)
+        if measured:
+            return float(measured)
+        return float(getattr(self._source, "fps", 0.0))
+
     def process_once(self) -> dict | None:
         # A source that has given up is reported, not waited on: otherwise
         # capture sits in "running" with a frozen image and no explanation.
@@ -88,7 +96,7 @@ class Pipeline:
         jpeg = encode_preview_jpeg(frame, self._settings.preview_height)
         stats = Stats(
             infer_fps=round(self._infer_fps, 1),
-            capture_fps=float(getattr(self._source, "fps", 0.0)),
+            capture_fps=self._capture_fps(),
             latency_ms=round((t1 - t0) * 1000.0, 1),
         )
         with self._state_lock:
@@ -131,7 +139,7 @@ class Pipeline:
             type="frame", ts=now, seq=seq, jpeg=jpeg,
             detections=detections,
             stats=stats
-            or Stats(infer_fps=0.0, capture_fps=float(getattr(self._source, "fps", 0.0)), latency_ms=0.0),
+            or Stats(infer_fps=0.0, capture_fps=self._capture_fps(), latency_ms=0.0),
         ).model_dump()
         self._on_message(msg)
         return msg

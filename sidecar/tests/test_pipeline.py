@@ -152,3 +152,25 @@ def test_emit_preview_returns_none_without_a_frame():
 
     assert pipe.emit_preview() is None
     assert sent == []
+
+
+def test_stats_report_the_measured_capture_rate():
+    """Not the requested one: the UI showed 60 fps while 12 arrived."""
+    class _Source(_StubSource):
+        measured_fps = 12.5
+
+    sent = []
+    pipe = Pipeline(_Source(), _StubDetector(), Settings(capture_fps=60),
+                    on_message=sent.append)
+    msg = pipe.process_once()
+
+    assert msg["stats"]["capture_fps"] == 12.5
+
+
+def test_stats_fall_back_to_the_configured_rate_for_a_source_that_cannot_measure():
+    # FakeFrameSource and other test doubles have no measured_fps.
+    sent = []
+    pipe = Pipeline(_StubSource(), _StubDetector(), Settings(), on_message=sent.append)
+    msg = pipe.process_once()
+
+    assert msg["stats"]["capture_fps"] == _StubSource.fps
