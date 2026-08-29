@@ -4,6 +4,7 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { SidecarSupervisor } from './sidecar'
+import { handleSecondInstance } from './singleInstance'
 
 // Resolve where the Python sidecar lives. Defaults assume the repo layout
 // (desktop/ and sidecar/ side by side) and the sidecar's local venv; override
@@ -23,6 +24,7 @@ function resolveSidecarPaths(): { python: string; script: string; cwd: string } 
 
 let sidecarPort: number | null = null
 let supervisor: SidecarSupervisor | null = null
+let mainWindow: BrowserWindow | null = null
 
 function startSidecar(): void {
   const { python, script, cwd } = resolveSidecarPaths()
@@ -51,7 +53,7 @@ function startSidecar(): void {
 
 function createWindow(): void {
   // Create the browser window.
-  const mainWindow = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 1000,
     height: 760,
     minWidth: 720,
@@ -66,7 +68,11 @@ function createWindow(): void {
   })
 
   mainWindow.on('ready-to-show', () => {
-    mainWindow.show()
+    mainWindow?.show()
+  })
+
+  mainWindow.on('closed', () => {
+    mainWindow = null
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -83,32 +89,59 @@ function createWindow(): void {
   }
 }
 
-// This method will be called when Electron has finished
-// initialization and is ready to create browser windows.
-// Some APIs can only be used after this event occurs.
-app.whenReady().then(() => {
-  // Set app user model id for windows
-  electronApp.setAppUserModelId('com.scanncart.app')
-
-  // Default open or close DevTools by F12 in development
-  // and ignore CommandOrControl + R in production.
-  // see https://github.com/alex8088/electron-toolkit/tree/master/packages/utils
-  app.on('browser-window-created', (_, window) => {
-    optimizer.watchWindowShortcuts(window)
+// Raise the window this app already has, and revive it if its sidecar died.
+// The logic lives in singleInstance.ts so it is testable without Electron.
+function focusExistingInstance(): void {
+  handleSecondInstance({
+    getWindow: () => mainWindow,
+    createWindow,
+    getSidecarPort: () => sidecarPort,
+    restartSidecar: () => {
+      console.log('[sidecar] no port on second-instance — restarting it')
+      supervisor?.stop()
+      supervisor = null
+      startSidecar()
+    }
   })
+}
 
-  // Renderer asks for the sidecar port; returns null until the sidecar reports it.
-  ipcMain.handle('sidecar:port', () => sidecarPort)
+// A second launch must never reach startSidecar(): two sidecars race for port
+// 8765, for data/settings.json and for the same SQLite file, and the loser
+// silently ends up on a different port. Take the lock before anything is
+// spawned, and hand the user the instance they already have.
+if (!app.requestSingleInstanceLock()) {
+  console.log('[app] another instance is already running — focusing it')
+  app.quit()
+} else {
+  app.on('second-instance', () => focusExistingInstance())
 
-  startSidecar()
-  createWindow()
+  // This method will be called when Electron has finished
+  // initialization and is ready to create browser windows.
+  // Some APIs can only be used after this event occurs.
+  app.whenReady().then(() => {
+    // Set app user model id for windows
+    electronApp.setAppUserModelId('com.scanncart.app')
 
-  app.on('activate', function () {
-    // On macOS it's common to re-create a window in the app when the
-    // dock icon is clicked and there are no other windows open.
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    // Default open or close DevTools by F12 in development
+    // and ignore CommandOrControl + R in production.
+    // see https://github.com/alex8088/electron-toolkit/tree/master/packages/utils
+    app.on('browser-window-created', (_, window) => {
+      optimizer.watchWindowShortcuts(window)
+    })
+
+    // Renderer asks for the sidecar port; returns null until the sidecar reports it.
+    ipcMain.handle('sidecar:port', () => sidecarPort)
+
+    startSidecar()
+    createWindow()
+
+    app.on('activate', function () {
+      // On macOS it's common to re-create a window in the app when the
+      // dock icon is clicked and there are no other windows open.
+      if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    })
   })
-})
+}
 
 // Quit when all windows are closed, except on macOS. There, it's common
 // for applications and their menu bar to stay active until the user quits
