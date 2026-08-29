@@ -285,3 +285,33 @@ def test_calibrate_skips_probing_gracefully_when_the_device_wont_open():
     with pytest.raises(RuntimeError):
         calibrate(1, 1280, 720, open_device=open_device,
                   device_name="Fake Cam", sample_seconds=0.01)
+
+
+def test_calibrate_threads_target_fps_into_derive_camera_settings(monkeypatch):
+    """The exposure gate in derive_camera_settings needs the operator's
+    configured capture rate to be relative rather than an absolute floor
+    (camera_derive.py) — calibrate() is the one place that has it, so it
+    must actually pass it through."""
+    import app.camera_derive as camera_derive
+
+    captured = {}
+
+    def fake_derive(profile, measured_brightness, near_conf=None, far_conf=None,
+                     imgsz=640, target_fps=None):
+        captured["target_fps"] = target_fps
+        return {}
+
+    monkeypatch.setattr(camera_derive, "derive_camera_settings", fake_derive)
+
+    class _Cap:
+        def isOpened(self): return True
+        def set(self, prop, value): return True
+        def get(self, prop): return 0.0
+        def read(self):
+            return True, np.full((8, 8, 3), 40, dtype=np.uint8)
+        def release(self): pass
+
+    calibrate(1, 1280, 720, open_device=lambda i, b: _Cap(),
+              device_name="Fake Cam", sample_seconds=0.01, target_fps=15.0)
+
+    assert captured["target_fps"] == 15.0

@@ -115,6 +115,7 @@ def calibrate(
     open_device: Callable[[int, int], object] = _default_open,
     device_name: str = "",
     sample_seconds: float = 3.0,
+    target_fps: float | None = None,
 ) -> CameraProfile:
     """Measure one camera and recommend settings.
 
@@ -197,7 +198,7 @@ def calibrate(
             fps_capped_exposure=round(fps_capped, 1),
             controls=controls, measured_at=time.time(),
         )
-        profile.recommended = derive_camera_settings(profile, brightness)
+        profile.recommended = derive_camera_settings(profile, brightness, target_fps=target_fps)
         return profile
     finally:
         release = getattr(cap, "release", None)

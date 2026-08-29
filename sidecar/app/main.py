@@ -253,6 +253,10 @@ class AppState:
                 self.settings.capture_width,
                 self.settings.capture_height,
                 device_name=_resolve_camera_name(self),
+                # Gates the exposure recommendation relative to what the
+                # operator actually configured, not an absolute floor — see
+                # camera_derive.derive_camera_settings.
+                target_fps=self.settings.capture_fps,
             )
 
 

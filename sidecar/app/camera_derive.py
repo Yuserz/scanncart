@@ -31,6 +31,7 @@ def derive_camera_settings(
     near_conf: float | None = None,
     far_conf: float | None = None,
     imgsz: int = 640,
+    target_fps: float | None = None,
 ) -> dict:
     patch: dict = {}
 
@@ -43,8 +44,16 @@ def derive_camera_settings(
     if profile.controls.focus or profile.controls.exposure or profile.controls.brightness:
         patch["camera_autofocus"] = False
 
+    # Relative to what the operator actually configured, exactly like the
+    # capture-fps VERDICT in main.py's /api/camera/quality — the shipped
+    # low_end preset asks for capture_fps=15, so gating on the absolute
+    # FPS_MIN=25 silently withheld camera_exposure on that hardware even
+    # when the capped-exposure rate comfortably cleared its own target.
+    # FPS_MIN remains the fallback floor when no target is supplied (e.g.
+    # existing callers/tests that predate this parameter).
+    fps_floor = target_fps * 0.8 if target_fps is not None else FPS_MIN
     too_dark = measured_brightness < BRIGHTNESS_MIN
-    if too_dark and profile.controls.exposure and profile.fps_capped_exposure >= FPS_MIN:
+    if too_dark and profile.controls.exposure and profile.fps_capped_exposure >= fps_floor:
         patch["camera_exposure"] = EXPOSURE_CAPPED
     if too_dark and profile.controls.brightness:
         patch["camera_brightness"] = BRIGHTNESS_BOOST

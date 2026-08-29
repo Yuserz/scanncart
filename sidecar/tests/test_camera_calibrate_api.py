@@ -156,6 +156,10 @@ def test_default_calibrator_passes_a_nonempty_device_name(tmp_path, monkeypatch)
     state.calibrator()
 
     assert captured.get("device_name") == "Logitech StreamCam"
+    # The exposure gate in derive_camera_settings needs the operator's
+    # configured capture rate to be relative rather than an absolute floor;
+    # the default settings' capture_fps is the source of truth for it.
+    assert captured.get("target_fps") == state.settings.capture_fps
 
 
 def test_resolve_camera_name_survives_a_failing_camera_namer(tmp_path):
