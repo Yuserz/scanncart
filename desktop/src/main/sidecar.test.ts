@@ -108,4 +108,27 @@ describe('SidecarSupervisor', () => {
     b.child.emitExit(0)
     expect(b.onExit).not.toHaveBeenCalled()
   })
+
+  it('tells the sidecar which pid to watch, so it cannot outlive us', () => {
+    // before-quit does not run on a crash or force-kill, and an orphaned
+    // sidecar keeps its camera, port and threads. One was measured holding all
+    // 12 cores, dragging live inference from 56 ms to 500 ms.
+    let seen: { cwd?: string; env?: NodeJS.ProcessEnv } | undefined
+    const sup = new SidecarSupervisor({
+      spawnFn: (_c, _a, options) => {
+        seen = options
+        return new FakeChild() as never
+      },
+      pythonPath: 'py',
+      scriptPath: 'run.py',
+      cwd: '.',
+      onPort: () => {},
+      onExit: () => {}
+    })
+    sup.start()
+
+    expect(seen?.env?.SIDECAR_PARENT_PID).toBe(String(process.pid))
+    // ...without dropping the rest of the environment.
+    expect(Object.keys(seen?.env ?? {}).length).toBeGreaterThan(1)
+  })
 })
