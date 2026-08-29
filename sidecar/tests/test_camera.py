@@ -141,6 +141,22 @@ def test_capture_reports_the_rate_it_actually_delivers():
     assert rate < 300.0         # and not nonsense
 
 
+def test_measured_fps_does_not_inflate_on_burst_then_stall():
+    """A burst of frames close together followed by a stall used to report
+    an inflated rate: (n-1)/span blows up when span is tiny. Two frames 1ms
+    apart within the last second, with nothing more recent (i.e. a stall
+    right after the burst), must report a plain count over the window (2.0),
+    not ~1000."""
+    c = CameraCapture(0, 640, 480, 30, cap_factory=lambda i: object())
+    now = time.monotonic()
+    c._read_times.append(now - 0.5)
+    c._read_times.append(now - 0.499)  # 1ms after the previous sample
+
+    rate = c.measured_fps
+
+    assert rate == pytest.approx(2.0)
+
+
 def test_measured_fps_is_zero_before_any_frame():
     class _Cap:
         def isOpened(self): return True

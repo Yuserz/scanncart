@@ -164,19 +164,27 @@ class CameraCapture:
             self._seq += 1
             self._buffer.put(self._seq, frame)
 
+    MEASURED_FPS_WINDOW_S = 1.0
+
     @property
     def measured_fps(self) -> float:
-        """Frames delivered per second over the last second, 0.0 until known."""
+        """Frames delivered per second over the last second, 0.0 until known.
+
+        A plain count over a fixed window — NOT (count-1)/span between the
+        first and last sample. That span-based formula blows up whenever
+        samples land close together (startup, or a burst right before a
+        stall): two frames 1ms apart reports ~1000 fps for a full second,
+        which is exactly wrong for a readout whose job is to catch a
+        starved camera. A fixed-window count has no such edge case — it
+        ramps up honestly from 0 and decays to 0 during a stall.
+        """
         now = time.monotonic()
         # Snapshot before iterating: the capture thread appends to
         # _read_times concurrently, and deque raises "deque mutated during
         # iteration" if a mutation lands mid-comprehension.
         snapshot = list(self._read_times)
-        recent = [t for t in snapshot if now - t <= 1.0]
-        if len(recent) < 2:
-            return 0.0
-        span = recent[-1] - recent[0]
-        return (len(recent) - 1) / span if span > 0 else 0.0
+        recent = [t for t in snapshot if now - t <= self.MEASURED_FPS_WINDOW_S]
+        return len(recent) / self.MEASURED_FPS_WINDOW_S
 
     def latest(self):
         return self._buffer.get()
