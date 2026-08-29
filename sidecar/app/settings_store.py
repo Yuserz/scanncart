@@ -21,6 +21,7 @@ ALLOWED_MODELS = {
     "yolo11x.pt",
 } | EXPERIMENTAL_MODELS
 ALLOWED_DEVICES = {"auto", "cpu", "cuda"}
+ALLOWED_RESIZE_MODES = {"auto", "letterbox", "stretch"}
 
 # A custom model is any weights file under sidecar/models/. That covers the
 # Roboflow-exported grocery model, whose .onnx the local inference server
@@ -49,6 +50,17 @@ def is_custom_model(value: str) -> bool:
     )
 
 
+def resolve_resize_mode(mode: str, active_model: str) -> str:
+    """"auto" means: match how this model was trained.
+
+    A custom model under models/ is a Roboflow export, and Roboflow's default
+    preprocessing is "Stretch to". The stock YOLO weights are letterbox-trained.
+    """
+    if mode != "auto":
+        return mode
+    return "stretch" if is_custom_model(active_model) else "letterbox"
+
+
 def is_allowed_model(value: object) -> bool:
     return isinstance(value, str) and (value in ALLOWED_MODELS or is_custom_model(value))
 # Detector backends. "native" runs weights in-process; "local_api" talks to a
@@ -69,6 +81,7 @@ RESTART_REQUIRED_FIELDS = {
     "capture_fps",
     "conf_threshold",
     "imgsz",
+    "resize_mode",
     "device",
     # Every backend field is baked into the detector object at
     # /api/capture/start time, so none of them can be swapped mid-session.
@@ -109,6 +122,8 @@ _lock = threading.Lock()
 def _valid_field(name: str, value: Any) -> bool:
     if name == "active_model":
         return is_allowed_model(value)
+    if name == "resize_mode":
+        return isinstance(value, str) and value in ALLOWED_RESIZE_MODES
     if name == "device":
         return isinstance(value, str) and value in ALLOWED_DEVICES
     if name == "camera_index":

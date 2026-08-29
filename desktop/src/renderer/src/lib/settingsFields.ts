@@ -28,6 +28,9 @@ export const ALLOWED_MODELS = [
   'yolo26s.pt',
   'yolo26m.pt'
 ] as const
+// Mirrors the sidecar's ALLOWED_RESIZE_MODES.
+export const ALLOWED_RESIZE_MODES = ['auto', 'letterbox', 'stretch'] as const
+
 export const ALLOWED_DEVICES = ['auto', 'cpu', 'cuda'] as const
 
 // Mirrors the sidecar's ALLOWED_BACKENDS. 'native' runs the weights in the
@@ -167,6 +170,13 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
     step: 32
   },
   {
+    key: 'resize_mode',
+    label: 'Frame fitting',
+    hint: "How each frame is fitted to the inference size — it must match how the model was trained. Ultralytics letterboxes (pads to square); Roboflow exports are trained on 'Stretch to'. Letterboxing a 1280x720 frame uses only 56% of the 640x640 canvas, shrinking every object well below its training scale. 'auto' picks stretch for the custom model and letterbox for the stock YOLO weights.",
+    type: 'select',
+    options: ALLOWED_RESIZE_MODES
+  },
+  {
     key: 'infer_frame_skip',
     label: 'Frame skip',
     hint: "Skip N frames between inferences. Higher means less CPU/GPU load but staler tracking — pair with a larger track expiry so items aren't marked 'left' between inferences.",
@@ -278,6 +288,6 @@ export const SETTINGS_GROUPS: FieldGroup[] = [
   },
   {
     label: 'Detection & Tracking',
-    keys: ['conf_threshold', 'imgsz', 'infer_frame_skip', 'track_expiry_s']
+    keys: ['conf_threshold', 'imgsz', 'resize_mode', 'infer_frame_skip', 'track_expiry_s']
   }
 ]

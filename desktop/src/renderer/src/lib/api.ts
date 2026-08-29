@@ -35,6 +35,7 @@ export interface SettingsPayload {
   capture_fps: number
   conf_threshold: number
   imgsz: number
+  resize_mode: string
   infer_frame_skip: number
   device: string
   preview_height: number

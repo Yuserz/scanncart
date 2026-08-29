@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.settings import Settings, resolve_device
 from app.settings_store import (
     is_custom_model,
+    resolve_resize_mode,
     HOT_RELOADABLE_FIELDS,
     RESTART_REQUIRED_FIELDS,
     compute_warnings,
@@ -70,6 +71,7 @@ def _default_detector_factory(settings: Settings, device: str):
         return YoloDetector(
             settings.active_model, device=device,
             conf=settings.conf_threshold, imgsz=settings.imgsz,
+            resize_mode=resolve_resize_mode(settings.resize_mode, settings.active_model),
         )
     api_key = load_api_key()
     if api_key is None and settings.detector_backend == "cloud_api":
@@ -256,6 +258,7 @@ def _settings_response(state: "AppState") -> SettingsResponse:
         capture_fps=state.settings.capture_fps,
         conf_threshold=state.settings.conf_threshold,
         imgsz=state.settings.imgsz,
+        resize_mode=state.settings.resize_mode,
         infer_frame_skip=state.settings.infer_frame_skip,
         device=state.settings.device,
         preview_height=state.settings.preview_height,

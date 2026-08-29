@@ -5,6 +5,7 @@ from app.settings_store import (
     ALLOWED_BACKENDS,
     ALLOWED_DEVICES,
     ALLOWED_MODELS,
+    ALLOWED_RESIZE_MODES,
     CUSTOM_MODEL_DIR,
     is_allowed_model,
 )
@@ -66,6 +67,7 @@ class SettingsPayload(BaseModel):
     capture_fps: int
     conf_threshold: float
     imgsz: int
+    resize_mode: str
     infer_frame_skip: int
     device: str
     preview_height: int
@@ -97,6 +99,7 @@ class SettingsUpdateRequest(BaseModel):
     capture_fps: int | None = Field(default=None, ge=1, le=120)
     conf_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
     imgsz: int | None = Field(default=None, ge=320, le=1920)
+    resize_mode: str | None = None
     infer_frame_skip: int | None = Field(default=None, ge=0, le=30)
     device: str | None = None
     preview_height: int | None = Field(default=None, ge=120, le=1080)
@@ -139,6 +142,13 @@ class SettingsUpdateRequest(BaseModel):
     def _validate_device(cls, v: str | None) -> str | None:
         if v is not None and v not in ALLOWED_DEVICES:
             raise ValueError(f"device must be one of {sorted(ALLOWED_DEVICES)}")
+        return v
+
+    @field_validator("resize_mode")
+    @classmethod
+    def _validate_resize_mode(cls, v: str | None) -> str | None:
+        if v is not None and v not in ALLOWED_RESIZE_MODES:
+            raise ValueError(f"resize_mode must be one of {sorted(ALLOWED_RESIZE_MODES)}")
         return v
 
     @field_validator("imgsz")

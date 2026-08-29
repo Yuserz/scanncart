@@ -53,7 +53,7 @@ DEFAULT_TRACKER = "bytetrack.yaml"
 
 class YoloDetector:
     def __init__(self, model_path, device, conf, imgsz=640, model_factory=None,
-                 tracker=DEFAULT_TRACKER):
+                 tracker=DEFAULT_TRACKER, resize_mode="letterbox"):
         if model_factory is None:
             from ultralytics import YOLO
             model_factory = YOLO
@@ -63,6 +63,7 @@ class YoloDetector:
         self._imgsz = imgsz
         self._tracker = tracker
         self._is_onnx = str(model_path).lower().endswith(".onnx")
+        self._stretch = resize_mode == "stretch"
         self.names = self._model.names
 
     def infer(self, frame: np.ndarray) -> list[Detection]:
@@ -75,6 +76,19 @@ class YoloDetector:
         # resolution — measured ~10 ms/frame on the custom grocery model.
         if not self._is_onnx:
             kwargs["device"] = self._device
+        if self._stretch:
+            # Feed an already-square frame so ultralytics' letterbox adds no
+            # padding — reproducing the "Stretch to" preprocessing the model was
+            # trained with. Letterboxing a 1280x720 frame fills only 56% of the
+            # 640x640 canvas, presenting every object well below its training
+            # scale.
+            #
+            # Boxes stay correct without any un-warping: normalize_detections
+            # divides by the dimensions actually fed to the model, and a
+            # per-axis scale cancels out of a normalized coordinate.
+            import cv2
+
+            frame = cv2.resize(frame, (self._imgsz, self._imgsz))
         results = self._model.track(frame, **kwargs)
         if not results:
             return []

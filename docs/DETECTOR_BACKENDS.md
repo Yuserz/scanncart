@@ -166,10 +166,25 @@ The way to actually go faster is a `.pt` on CUDA (see below), not tuning this.
    — it wants its own matching CUDA/cuDNN runtime, which torch's bundled libraries do not satisfy.
    Note `onnxruntime` and `onnxruntime-gpu` share the `onnxruntime` import name, so installing both
    breaks either; uninstalling one deletes the shared package directory.
-2. **Preprocessing differs.** `environment.json` records `"resize": {"format": "Stretch to"}` — the
-   model was trained on stretched 640x640, while Ultralytics letterboxes by default. Detections
-   will work, but accuracy is not identical to what the Roboflow server produces. Worth measuring
-   against a labelled clip before trusting the numbers.
+2. **Preprocessing differs — now handled, see `resize_mode`.** `environment.json` records
+   `"resize": {"format": "Stretch to"}`: the model was trained on stretched 640x640, while
+   Ultralytics letterboxes by default. That is not cosmetic. Letterboxing a 1280x720 frame
+   produces 640x360 of content inside 640x640 with 140px bars — **56% of the canvas**, so every
+   object reaches the model at roughly half its training pixel area, which matters most for the
+   small SKUs (a 22 g Milo sachet).
+
+   `Settings.resize_mode` (`auto` | `letterbox` | `stretch`) fixes this. `auto` resolves to
+   `stretch` for a custom model under `models/` (Roboflow exports are stretch-trained) and
+   `letterbox` for the stock YOLO weights (which are not). In `stretch`, the detector resizes the
+   frame to `imgsz` x `imgsz` itself, so Ultralytics' letterbox pads nothing.
+
+   No un-warping is needed on the way out: `normalize_detections` divides by the dimensions
+   actually fed to the model, and a per-axis scale cancels out of a normalized coordinate. It is
+   also slightly *faster* — one resize instead of the letterbox path (87.6 -> 72.4 ms).
+
+   **Still unquantified:** how much this improves detection. Measuring that needs frames that
+   actually contain the SKUs; the test frames here had none, so both modes returned zero and the
+   argument above is geometric, not empirical. Worth confirming against a labelled clip.
 
 ### The clean long-term path
 

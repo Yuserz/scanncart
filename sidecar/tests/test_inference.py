@@ -161,3 +161,56 @@ def test_pt_model_still_gets_its_device():
     d = YoloDetector("yolo11n.pt", device="cuda", conf=0.5, model_factory=lambda p: FakeModel())
     d.infer(np.zeros((8, 8, 3), dtype=np.uint8))
     assert seen["device"] == "cuda"
+
+
+def test_stretch_mode_feeds_a_square_frame():
+    """Reproduces Roboflow's "Stretch to" training preprocessing. Letterboxing
+    a 1280x720 frame fills only 56% of the 640x640 canvas, presenting every
+    object well under its training scale."""
+    seen = {}
+
+    class FakeModel:
+        names = {0: "a"}
+
+        def track(self, frame, **kw):
+            seen["shape"] = frame.shape
+            return []
+
+    from app.inference import YoloDetector
+
+    d = YoloDetector("models/x.onnx", device="cpu", conf=0.5, imgsz=640,
+                     model_factory=lambda p: FakeModel(), resize_mode="stretch")
+    d.infer(np.zeros((720, 1280, 3), dtype=np.uint8))
+    assert seen["shape"][:2] == (640, 640)
+
+
+def test_letterbox_mode_leaves_the_frame_alone():
+    seen = {}
+
+    class FakeModel:
+        names = {0: "a"}
+
+        def track(self, frame, **kw):
+            seen["shape"] = frame.shape
+            return []
+
+    from app.inference import YoloDetector
+
+    d = YoloDetector("yolo11n.pt", device="cpu", conf=0.5, imgsz=640,
+                     model_factory=lambda p: FakeModel(), resize_mode="letterbox")
+    d.infer(np.zeros((720, 1280, 3), dtype=np.uint8))
+    assert seen["shape"][:2] == (720, 1280)
+
+
+def test_stretching_preserves_normalized_boxes():
+    """The reason no un-warping is needed: a per-axis scale cancels out of a
+    normalized coordinate, so a box normalized against the square frame equals
+    the same box normalized against the original."""
+    from app.inference import normalize_detections
+
+    # A box covering the right half, full height, in each coordinate space.
+    orig = normalize_detections([[640.0, 0.0, 1280.0, 720.0]], [0.9], [0], None,
+                                {0: "a"}, 1280, 720)
+    squished = normalize_detections([[320.0, 0.0, 640.0, 640.0]], [0.9], [0], None,
+                                    {0: "a"}, 640, 640)
+    assert orig[0].box == squished[0].box

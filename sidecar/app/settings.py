@@ -15,6 +15,15 @@ class Settings:
     capture_fps: int = 60
     conf_threshold: float = 0.5
     imgsz: int = 640
+    # How a frame is fitted to `imgsz` before detection, and it must match how
+    # the model was trained. Ultralytics letterboxes (pads to square, keeping
+    # aspect); Roboflow's export config for the grocery model records
+    # "resize": {"format": "Stretch to"}. On a 1280x720 frame letterboxing
+    # leaves 140px bars and uses only 56% of the 640x640 canvas, so every
+    # object arrives at ~56% of its training pixel area. "auto" picks stretch
+    # for a custom Roboflow export and letterbox for the stock YOLO weights,
+    # which are themselves letterbox-trained.
+    resize_mode: str = "auto"
     infer_frame_skip: int = 0
     device: str = "auto"
     preview_height: int = 720
