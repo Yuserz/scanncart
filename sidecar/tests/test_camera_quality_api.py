@@ -58,3 +58,19 @@ def test_a_dark_frame_is_reported_as_low():
         client.post("/api/capture/stop")
 
     assert body["verdicts"]["brightness"] == "low"
+
+
+def test_a_stalled_camera_reports_capture_fps_as_low():
+    class _Stalled(_Src):
+        measured_fps = 0.0
+
+    state = AppState(source_factory=lambda s: _Stalled(),
+                     detector_factory=lambda s, d: _Det(), db_path=":memory:")
+    client = TestClient(build_app(lambda: state))
+    with client:
+        client.post("/api/capture/start")
+        body = client.get("/api/camera/quality").json()
+        client.post("/api/capture/stop")
+
+    assert body["capture_fps"] == 0.0
+    assert body["verdicts"]["capture_fps"] == "low"

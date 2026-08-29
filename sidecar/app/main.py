@@ -463,7 +463,7 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
                 "brightness": "low" if q.brightness < BRIGHTNESS_MIN
                 else "high" if q.brightness > BRIGHTNESS_MAX else "ok",
                 "sharpness": "low" if q.sharpness < SHARPNESS_MIN else "ok",
-                "capture_fps": "low" if 0 < fps < FPS_MIN else "ok",
+                "capture_fps": "low" if fps < FPS_MIN else "ok",
             },
             detail="",
         )
