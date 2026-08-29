@@ -81,11 +81,27 @@ def probe_controls(cap, read_frame: Callable[[], np.ndarray]) -> ControlSupport:
         after = _brightness(read_frame)
         setattr(support, name, abs(after - before) >= EFFECT_THRESHOLD)
     # Focus does not change mean brightness, so judge it on sharpness instead.
-    before_sharp = frame_quality(read_frame()).sharpness
+    # The focus probe reads immediately after cap.set(CAP_PROP_FOCUS, ...) —
+    # exactly when a refocusing UVC camera is most likely to drop a frame —
+    # so both reads are guarded the same way _brightness() guards its own:
+    # an unavailable frame makes the control unmeasurable, and an
+    # unmeasurable control is exactly an unsupported one, not a crash.
+    before_sharp = _sharpness(read_frame)
     cap.set(cv2.CAP_PROP_FOCUS, 30)
-    after_sharp = frame_quality(read_frame()).sharpness
-    support.focus = abs(after_sharp - before_sharp) >= max(before_sharp, 1.0) * FOCUS_RELATIVE_THRESHOLD
+    after_sharp = _sharpness(read_frame)
+    if before_sharp is None or after_sharp is None:
+        support.focus = False
+    else:
+        support.focus = abs(after_sharp - before_sharp) >= max(before_sharp, 1.0) * FOCUS_RELATIVE_THRESHOLD
     return support
+
+
+def _sharpness(read_frame: Callable[[], np.ndarray]) -> float | None:
+    """Sharpness of one fresh read, or None when the read itself dropped —
+    `cv2.cvtColor(None, ...)` raises `cv2.error`, so this is the guard that
+    keeps a single flaky read from escaping as an HTTP 500 mid-calibration."""
+    frame = read_frame()
+    return frame_quality(frame).sharpness if frame is not None else None
 
 
 def _default_open(index: int, backend: int):
@@ -116,7 +132,19 @@ def calibrate(
     from app.camera_quality import measure_fps
 
     def _open_and_prime():
+        # Mirrors camera.py's _default_capture: MSMF delivers the full
+        # framerate on Windows but some devices refuse to open under it;
+        # fall back to OpenCV's auto backend rather than handing back an
+        # unopened handle that then fails far away, inside a getter/setter,
+        # with no indication the device was never open in the first place.
         opened = open_device(index, cv2.CAP_MSMF)
+        if not opened.isOpened():
+            release = getattr(opened, "release", None)
+            if callable(release):
+                release()
+            opened = open_device(index, cv2.CAP_ANY)
+        if not opened.isOpened():
+            return None
         opened.set(cv2.CAP_PROP_FRAME_WIDTH, width)
         opened.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
         for _ in range(10):
@@ -124,6 +152,14 @@ def calibrate(
         return opened
 
     cap = _open_and_prime()
+    if cap is None:
+        # Skip probing gracefully: no device to measure means no profile,
+        # not a crash from calling .set()/.read() on a handle that was never
+        # open.
+        raise RuntimeError(
+            f"Could not open camera {index} for calibration (tried MSMF and "
+            "the auto backend)."
+        )
     try:
         def read_ok() -> bool:
             ok, _ = cap.read()
@@ -146,6 +182,10 @@ def calibrate(
         if callable(release):
             release()
         cap = _open_and_prime()
+        if cap is None:
+            raise RuntimeError(
+                f"Could not reopen camera {index} after probing controls."
+            )
 
         cap.set(cv2.CAP_PROP_EXPOSURE, -6)
         fps_capped = measure_fps(read_ok, seconds=sample_seconds)

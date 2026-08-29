@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+import pytest
 
 from app import camera_caps
 from app.camera_caps import FOCUS_RELATIVE_THRESHOLD, ControlSupport, calibrate, probe_controls
@@ -99,6 +100,25 @@ def test_focus_proportionally_large_change_is_supported(monkeypatch):
     assert support.focus is True
 
 
+def test_focus_probe_survives_a_dropped_frame_after_focus_is_set():
+    """The focus probe reads immediately after cap.set(CAP_PROP_FOCUS, ...),
+    which is exactly when a refocusing UVC camera is most likely to drop a
+    frame. read_frame() returning None there must degrade focus to
+    unsupported (an unmeasurable control is exactly an unsupported one),
+    never raise cv2.error out of frame_quality(None, ...)."""
+    cap = _FocusProbeCap()
+
+    def read_frame():
+        # Once focus has been set, simulate the dropped read: (False, None)
+        # from cv2, already translated to None by the caller's read_frame
+        # convention.
+        return None if cap.focus_set else np.zeros((4, 4, 3), dtype=np.uint8)
+
+    support = probe_controls(cap, read_frame)  # must not raise
+
+    assert support.focus is False
+
+
 def test_calibrate_measures_both_exposure_modes():
     """12 fps on auto, 30 with exposure capped — the difference is the whole
     reason to calibrate."""
@@ -163,3 +183,105 @@ def test_calibrate_reopens_device_after_destructive_probe():
         "calibrate() must release and reopen the device after probe_controls, "
         "not keep using the same (now-dirtied) handle"
     )
+
+
+class _FlakyCap:
+    """A device that drops roughly every third read — e.g. a refocusing UVC
+    camera stalling right after CAP_PROP_FOCUS is set. Exercises the full
+    calibrate() pipeline (measure_fps, _brightness, probe_controls) against
+    intermittent (False, None) reads, not just the focus branch in
+    isolation."""
+
+    def __init__(self):
+        self.reads = 0
+
+    def isOpened(self): return True
+
+    def set(self, prop, value): return True
+
+    def get(self, prop): return 0.0
+
+    def read(self):
+        self.reads += 1
+        if self.reads % 3 == 0:
+            return False, None
+        return True, np.full((8, 8, 3), 40, dtype=np.uint8)
+
+    def release(self): pass
+
+
+def test_calibrate_completes_when_reads_are_intermittently_dropped():
+    """An ~80s calibration must not be discarded as an HTTP 500 over a single
+    dropped read. calibrate() must complete and hand back a real profile even
+    when the underlying device flakes throughout."""
+    cap = _FlakyCap()
+
+    profile = calibrate(1, 1280, 720, open_device=lambda i, b: cap,
+                        device_name="Fake Cam", sample_seconds=0.05)
+
+    assert isinstance(profile.controls, ControlSupport)
+    assert profile.fps_auto_exposure >= 0
+    assert profile.fps_capped_exposure >= 0
+
+
+class _BackendAwareCap:
+    """MSMF refuses to open this device; the auto backend succeeds — mirrors
+    camera.py's _default_capture fallback contract."""
+
+    def __init__(self, backend):
+        self._opened = backend != cv2.CAP_MSMF
+
+    def isOpened(self): return self._opened
+
+    def set(self, prop, value): return True
+
+    def get(self, prop): return 0.0
+
+    def read(self):
+        return True, np.full((8, 8, 3), 40, dtype=np.uint8)
+
+    def release(self): pass
+
+
+def test_calibrate_falls_back_to_auto_backend_when_msmf_wont_open():
+    """Compare camera.py's _default_capture: try MSMF, then fall back to
+    OpenCV's auto backend rather than handing back — and later probing — an
+    unopened handle."""
+    opened_backends = []
+
+    def open_device(index, backend):
+        opened_backends.append(backend)
+        return _BackendAwareCap(backend)
+
+    profile = calibrate(1, 1280, 720, open_device=open_device,
+                        device_name="Fake Cam", sample_seconds=0.01)
+
+    assert cv2.CAP_MSMF in opened_backends
+    assert cv2.CAP_ANY in opened_backends
+    assert isinstance(profile.controls, ControlSupport)
+
+
+class _NeverOpensCap:
+    """Neither backend can open this device at all."""
+
+    def isOpened(self): return False
+
+    def set(self, prop, value): return True
+
+    def get(self, prop): return 0.0
+
+    def read(self): return False, None
+
+    def release(self): pass
+
+
+def test_calibrate_skips_probing_gracefully_when_the_device_wont_open():
+    """No isOpened() check used to mean calibrate() would plow ahead calling
+    .set()/.read() on a handle that was never open. It must instead fail
+    clearly and early, not deep inside a getter/setter."""
+    def open_device(index, backend):
+        return _NeverOpensCap()
+
+    with pytest.raises(RuntimeError):
+        calibrate(1, 1280, 720, open_device=open_device,
+                  device_name="Fake Cam", sample_seconds=0.01)
