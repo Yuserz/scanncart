@@ -3,13 +3,18 @@
 Pure and total: no I/O, no device. All the judgement lives here so it can be
 tested against hand-written profiles.
 
-The objective, once: raise brightness toward BRIGHTNESS_TARGET subject to
-measured fps >= FPS_MIN. Exposure is preferred because it is real light rather
-than amplification, but it is also what costs frames, so the fps floor gates it.
+The objective, once: when the measured frame is below BRIGHTNESS_MIN, propose
+a fixed brightness boost and (fps permitting) a capped exposure for the
+operator to review on the calibration card. This is a flat boost, not a value
+computed to land on BRIGHTNESS_TARGET: the control's units are device-specific
+and its transfer function is unknown without a dedicated brightness sweep,
+which is out of scope here. Exposure is preferred over brightness because it
+is real light rather than amplification, but it is also what costs frames, so
+the fps floor gates it.
 """
 
 from app.camera_caps import CameraProfile
-from app.camera_quality import BRIGHTNESS_MIN, BRIGHTNESS_TARGET, FPS_MIN
+from app.camera_quality import BRIGHTNESS_MIN, FPS_MIN
 
 # Shorter than this and the image goes dark faster than brightness can rescue.
 EXPOSURE_CAPPED = -6.0
@@ -30,11 +35,12 @@ def derive_camera_settings(
     patch: dict = {}
 
     # The StreamCam's smart AF/AE follows faces. A counter has none, so auto
-    # has nothing to lock onto and hunts. Lock it whenever we can.
-    if profile.controls.focus:
-        patch["camera_autofocus"] = False
-    elif profile.controls.exposure or profile.controls.brightness:
-        # Even without focus control, disabling AF stops the hunting.
+    # has nothing to lock onto and hunts. Lock it whenever any control that
+    # implies a settled, controllable camera is present. NOTE: this is a
+    # proxy inference, not a measured capability — ControlSupport has no
+    # `autofocus` field, and CAP_PROP_AUTOFOCUS (a distinct UVC property) is
+    # never probed by camera_caps.probe_controls.
+    if profile.controls.focus or profile.controls.exposure or profile.controls.brightness:
         patch["camera_autofocus"] = False
 
     too_dark = measured_brightness < BRIGHTNESS_MIN
@@ -49,5 +55,4 @@ def derive_camera_settings(
         if near_conf - far_conf >= FAR_CONF_GAP and imgsz < IMGSZ_MAX:
             patch["imgsz"] = min(imgsz + IMGSZ_STEP, IMGSZ_MAX)
 
-    _ = BRIGHTNESS_TARGET
     return patch

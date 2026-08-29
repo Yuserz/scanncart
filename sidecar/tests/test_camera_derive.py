@@ -35,8 +35,7 @@ def test_no_settings_are_invented_for_a_device_that_supports_nothing():
     patch = derive_camera_settings(
         _profile(controls=ControlSupport()), measured_brightness=23.0
     )
-    assert "camera_brightness" not in patch
-    assert "camera_exposure" not in patch
+    assert patch == {}
 
 
 def test_exposure_is_not_lengthened_below_the_fps_floor():
