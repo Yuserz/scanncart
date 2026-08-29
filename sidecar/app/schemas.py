@@ -71,6 +71,7 @@ class SettingsPayload(BaseModel):
     infer_frame_skip: int
     device: str
     preview_height: int
+    preview_max_fps: int
     track_expiry_s: float
     detector_backend: str
     roboflow_workspace: str
@@ -103,6 +104,7 @@ class SettingsUpdateRequest(BaseModel):
     infer_frame_skip: int | None = Field(default=None, ge=0, le=30)
     device: str | None = None
     preview_height: int | None = Field(default=None, ge=120, le=1080)
+    preview_max_fps: int | None = Field(default=None, ge=0, le=120)
     track_expiry_s: float | None = Field(default=None, gt=0.0, le=30.0)
     detector_backend: str | None = None
     roboflow_workspace: str | None = Field(default=None, min_length=1)

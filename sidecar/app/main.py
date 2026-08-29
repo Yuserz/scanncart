@@ -267,6 +267,7 @@ def _settings_response(state: "AppState") -> SettingsResponse:
         infer_frame_skip=state.settings.infer_frame_skip,
         device=state.settings.device,
         preview_height=state.settings.preview_height,
+        preview_max_fps=state.settings.preview_max_fps,
         track_expiry_s=state.settings.track_expiry_s,
         detector_backend=state.settings.detector_backend,
         roboflow_workspace=state.settings.roboflow_workspace,

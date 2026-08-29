@@ -27,6 +27,12 @@ class Settings:
     infer_frame_skip: int = 0
     device: str = "auto"
     preview_height: int = 720
+    # Preview frames per second. The preview thread fills the gaps between
+    # inferences with this cadence, so the image stays smooth even when
+    # inference runs at ~10 fps. Costs one JPEG encode each (~12 ms at 720p),
+    # which competes with inference on a CPU-bound machine — lower it, or set
+    # 0 to emit only on inference as before.
+    preview_max_fps: int = 30
     track_expiry_s: float = 1.5
 
     # Which detector implementation backs capture. "native" runs the weights in

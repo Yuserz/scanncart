@@ -72,7 +72,12 @@ REMOTE_BACKENDS = {"local_api", "cloud_api"}
 # Fields the running Pipeline re-reads from `settings` every frame/track update,
 # so mutating them in place takes effect without stopping capture. Everything
 # else is baked into source/detector objects at /api/capture/start time.
-HOT_RELOADABLE_FIELDS = {"infer_frame_skip", "preview_height", "track_expiry_s"}
+HOT_RELOADABLE_FIELDS = {
+    "infer_frame_skip",
+    "preview_height",
+    "preview_max_fps",
+    "track_expiry_s",
+}
 RESTART_REQUIRED_FIELDS = {
     "active_model",
     "camera_index",
@@ -142,6 +147,8 @@ def _valid_field(name: str, value: Any) -> bool:
         return isinstance(value, int) and 320 <= value <= 1920 and value % 32 == 0
     if name == "infer_frame_skip":
         return isinstance(value, int) and 0 <= value <= 30
+    if name == "preview_max_fps":
+        return isinstance(value, int) and 0 <= value <= 120
     if name == "preview_height":
         return isinstance(value, int) and 120 <= value <= 1080
     if name == "track_expiry_s":

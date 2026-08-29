@@ -44,6 +44,17 @@ class Pipeline:
         self._frame_counter = 0
         self._last_infer_ts = None
         self._infer_fps = 0.0
+        # Preview is decoupled from inference. Inference blocks its thread for
+        # as long as a frame takes (~90-210 ms here), so emitting only after it
+        # delivered the preview at the *inference* rate: measured 9 fps from a
+        # 60 fps camera, with gaps from 13 ms to 431 ms. That jitter is what
+        # reads as stutter. A second thread now emits frames at a steady rate
+        # in between, reusing the most recent detections.
+        self._preview_thread = None
+        self._state_lock = threading.Lock()
+        self._latest_detections: list[Detection] = []
+        self._latest_stats = None
+        self._last_emit_ts = 0.0
 
     def process_once(self) -> dict | None:
         got = self._source.latest()
@@ -74,9 +85,47 @@ class Pipeline:
             capture_fps=float(getattr(self._source, "fps", 0.0)),
             latency_ms=round((t1 - t0) * 1000.0, 1),
         )
+        with self._state_lock:
+            self._latest_detections = detections
+            self._latest_stats = stats
+            self._last_emit_ts = t1
+
         msg = FrameMessage(
             type="frame", ts=t1, seq=seq, jpeg=jpeg,
             detections=detections, stats=stats,
+        ).model_dump()
+        self._on_message(msg)
+        return msg
+
+    def emit_preview(self) -> dict | None:
+        """Send one preview frame using the most recent detections.
+
+        The boxes are up to one inference old, which is the trade: a smooth
+        image with slightly trailing boxes beats a sharp-but-stuttering one,
+        and checkout items sit still anyway. Returns None when there is no
+        frame yet, or when an emit is not due.
+        """
+        max_fps = self._settings.preview_max_fps
+        if max_fps <= 0:
+            return None
+        now = time.time()
+        with self._state_lock:
+            if now - self._last_emit_ts < 1.0 / max_fps:
+                return None
+            detections = list(self._latest_detections)
+            stats = self._latest_stats
+            self._last_emit_ts = now
+
+        got = self._source.latest()
+        if got is None:
+            return None
+        seq, frame = got
+        jpeg = encode_preview_jpeg(frame, self._settings.preview_height)
+        msg = FrameMessage(
+            type="frame", ts=now, seq=seq, jpeg=jpeg,
+            detections=detections,
+            stats=stats
+            or Stats(infer_fps=0.0, capture_fps=float(getattr(self._source, "fps", 0.0)), latency_ms=0.0),
         ).model_dump()
         self._on_message(msg)
         return msg
@@ -127,12 +176,28 @@ class Pipeline:
             if produced is None:
                 time.sleep(0.005)
 
+    def _preview_loop(self) -> None:
+        """Fills the gaps between inferences so the image stays smooth.
+
+        Deliberately swallows its errors: this thread is cosmetic, and the
+        inference loop is the one that owns reporting failure and shutting
+        capture down.
+        """
+        while self.is_running:
+            try:
+                self.emit_preview()
+            except Exception:  # noqa: BLE001 - cosmetic thread, never kills capture
+                pass
+            time.sleep(0.005)
+
     def start(self) -> None:
         if self.is_running:
             return
         self.is_running = True
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
+        self._preview_thread = threading.Thread(target=self._preview_loop, daemon=True)
+        self._preview_thread.start()
 
     def signal_stop(self) -> None:
         """Ask the loop to finish without waiting for it.
@@ -145,6 +210,9 @@ class Pipeline:
 
     def stop(self) -> None:
         self.is_running = False
+        if self._preview_thread is not None:
+            self._preview_thread.join()
+            self._preview_thread = None
         if self._thread is not None:
             self._thread.join()
             self._thread = None

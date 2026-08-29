@@ -1,5 +1,18 @@
+import os
 import socket
-from app.main import build_app
+
+# Ultralytics "AutoUpdate" pip-installs what it thinks it needs at import time.
+# On a machine where torch reports CUDA it swaps our pinned CPU `onnxruntime`
+# for `onnxruntime-gpu`, which then advertises CUDAExecutionProvider and dies
+# on the first frame with "no data transfer registered" because its CUDA/cuDNN
+# runtime is not installed (cublasLt64_13.dll missing). That took capture down
+# mid-session. The sidecar pins its own dependencies; nothing may change them
+# underneath it at runtime.
+#
+# Set before importing anything that pulls in ultralytics.
+os.environ.setdefault("YOLO_AUTOINSTALL", "false")
+
+from app.main import build_app  # noqa: E402 - must follow the env guard above
 
 
 def pick_port(preferred: int) -> int:

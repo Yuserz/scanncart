@@ -16,6 +16,7 @@ export const DEFAULT_SETTINGS: SettingsPayload = {
   infer_frame_skip: 0,
   device: 'auto',
   preview_height: 720,
+  preview_max_fps: 30,
   track_expiry_s: 1.5,
   detector_backend: 'native',
   roboflow_workspace: 'yusri-caloyloy',

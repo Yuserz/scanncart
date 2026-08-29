@@ -195,6 +195,15 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
     step: 1
   },
   {
+    key: 'preview_max_fps',
+    label: 'Preview FPS',
+    hint: 'How often the live image refreshes, independently of detection. Inference blocks for ~100-200 ms per frame, so without this the preview updated only when a detection finished — 9 fps from a 60 fps camera, with freezes up to 431 ms. Boxes still update at the detection rate, so they trail the image slightly. Each frame costs a JPEG encode; lower it if detection is starved, or 0 to refresh only on detection.',
+    type: 'number',
+    min: 0,
+    max: 120,
+    step: 5
+  },
+  {
     key: 'detector_backend',
     label: 'Detector backend',
     hint: 'Where inference runs. Native is the target for deployment; the API backends exist so the custom Roboflow model can be used without downloading its weights.',
@@ -284,7 +293,14 @@ export const SETTINGS_GROUPS: FieldGroup[] = [
   },
   {
     label: 'Camera & Capture',
-    keys: ['camera_index', 'capture_width', 'capture_height', 'capture_fps', 'preview_height']
+    keys: [
+      'camera_index',
+      'capture_width',
+      'capture_height',
+      'capture_fps',
+      'preview_height',
+      'preview_max_fps'
+    ]
   },
   {
     label: 'Detection & Tracking',

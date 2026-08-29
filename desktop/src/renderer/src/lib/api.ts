@@ -39,6 +39,7 @@ export interface SettingsPayload {
   infer_frame_skip: number
   device: string
   preview_height: number
+  preview_max_fps: number
   track_expiry_s: number
   detector_backend: string
   roboflow_workspace: string

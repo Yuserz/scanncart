@@ -29,6 +29,7 @@ function bodyForUrl(url: string): unknown {
       infer_frame_skip: 0,
       device: 'auto',
       preview_height: 720,
+      preview_max_fps: 30,
       track_expiry_s: 1.5,
       hot_reloadable_fields: ['infer_frame_skip'],
       restart_required_fields: ['active_model'],
