@@ -327,3 +327,24 @@
   font-size: 12px;
   white-space: nowrap;
 }
+
+/* A warning that carries its own remedy, so "stop capture to change X" is not
+   a dead end that sends the user to the Live view and back. */
+.admin-warning-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.admin-header .btn-small {
+  margin-left: auto;
+}
+
+.admin-warning-buttons {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-shrink: 0;
+}

@@ -32,6 +32,11 @@ export interface SidecarSettings {
   restoreDefaults: () => Promise<SettingsResponse>
   probe: () => Promise<DetectorProbeResponse>
   cameras: CameraInfo[]
+  // Stopping from Admin: the restart-required fields are edited here, so
+  // sending the user to Live view just to unblock the form is a dead end.
+  stopCapture: () => Promise<void>
+  startCapture: () => Promise<void>
+  stopping: boolean
   refreshCameras: (rescan?: boolean) => Promise<void>
   camerasLoading: boolean
   probing: boolean
@@ -61,6 +66,7 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
   const [error, setError] = useState<string | null>(null)
   const [cameras, setCameras] = useState<CameraInfo[]>([])
   const [camerasLoading, setCamerasLoading] = useState(true)
+  const [stopping, setStopping] = useState(false)
   const [probing, setProbing] = useState(false)
   const [probeResult, setProbeResult] = useState<DetectorProbeResponse | null>(null)
 
@@ -191,6 +197,34 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
   // a no-op while capture holds one (the sidecar returns its cached list).
   // A failure leaves `cameras` empty, which falls the field back to a plain
   // index input rather than blanking the form.
+  // Deliberately does NOT re-read settings. AdminPanel clears its unsaved
+  // `draft` whenever the settings object changes identity, so reloading here
+  // would discard the very edit the user stopped capture in order to make.
+  // The restart-required lock keys off `captureState`, which this sets.
+  const stopCapture = useCallback(async (): Promise<void> => {
+    setStopping(true)
+    setError(null)
+    try {
+      setCaptureState((await apiRef.current!.stop()).state)
+    } catch (e) {
+      setError(errorMessage(e))
+    } finally {
+      setStopping(false)
+    }
+  }, [])
+
+  const startCapture = useCallback(async (): Promise<void> => {
+    setStopping(true)
+    setError(null)
+    try {
+      setCaptureState((await apiRef.current!.start()).state)
+    } catch (e) {
+      setError(errorMessage(e))
+    } finally {
+      setStopping(false)
+    }
+  }, [])
+
   // An unreachable backend is a normal answer here, not an error: the sidecar
   // returns reachable:false rather than a non-2xx, so only a transport failure
   // lands in the catch.
@@ -234,6 +268,9 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
     probeResult,
     cameras,
     refreshCameras,
-    camerasLoading
+    camerasLoading,
+    stopCapture,
+    startCapture,
+    stopping
   }
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { AdminPanel } from './AdminPanel'
 import type { SettingsDeps } from '../hooks/useSidecarSettings'
@@ -49,8 +49,8 @@ function makeDeps(
 ): { deps: SettingsDeps; api: ApiClient } {
   const api: ApiClient = {
     health: vi.fn(async () => ({ state: captureState, active_model: 'yolo11n.pt', device: 'cpu' })),
-    start: vi.fn(),
-    stop: vi.fn(),
+    start: vi.fn(async () => ({ state: 'running' })),
+    stop: vi.fn(async () => ({ state: 'idle' })),
     getLogs: vi.fn(),
     getSettings: vi.fn(async () => baseSettings()),
     updateSettings: vi.fn(async (patch) => baseSettings(patch)),
@@ -404,5 +404,78 @@ describe('AdminPanel', () => {
     render(<AdminPanel port={8765} deps={deps} />)
 
     expect(await screen.findByTestId('rescan-cameras')).toBeDisabled()
+  })
+
+  it('offers Stop capture in the header while running', async () => {
+    const { deps } = makeDeps('running')
+    render(<AdminPanel port={8765} deps={deps} />)
+
+    expect(await screen.findByTestId('stop-capture-header')).toBeEnabled()
+  })
+
+  it('hides Stop capture when idle', async () => {
+    const { deps } = makeDeps('idle')
+    render(<AdminPanel port={8765} deps={deps} />)
+
+    await screen.findByTestId('hardware-info')
+    expect(screen.queryByTestId('stop-capture-header')).not.toBeInTheDocument()
+  })
+
+  it('puts Stop capture inside the restart-required warning', async () => {
+    // The warning used to say "stop capture to change X" while offering no way
+    // to do it — the user had to leave for the Live view and come back.
+    const { deps } = makeDeps('running')
+    render(<AdminPanel port={8765} deps={deps} />)
+
+    const model = await screen.findByLabelText(/Model/i)
+    await userEvent.selectOptions(model, 'yolo11s.pt')
+
+    const warning = await screen.findByTestId('restart-warning')
+    expect(warning).toHaveTextContent('active_model')
+    expect(within(warning).getByTestId('stop-capture-inline')).toBeInTheDocument()
+  })
+
+  it('stopping capture keeps unsaved edits', async () => {
+    // Stop must not re-read settings: AdminPanel clears `draft` whenever the
+    // settings object changes identity, so a reload here would discard the
+    // very edit the user stopped capture in order to make.
+    const { deps, api } = makeDeps('running')
+    render(<AdminPanel port={8765} deps={deps} />)
+
+    const model = await screen.findByLabelText(/Model/i)
+    await userEvent.selectOptions(model, 'yolo11s.pt')
+    await userEvent.click(screen.getByTestId('stop-capture-header'))
+
+    expect(api.stop).toHaveBeenCalled()
+    await waitFor(() => expect(screen.getByLabelText(/Model/i)).toHaveValue('yolo11s.pt'))
+  })
+
+  it('Save & restart does stop -> save -> start in one action', async () => {
+    // Most settings are restart-required, so this is the common path; doing it
+    // by hand is three actions across two views.
+    const { deps, api } = makeDeps('running')
+    render(<AdminPanel port={8765} deps={deps} />)
+
+    const model = await screen.findByLabelText(/Model/i)
+    await userEvent.selectOptions(model, 'yolo11s.pt')
+    await userEvent.click(await screen.findByTestId('save-and-restart'))
+
+    await waitFor(() => expect(api.start).toHaveBeenCalled())
+    expect(api.stop).toHaveBeenCalled()
+    expect(api.updateSettings).toHaveBeenCalledWith({ active_model: 'yolo11s.pt' })
+    const order = [
+      vi.mocked(api.stop).mock.invocationCallOrder[0],
+      vi.mocked(api.updateSettings).mock.invocationCallOrder[0],
+      vi.mocked(api.start).mock.invocationCallOrder[0]
+    ]
+    expect(order).toEqual([...order].sort((a, b) => a - b))
+  })
+
+  it('does not offer Save & restart when nothing is pending', async () => {
+    const { deps } = makeDeps('running')
+    render(<AdminPanel port={8765} deps={deps} />)
+
+    await screen.findByTestId('hardware-info')
+    expect(screen.queryByTestId('save-and-restart')).not.toBeInTheDocument()
   })
 })

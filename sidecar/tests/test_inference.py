@@ -80,3 +80,48 @@ def test_yolo_detector_forwards_imgsz_to_track():
     )
     det.infer(np.zeros((40, 30, 3), dtype=np.uint8))
     assert det._model.track_kwargs["imgsz"] == 960
+
+
+def test_yolo_detector_uses_bytetrack_not_the_botsort_default():
+    """Ultralytics defaults to BoT-SORT, whose GMC runs optical flow over the
+    full frame to cancel *camera* motion. This camera is fixed to a counter, so
+    it bought nothing and doubled per-frame cost (~83 ms vs ~39 ms measured on
+    a GTX 1050 Ti at 720p). The configs are otherwise identical.
+    """
+    calls = {}
+
+    class FakeModel:
+        names = {0: "apple"}
+
+        def track(self, frame, **kw):
+            calls.update(kw)
+            return []
+
+    from app.inference import DEFAULT_TRACKER, YoloDetector
+
+    d = YoloDetector("m.pt", device="cpu", conf=0.5, model_factory=lambda p: FakeModel())
+    d.infer(np.zeros((8, 8, 3), dtype=np.uint8))
+
+    assert DEFAULT_TRACKER == "bytetrack.yaml"
+    assert calls["tracker"] == "bytetrack.yaml"
+    assert calls["persist"] is True
+
+
+def test_yolo_detector_tracker_is_overridable():
+    class FakeModel:
+        names: dict = {}
+
+        def __init__(self):
+            self.kw = {}
+
+        def track(self, frame, **kw):
+            self.kw = kw
+            return []
+
+    from app.inference import YoloDetector
+
+    model = FakeModel()
+    d = YoloDetector("m.pt", device="cpu", conf=0.5, model_factory=lambda p: model,
+                     tracker="botsort.yaml")
+    d.infer(np.zeros((8, 8, 3), dtype=np.uint8))
+    assert model.kw["tracker"] == "botsort.yaml"

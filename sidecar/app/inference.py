@@ -36,8 +36,24 @@ class Detector(Protocol):
     def infer(self, frame: np.ndarray) -> list[Detection]: ...
 
 
+# Ultralytics defaults `.track()` to BoT-SORT, whose `gmc_method:
+# sparseOptFlow` runs global motion compensation — optical flow over the *full*
+# frame — to cancel camera movement. This camera is bolted to a counter, so
+# that buys nothing and costs a great deal: measured on a GTX 1050 Ti at
+# 1280x720, predict alone is ~42 ms, BoT-SORT ~83 ms, ByteTrack ~39 ms. GMC
+# was doubling the cost of every frame, and it scales with capture resolution
+# (+47 ms at 720p, +5 ms at 480p) rather than with `imgsz`.
+#
+# The two shipped configs are otherwise identical — same track_high_thresh,
+# track_low_thresh, new_track_thresh, track_buffer, match_thresh, fuse_score —
+# and botsort.yaml has `with_reid: False`, so GMC is the *only* behavioural
+# difference. Dropping it is free here.
+DEFAULT_TRACKER = "bytetrack.yaml"
+
+
 class YoloDetector:
-    def __init__(self, model_path, device, conf, imgsz=640, model_factory=None):
+    def __init__(self, model_path, device, conf, imgsz=640, model_factory=None,
+                 tracker=DEFAULT_TRACKER):
         if model_factory is None:
             from ultralytics import YOLO
             model_factory = YOLO
@@ -45,12 +61,13 @@ class YoloDetector:
         self._device = device
         self._conf = conf
         self._imgsz = imgsz
+        self._tracker = tracker
         self.names = self._model.names
 
     def infer(self, frame: np.ndarray) -> list[Detection]:
         results = self._model.track(
             frame, persist=True, conf=self._conf, imgsz=self._imgsz,
-            device=self._device, verbose=False,
+            device=self._device, verbose=False, tracker=self._tracker,
         )
         if not results:
             return []

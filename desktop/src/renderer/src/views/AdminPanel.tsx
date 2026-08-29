@@ -62,7 +62,10 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
     probeResult,
     cameras,
     refreshCameras,
-    camerasLoading
+    camerasLoading,
+    stopCapture,
+    startCapture,
+    stopping
   } = useSidecarSettings(port, deps)
 
   // Holds only *unsaved* edits; reset whenever the server-confirmed settings
@@ -128,6 +131,16 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
   const handleSave = async (): Promise<void> => {
     if (!canSave) return
     await update(draft)
+  }
+
+  // Most settings are restart-required, so the common path is: stop, save,
+  // start again — three actions across two views. Doing it in one keeps the
+  // edit, which is why stopCapture must not re-read settings.
+  const handleSaveAndRestart = async (): Promise<void> => {
+    if (pendingFields.length === 0) return
+    await stopCapture()
+    await update(draft)
+    await startCapture()
   }
 
   const handleApplyPreset = async (name: string): Promise<void> => {
@@ -196,7 +209,25 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
             {isRestartField ? 'restart required' : 'live'}
           </span>
         </div>
-        {field.key === 'camera_index' && cameras.length === 0 && camerasLoading ? (
+        {field.key === 'camera_index' && cameras.length === 0 && running ? (
+          // Scanning opens every device, so the sidecar refuses while capture
+          // holds one. Say that, rather than silently degrading to a bare
+          // index box the user has to guess at.
+          <div className="camera-picker" data-testid="camera-locked">
+            <input
+              id={field.key}
+              type="number"
+              value={value}
+              min={field.min}
+              max={field.max}
+              onChange={(e) => {
+                const n = e.target.valueAsNumber
+                if (!Number.isNaN(n)) setField(field.key, n)
+              }}
+            />
+            <span className="field-hint">Stop capture to detect camera names.</span>
+          </div>
+        ) : field.key === 'camera_index' && cameras.length === 0 && camerasLoading ? (
           // Opening every device is slow (~30 s — the StreamCam alone takes
           // ~28 s to open and switch mode), so say so rather than showing a
           // bare index box that silently becomes a dropdown later.
@@ -277,6 +308,17 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
     )
   }
 
+  const stopButton = (testId: string): JSX.Element => (
+    <button
+      className="btn-outline btn-small"
+      disabled={stopping}
+      onClick={() => void stopCapture()}
+      data-testid={testId}
+    >
+      {stopping ? <Spinner /> : null} Stop capture
+    </button>
+  )
+
   return (
     <div className="admin-panel">
       <header className="admin-header">
@@ -284,6 +326,7 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
         <span className="state" data-testid="capture-state">
           {captureState}
         </span>
+        {running && stopButton('stop-capture-header')}
       </header>
 
       <section className="admin-hardware" data-testid="hardware-info">
@@ -410,9 +453,20 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
       )}
 
       {blockedByRunning && (
-        <p className="admin-warning" data-testid="restart-warning">
-          Stop capture to change: {pendingRestartFields.join(', ')}.
-        </p>
+        <div className="admin-warning admin-warning-action" data-testid="restart-warning">
+          <span>These need a capture restart: {pendingRestartFields.join(', ')}.</span>
+          <span className="admin-warning-buttons">
+            <button
+              className="btn-primary btn-small"
+              disabled={stopping || saving}
+              onClick={() => void handleSaveAndRestart()}
+              data-testid="save-and-restart"
+            >
+              {stopping || saving ? <Spinner /> : null} Save &amp; restart capture
+            </button>
+            {stopButton('stop-capture-inline')}
+          </span>
+        </div>
       )}
 
       {error && (
