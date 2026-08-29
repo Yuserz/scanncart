@@ -59,7 +59,10 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
     refresh,
     probe,
     probing,
-    probeResult
+    probeResult,
+    cameras,
+    refreshCameras,
+    camerasLoading
   } = useSidecarSettings(port, deps)
 
   // Holds only *unsaved* edits; reset whenever the server-confirmed settings
@@ -193,7 +196,45 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
             {isRestartField ? 'restart required' : 'live'}
           </span>
         </div>
-        {field.type === 'text' ? (
+        {field.key === 'camera_index' && cameras.length === 0 && camerasLoading ? (
+          // Opening every device is slow (~30 s — the StreamCam alone takes
+          // ~28 s to open and switch mode), so say so rather than showing a
+          // bare index box that silently becomes a dropdown later.
+          <div className="camera-picker" data-testid="camera-scanning">
+            <Spinner />
+            <span className="field-hint">Detecting cameras…</span>
+          </div>
+        ) : field.key === 'camera_index' && cameras.length > 0 ? (
+          <div className="camera-picker">
+            <select
+              id={field.key}
+              value={String(value)}
+              onChange={(e) => setField(field.key, Number(e.target.value))}
+              data-testid="camera-select"
+            >
+              {/* A saved index with no matching device must stay selectable,
+                  or the form would silently rewrite the user's setting. */}
+              {!cameras.some((c) => c.index === Number(value)) && (
+                <option value={String(value)}>{`${value} — not detected`}</option>
+              )}
+              {cameras.map((c) => (
+                <option key={c.index} value={c.index}>
+                  {`${c.index} — ${c.name} (${c.width}×${c.height})`}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="btn-outline btn-small"
+              onClick={() => void refreshCameras(true)}
+              disabled={running}
+              data-testid="rescan-cameras"
+              title={running ? 'Stop capture to rescan' : 'Re-detect connected cameras'}
+            >
+              Rescan
+            </button>
+          </div>
+        ) : field.type === 'text' ? (
           <input
             id={field.key}
             type="text"

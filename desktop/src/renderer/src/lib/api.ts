@@ -57,6 +57,24 @@ export interface SettingsResponse extends SettingsPayload {
   roboflow_api_key_present: boolean
 }
 
+// One enumerated capture device. width/height are what the device actually
+// opened at — the operator's check that `name` landed on the right index,
+// since the sidecar pairs names to indices positionally.
+export interface CameraInfo {
+  index: number
+  name: string
+  width: number
+  height: number
+}
+
+export interface CamerasResponse {
+  cameras: CameraInfo[]
+  // False means the list is cached, not a fresh scan: probing opens each
+  // device, so it is skipped while capture holds one.
+  probed: boolean
+  detail: string
+}
+
 // Result of POST /api/detector/probe: checks the selected backend is usable
 // before the user starts capture.
 export interface DetectorProbeResponse {
@@ -102,6 +120,8 @@ export interface ApiClient {
   getPresets(): Promise<PresetsResponse>
   applyPreset(name: string): Promise<SettingsResponse>
   probeDetector(): Promise<DetectorProbeResponse>
+  // rescan re-opens every device (slow); omit it to take the cached list.
+  getCameras(rescan?: boolean): Promise<CamerasResponse>
 }
 
 export function createApiClient(port: number): ApiClient {
@@ -138,6 +158,8 @@ export function createApiClient(port: number): ApiClient {
     getSystemInfo: () => request<SystemInfoResponse>('/system-info', 'GET'),
     getPresets: () => request<PresetsResponse>('/presets', 'GET'),
     applyPreset: (name) => request<SettingsResponse>('/settings/preset', 'POST', { name }),
-    probeDetector: () => request<DetectorProbeResponse>('/detector/probe', 'POST')
+    probeDetector: () => request<DetectorProbeResponse>('/detector/probe', 'POST'),
+    getCameras: (rescan) =>
+      request<CamerasResponse>(`/cameras${rescan ? '?rescan=true' : ''}`, 'GET')
   }
 }

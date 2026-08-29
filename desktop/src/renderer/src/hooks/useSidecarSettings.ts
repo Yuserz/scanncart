@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   createApiClient,
   type ApiClient,
+  type CameraInfo,
   type DetectorProbeResponse,
   type PresetInfo,
   type SettingsResponse,
@@ -30,6 +31,9 @@ export interface SidecarSettings {
   applyPreset: (name: string) => Promise<SettingsResponse>
   restoreDefaults: () => Promise<SettingsResponse>
   probe: () => Promise<DetectorProbeResponse>
+  cameras: CameraInfo[]
+  refreshCameras: (rescan?: boolean) => Promise<void>
+  camerasLoading: boolean
   probing: boolean
   probeResult: DetectorProbeResponse | null
 }
@@ -55,6 +59,8 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [cameras, setCameras] = useState<CameraInfo[]>([])
+  const [camerasLoading, setCamerasLoading] = useState(true)
   const [probing, setProbing] = useState(false)
   const [probeResult, setProbeResult] = useState<DetectorProbeResponse | null>(null)
 
@@ -88,6 +94,21 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
     }
   }, [])
 
+  const refreshCameras = useCallback(async (rescan = false): Promise<void> => {
+    // `camerasLoading` already starts true, so only an explicit rescan flips
+    // it back — setting it unconditionally would be a synchronous setState
+    // inside the mount effect below.
+    if (rescan) setCamerasLoading(true)
+    try {
+      const r = await apiRef.current!.getCameras(rescan)
+      setCameras(r.cameras ?? [])
+    } catch {
+      setCameras([])
+    } finally {
+      setCamerasLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     const api = apiFactory(port)
     apiRef.current = api
@@ -103,6 +124,11 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
     }
     attemptLoad()
 
+    // Deferred off the effect body: the probe's setState would otherwise run
+    // synchronously here and cascade a render. Also lets the settings load
+    // reach the sidecar first, since the scan can hold it for ~30 s.
+    const cameraTimer = setTimeout(() => void refreshCameras(), 0)
+
     const pollHealth = async (): Promise<void> => {
       try {
         const h = await api.health()
@@ -116,6 +142,7 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
     return () => {
       cancelled = true
       if (retryTimer !== null) clearTimeout(retryTimer)
+      clearTimeout(cameraTimer)
       clearInterval(healthTimer)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -160,6 +187,10 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
     await load()
   }, [load])
 
+  // Enumerating opens every camera device, so it is a deliberate action and
+  // a no-op while capture holds one (the sidecar returns its cached list).
+  // A failure leaves `cameras` empty, which falls the field back to a plain
+  // index input rather than blanking the form.
   // An unreachable backend is a normal answer here, not an error: the sidecar
   // returns reachable:false rather than a non-2xx, so only a transport failure
   // lands in the catch.
@@ -200,6 +231,9 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
     restoreDefaults,
     probe,
     probing,
-    probeResult
+    probeResult,
+    cameras,
+    refreshCameras,
+    camerasLoading
   }
 }

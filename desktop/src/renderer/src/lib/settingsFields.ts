@@ -99,8 +99,10 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
   },
   {
     key: 'camera_index',
-    label: 'Camera index',
-    hint: 'Which camera device to use, if more than one is connected.',
+    label: 'Camera',
+    // Rendered as a dropdown of detected devices when the sidecar can
+    // enumerate them; falls back to this number input when it cannot.
+    hint: 'Which camera device to use. The resolution shown is what the device opened at — check it matches the camera you expect.',
     type: 'number',
     min: 0,
     max: 8,

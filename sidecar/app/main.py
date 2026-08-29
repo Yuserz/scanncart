@@ -29,6 +29,8 @@ from app.roboflow import (
 from app.tracking import IouTracker
 from app.schemas import (
     ApplyPresetRequest,
+    CameraInfo,
+    CamerasResponse,
     HealthResponse,
     LogEvent,
     LogsResponse,
@@ -37,9 +39,11 @@ from app.schemas import (
     PresetsResponse,
     SettingsResponse,
     SettingsUpdateRequest,
+    StatusMessage,
     SystemInfoResponse,
 )
 from app.camera import CameraCapture
+from app.cameras import CameraDevice, list_cameras
 from app.inference import RoboflowRemoteDetector, YoloDetector
 from app.logging_store import LoggingStore
 
@@ -146,6 +150,10 @@ class AppState:
     detector_factory: Callable = _default_detector_factory
     ws_manager: WSManager = field(default_factory=WSManager)
     pipeline: Pipeline | None = None
+    # Held so teardown can release them: the frame source owns an OpenCV device
+    # and a thread, the remote detector an httpx connection pool.
+    source: object | None = None
+    detector: object | None = None
     state: str = "idle"
     device: str = ""
     db_path: str = "data/scanncart.db"
@@ -158,6 +166,11 @@ class AppState:
     # Same seam for the API key, so settings tests never touch sidecar/.env.
     # Only ever reports presence — the key itself stays inside this process.
     api_key_probe: Callable[[], bool] = has_api_key
+    # And for camera enumeration, which shells out to PowerShell and opens
+    # every device. Cached because probing is slow and cannot run while
+    # capture holds the camera.
+    camera_lister: Callable[[], list[CameraDevice]] = list_cameras
+    cameras: list[CameraDevice] | None = None
 
     def __post_init__(self):
         if self.settings is None:
@@ -166,6 +179,47 @@ class AppState:
             self.device = resolve_device(self.settings.device)
         if self.logging_store is None:
             self.logging_store = LoggingStore(self.db_path)
+
+
+def _release(obj: object, *names: str) -> None:
+    """Call the first of `names` that exists. Frame sources expose `release()`
+    and detectors `close()`, and neither is guaranteed — a `FakeFrameSource` in
+    a test has no pool to free."""
+    for name in names:
+        fn = getattr(obj, name, None)
+        if callable(fn):
+            try:
+                fn()
+            except Exception:  # noqa: BLE001 - teardown must not raise
+                pass
+            return
+
+
+def _teardown_capture(state: "AppState", join_thread: bool = True) -> None:
+    """Return to idle and free every resource capture acquired.
+
+    `join_thread=False` is the path taken from the pipeline thread's own error
+    handler, which must not join the thread it is running on.
+    """
+    if state.pipeline is not None:
+        if join_thread:
+            state.pipeline.stop()
+        else:
+            state.pipeline.is_running = False
+        state.pipeline.resolve_open_tracks()
+        state.pipeline = None
+    # Order matters: the detector's client can be mid-request until the thread
+    # is done, so release only after the pipeline has stopped.
+    if state.detector is not None:
+        _release(state.detector, "close")
+        state.detector = None
+    if state.source is not None:
+        _release(state.source, "release", "close")
+        state.source = None
+    if state.session_id is not None:
+        state.logging_store.end_session(state.session_id)
+        state.session_id = None
+    state.state = "idle"
 
 
 def _settings_response(state: "AppState") -> SettingsResponse:
@@ -299,6 +353,30 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
                 return HTTPException(status_code=status, detail=str(exc))
         return HTTPException(status_code=502, detail=str(exc))
 
+    @app.get("/api/cameras", response_model=CamerasResponse)
+    async def get_cameras(rescan: bool = False):
+        """Enumerate capture devices so the Admin Panel can show names rather
+        than bare indices.
+
+        Scanning opens every device, which measured ~30 s under contention, so
+        the result is cached and only re-scanned when `rescan=true`. It is also
+        refused outright while capture holds a device.
+        """
+
+        def _response(probed: bool, detail: str) -> CamerasResponse:
+            return CamerasResponse(
+                cameras=[CameraInfo(**vars(c)) for c in (state.cameras or [])],
+                probed=probed,
+                detail=detail,
+            )
+
+        if state.state == "running":
+            return _response(False, "Capture is running — stop it to rescan for cameras.")
+        if state.cameras is not None and not rescan:
+            return _response(False, f"{len(state.cameras)} camera(s), from the last scan.")
+        state.cameras = await run_in_threadpool(state.camera_lister)
+        return _response(True, f"Found {len(state.cameras)} camera(s).")
+
     @app.post("/api/detector/probe", response_model=DetectorProbeResponse)
     async def probe_detector():
         """Validate the selected backend before the user hits Start, so a bad
@@ -358,18 +436,35 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
             try:
                 detector = state.detector_factory(state.settings, state.device)
             except RoboflowError as exc:
-                closer = getattr(source, "close", None)
-                if callable(closer):
-                    closer()
+                # `source.open()` above already started the capture thread, and
+                # frame sources expose release(), not close() — the old
+                # getattr(source, "close") never matched, so every failed start
+                # leaked the camera device and its thread.
+                _release(source, "release", "close")
                 raise _http_from_roboflow(exc) from None
             state.session_id = state.logging_store.start_session(
                 state.settings.active_model, state.device
             )
+            state.source = source
+            state.detector = detector
+
+            def _on_pipeline_error(exc: Exception) -> None:
+                # Called on the pipeline thread, so teardown must not join it.
+                state.ws_manager.submit(
+                    StatusMessage(
+                        type="status",
+                        state="error",
+                        detail=f"Capture stopped: {exc}",
+                    ).model_dump()
+                )
+                _teardown_capture(state, join_thread=False)
+
             state.pipeline = Pipeline(
                 source, detector, state.settings,
                 on_message=state.ws_manager.submit,
                 logging_store=state.logging_store,
                 session_id=state.session_id,
+                on_error=_on_pipeline_error,
             )
             state.pipeline.start()
             state.state = "running"
@@ -377,14 +472,14 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
 
     @app.post("/api/capture/stop")
     async def stop():
+        # Signal first, join second. Ending the loop has to happen inline or
+        # the thread keeps inferring for however long the threadpool dispatch
+        # takes; the join then goes off the event loop because it can sit in a
+        # remote retry for timeout*(retries+1) — ~15.6 s on the defaults —
+        # which inline would freeze health polling and every WS send.
         if state.pipeline is not None:
-            state.pipeline.stop()
-            state.pipeline.resolve_open_tracks()
-            state.pipeline = None
-        if state.session_id is not None:
-            state.logging_store.end_session(state.session_id)
-            state.session_id = None
-        state.state = "idle"
+            state.pipeline.signal_stop()
+        await run_in_threadpool(_teardown_capture, state)
         return {"state": state.state}
 
     @app.get("/api/logs", response_model=LogsResponse)

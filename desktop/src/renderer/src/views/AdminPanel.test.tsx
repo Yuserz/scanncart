@@ -71,6 +71,11 @@ function makeDeps(
       recommended: 'mid_range'
     })),
     applyPreset: vi.fn(async (name) => baseSettings({ active_model: `${name}.pt` })),
+    getCameras: vi.fn(async () => ({
+      cameras: [{ index: 0, name: 'Fake Cam', width: 1280, height: 720 }],
+      probed: true,
+      detail: ''
+    })),
     probeDetector: vi.fn(async () => ({
       backend: 'ultralytics',
       reachable: true,
@@ -343,5 +348,61 @@ describe('AdminPanel', () => {
     expect(gpu).toBeDisabled()
     expect(screen.getByLabelText(/CPU only/i)).toBeChecked()
     expect(screen.getByTestId('device-gpu-note')).toBeInTheDocument()
+  })
+
+  it('names each camera in a dropdown instead of showing a bare index', async () => {
+    const { deps } = makeDeps('idle', {
+      getCameras: vi.fn(async () => ({
+        cameras: [
+          { index: 0, name: 'USB2.0 HD UVC WebCam', width: 1280, height: 720 },
+          { index: 1, name: 'Logitech StreamCam', width: 1920, height: 1080 }
+        ],
+        probed: true,
+        detail: 'Found 2 camera(s).'
+      }))
+    })
+    render(<AdminPanel port={8765} deps={deps} />)
+
+    const select = await screen.findByTestId('camera-select')
+    // The resolution is what tells the operator the name landed on the right
+    // index, so it has to be visible, not just the name.
+    expect(select).toHaveTextContent('1 — Logitech StreamCam (1920×1080)')
+    expect(select).toHaveTextContent('0 — USB2.0 HD UVC WebCam (1280×720)')
+  })
+
+  it('keeps a saved camera index selectable when no device matches it', async () => {
+    // Otherwise the form would silently rewrite the user's saved setting to
+    // whatever happened to be plugged in.
+    const { deps } = makeDeps('idle', {
+      getSettings: vi.fn(async () => baseSettings({ camera_index: 7 })),
+      getCameras: vi.fn(async () => ({
+        cameras: [{ index: 0, name: 'Only Cam', width: 640, height: 480 }],
+        probed: true,
+        detail: ''
+      }))
+    })
+    render(<AdminPanel port={8765} deps={deps} />)
+
+    const select = await screen.findByTestId('camera-select')
+    expect(select).toHaveValue('7')
+    expect(select).toHaveTextContent('7 — not detected')
+  })
+
+  it('falls back to a plain index input when no camera could be enumerated', async () => {
+    const { deps } = makeDeps('idle', {
+      getCameras: vi.fn(async () => ({ cameras: [], probed: true, detail: '' }))
+    })
+    render(<AdminPanel port={8765} deps={deps} />)
+
+    await screen.findByTestId('hardware-info')
+    expect(screen.queryByTestId('camera-select')).not.toBeInTheDocument()
+  })
+
+  it('disables the camera rescan while capture is running', async () => {
+    // Probing opens every device, which would fight the running pipeline.
+    const { deps } = makeDeps('running')
+    render(<AdminPanel port={8765} deps={deps} />)
+
+    expect(await screen.findByTestId('rescan-cameras')).toBeDisabled()
   })
 })

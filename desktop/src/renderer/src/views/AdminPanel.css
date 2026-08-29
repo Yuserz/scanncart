@@ -309,3 +309,21 @@
   font-size: 0.85rem;
   color: var(--ok, #3fb950);
 }
+
+/* Camera picker: named device dropdown + rescan, on one row. */
+.camera-picker {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.camera-picker select {
+  flex: 1;
+  min-width: 0;
+}
+
+.btn-small {
+  padding: 4px 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}

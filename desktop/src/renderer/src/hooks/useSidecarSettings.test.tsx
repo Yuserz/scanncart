@@ -54,6 +54,11 @@ function makeDeps(overrides: Partial<ApiClient> = {}): { deps: SettingsDeps; api
       recommended: 'mid_range'
     })),
     applyPreset: vi.fn(async (name) => baseSettings({ active_model: `${name}.pt` })),
+    getCameras: vi.fn(async () => ({
+      cameras: [{ index: 0, name: 'Fake Cam', width: 1280, height: 720 }],
+      probed: true,
+      detail: ''
+    })),
     probeDetector: vi.fn(async () => ({
       backend: 'ultralytics',
       reachable: true,

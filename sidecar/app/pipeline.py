@@ -28,6 +28,7 @@ class Pipeline:
         logging_store=None,
         session_id=None,
         clock: Callable[[], float] = time.time,
+        on_error: Callable[[Exception], None] | None = None,
     ):
         self._source = source
         self._detector = detector
@@ -36,6 +37,7 @@ class Pipeline:
         self._logging_store = logging_store
         self._session_id = session_id
         self._clock = clock
+        self._on_error = on_error
         self._open: dict[int, float] = {}   # track_id -> last-seen timestamp
         self._thread = None
         self.is_running = False
@@ -104,7 +106,24 @@ class Pipeline:
 
     def _loop(self) -> None:
         while self.is_running:
-            produced = self.process_once()
+            try:
+                produced = self.process_once()
+            except Exception as exc:  # noqa: BLE001 - the thread must not die silently
+                # With a native detector `infer` essentially never raised, so an
+                # uncaught exception here used to be unreachable. The remote
+                # backends make it routine (server stopped, network drop, 5xx),
+                # and an unhandled one killed this daemon thread while
+                # `is_running` stayed True — capture appeared to run forever with
+                # a frozen preview and no error anywhere. Report and shut down
+                # instead.
+                self.is_running = False
+                if self._on_error is not None:
+                    # Runs ON this thread, so the handler must never join it.
+                    try:
+                        self._on_error(exc)
+                    except Exception:  # noqa: BLE001 - nothing useful left to do
+                        pass
+                return
             if produced is None:
                 time.sleep(0.005)
 
@@ -114,6 +133,15 @@ class Pipeline:
         self.is_running = True
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
+
+    def signal_stop(self) -> None:
+        """Ask the loop to finish without waiting for it.
+
+        Separate from `stop()` so a caller on the event loop can end inference
+        immediately and then join from a worker thread — the join can take as
+        long as one remote round trip plus its retries.
+        """
+        self.is_running = False
 
     def stop(self) -> None:
         self.is_running = False

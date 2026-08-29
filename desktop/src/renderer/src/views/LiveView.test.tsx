@@ -36,7 +36,12 @@ const makeHarness = (): {
       getSystemInfo: vi.fn(),
       getPresets: vi.fn(),
       applyPreset: vi.fn(),
-      probeDetector: vi.fn()
+      probeDetector: vi.fn(),
+      getCameras: vi.fn(async () => ({
+        cameras: [{ index: 0, name: 'Fake Cam', width: 1280, height: 720 }],
+        probed: true,
+        detail: ''
+      }))
     }),
     streamFactory: (opts: StreamClientOptions) => {
       captured = opts
@@ -134,5 +139,46 @@ describe('LiveView', () => {
     // Running but no frame yet: waiting-for-frames copy with a spinner.
     expect(screen.getByTestId('preview-placeholder')).toHaveTextContent(/Waiting for frames/)
     expect(screen.getByTestId('preview-placeholder').querySelector('.spinner')).not.toBeNull()
+  })
+
+  it('shows the sidecar detail when capture dies mid-session', async () => {
+    // The pipeline thread reports its own death as a status message carrying a
+    // detail. Dropping that detail left a frozen preview and no explanation.
+    const h = makeHarness()
+    render(<LiveView port={8765} deps={h.deps} />)
+    act(() => {
+      h.opts().onStatus?.({
+        type: 'status',
+        state: 'error',
+        detail: 'Capture stopped: server went away'
+      })
+    })
+
+    expect(screen.getByTestId('live-error')).toHaveTextContent('Capture stopped: server went away')
+  })
+
+  it('surfaces a failed Start instead of swallowing the rejection', async () => {
+    // The sidecar answers a missing key with 401, an unreachable server with
+    // 503 and a timeout with 504. Those used to become unhandled rejections:
+    // the spinner vanished and the button silently reset with nothing shown.
+    const h = makeHarness()
+    h.start.mockRejectedValueOnce(new Error('503: local_api server unreachable'))
+    render(<LiveView port={8765} deps={h.deps} />)
+
+    await userEvent.click(screen.getByLabelText('Start'))
+
+    expect(await screen.findByTestId('live-error')).toHaveTextContent('unreachable')
+  })
+
+  it('dismisses the error banner', async () => {
+    const h = makeHarness()
+    render(<LiveView port={8765} deps={h.deps} />)
+    act(() => {
+      h.opts().onStatus?.({ type: 'status', state: 'error', detail: 'boom' })
+    })
+
+    await userEvent.click(screen.getByLabelText('Dismiss error'))
+
+    expect(screen.queryByTestId('live-error')).not.toBeInTheDocument()
   })
 })

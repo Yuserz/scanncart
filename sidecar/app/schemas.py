@@ -140,6 +140,24 @@ class SettingsUpdateRequest(BaseModel):
         return v
 
 
+class CameraInfo(BaseModel):
+    """One enumerated capture device. `width`/`height` are what the device
+    actually opened at — the operator's check that `name` was paired with the
+    right index, since that pairing is positional. See app/cameras.py."""
+    index: int
+    name: str
+    width: int
+    height: int
+
+
+class CamerasResponse(BaseModel):
+    cameras: list[CameraInfo] = []
+    # Probing opens each device, so it is skipped while capture holds one.
+    # False means `cameras` is a cached or empty list, not a fresh scan.
+    probed: bool = True
+    detail: str = ""
+
+
 class DetectorProbeResponse(BaseModel):
     """Result of checking the selected backend before capture starts."""
     backend: str

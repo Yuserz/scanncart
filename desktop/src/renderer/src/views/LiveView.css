@@ -294,3 +294,18 @@
     max-height: 200px;
   }
 }
+
+/* Sidecar error banner: a failed start/stop, or a capture that died mid-run. */
+.live-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  border: 1px solid #7f1d1d;
+  border-radius: 6px;
+  background: #2a1113;
+  color: #fca5a5;
+  font-size: 13px;
+}

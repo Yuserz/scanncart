@@ -37,7 +37,12 @@ const makeDeps = (
       getSystemInfo: vi.fn(),
       getPresets: vi.fn(),
       applyPreset: vi.fn(),
-      probeDetector: vi.fn()
+      probeDetector: vi.fn(),
+      getCameras: vi.fn(async () => ({
+        cameras: [{ index: 0, name: 'Fake Cam', width: 1280, height: 720 }],
+        probed: true,
+        detail: ''
+      }))
     }),
     streamFactory: (o: StreamClientOptions) => {
       opts = o

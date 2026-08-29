@@ -47,6 +47,13 @@ function bodyForUrl(url: string): unknown {
   if (url.includes('/api/presets')) {
     return { presets: [], recommended: 'mid_range' }
   }
+  if (url.includes('/api/cameras')) {
+    return {
+      cameras: [{ index: 0, name: 'Fake Cam', width: 1280, height: 720 }],
+      probed: true,
+      detail: ''
+    }
+  }
   if (url.includes('/api/health')) {
     return { state: 'idle', active_model: 'yolo11n.pt', device: 'cpu' }
   }
