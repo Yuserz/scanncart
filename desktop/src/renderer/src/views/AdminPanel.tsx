@@ -11,6 +11,7 @@ import {
   BACKEND_HINTS,
   BACKEND_LABELS,
   EXPERIMENTAL_MODELS,
+  MODEL_LABELS,
   minTrackExpiryS,
   MODEL_SPEC_HINTS,
   REMOTE_BACKENDS,
@@ -280,7 +281,9 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
           >
             {field.options?.map((opt) => (
               <option key={opt} value={opt}>
-                {EXPERIMENTAL_MODELS.includes(opt) ? `${opt} (experimental)` : opt}
+                {EXPERIMENTAL_MODELS.includes(opt)
+                  ? `${opt} (experimental)`
+                  : (MODEL_LABELS[opt] ?? opt)}
               </option>
             ))}
           </select>

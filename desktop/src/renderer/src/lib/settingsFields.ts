@@ -5,7 +5,20 @@
 // hot-reloadable vs restart-required; this file only drives form rendering.
 import type { SettingsPayload } from './api'
 
+// The Roboflow-exported grocery model, run in-process. Listed first because
+// it is the default and the only model that detects the actual SKUs; the
+// stock YOLO weights below are generic COCO. Mirrors the sidecar's
+// CUSTOM_MODEL_DIR convention — any .onnx/.pt under sidecar/models/ is valid,
+// this is just the one we ship with.
+export const CUSTOM_MODEL = 'models/scanncart-grocery.onnx'
+
+// A raw path is not a label. Anything not listed falls back to its own name.
+export const MODEL_LABELS: Record<string, string> = {
+  [CUSTOM_MODEL]: 'SCANnCART grocery (custom, 7 SKUs)'
+}
+
 export const ALLOWED_MODELS = [
+  CUSTOM_MODEL,
   'yolo11n.pt',
   'yolo11s.pt',
   'yolo11m.pt',
@@ -85,7 +98,7 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
   {
     key: 'active_model',
     label: 'Model',
-    hint: 'Larger models (n → x) are more accurate but slower. Match this to your hardware — an underpowered machine will fall behind on frames with a large model.',
+    hint: 'The grocery model detects your actual SKUs; the yolo* weights are generic COCO and will not. Larger stock models (n → x) are more accurate but slower — match this to your hardware.',
     type: 'select',
     options: ALLOWED_MODELS
   },

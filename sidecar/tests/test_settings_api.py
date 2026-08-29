@@ -2,6 +2,7 @@ import numpy as np
 from fastapi.testclient import TestClient
 
 from app.main import AppState, build_app
+from app.presets import PRESETS
 from app.schemas import Detection
 from app.settings import Settings
 
@@ -53,7 +54,7 @@ def test_get_settings_returns_current_values_and_field_classification(tmp_path):
     r = client.get("/api/settings")
     assert r.status_code == 200
     body = r.json()
-    assert body["active_model"] == "yolo11n.pt"
+    assert body["active_model"] == Settings().active_model
     assert "infer_frame_skip" in body["hot_reloadable_fields"]
     assert "active_model" in body["restart_required_fields"]
     assert isinstance(body["warnings"], list)
@@ -81,7 +82,7 @@ def test_patch_restart_required_field_while_running_is_rejected(tmp_path):
     client.post("/api/capture/start")
     r = client.patch("/api/settings", json={"active_model": "yolo11s.pt"})
     assert r.status_code == 409
-    assert state.settings.active_model == "yolo11n.pt"  # unchanged
+    assert state.settings.active_model == Settings().active_model  # unchanged
     client.post("/api/capture/stop")
 
 
@@ -103,7 +104,7 @@ def test_patch_unknown_model_is_rejected(tmp_path):
     client, state = _make_client(tmp_path)
     r = client.patch("/api/settings", json={"active_model": "not_a_real_model.pt"})
     assert r.status_code == 422
-    assert state.settings.active_model == "yolo11n.pt"
+    assert state.settings.active_model == Settings().active_model
 
 
 def test_patch_device_reresolves_app_state_device(tmp_path):
@@ -159,8 +160,13 @@ def test_presets_lists_three_and_a_recommendation(tmp_path):
 
 def test_apply_preset_while_idle_applies_settings(tmp_path):
     client, state = _make_client(tmp_path)
+    # Start from a stock model: the default is now a custom one, which presets
+    # deliberately leave alone (see test_apply_preset_keeps_a_custom_model).
+    state.settings.active_model = "yolo11m.pt"
+
     r = client.post("/api/settings/preset", json={"name": "low_end"})
     assert r.status_code == 200
+    # The preset's own value, not the default: presets pick a model size.
     assert state.settings.active_model == "yolo11n.pt"
     assert state.settings.device == "cpu"
     assert state.settings.capture_width == 640
@@ -185,3 +191,28 @@ def test_patch_experimental_yolo26_model_is_accepted(tmp_path):
     r = client.patch("/api/settings", json={"active_model": "yolo26n.pt"})
     assert r.status_code == 200
     assert state.settings.active_model == "yolo26n.pt"
+
+
+def test_apply_preset_keeps_a_custom_model(tmp_path):
+    """Presets pick a stock model size, which would silently swap a custom
+    model for generic COCO weights — the whole point of the app."""
+    client, state = _make_client(tmp_path)
+    state.settings.active_model = "models/scanncart-grocery.onnx"
+
+    r = client.post("/api/settings/preset", json={"name": "low_end"})
+
+    assert r.status_code == 200
+    assert state.settings.active_model == "models/scanncart-grocery.onnx"
+    # ...while still tuning everything else the preset carries.
+    assert state.settings.imgsz == PRESETS["low_end"].settings.get(
+        "imgsz", state.settings.imgsz
+    )
+
+
+def test_apply_preset_still_sets_the_model_for_a_stock_one(tmp_path):
+    client, state = _make_client(tmp_path)
+    state.settings.active_model = "yolo11m.pt"
+
+    client.post("/api/settings/preset", json={"name": "low_end"})
+
+    assert state.settings.active_model == "yolo11n.pt"

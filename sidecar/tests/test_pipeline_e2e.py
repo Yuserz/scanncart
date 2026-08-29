@@ -281,7 +281,7 @@ class TestCaptureE2E:
         r = client.get("/api/settings")
         assert r.status_code == 200
         body = r.json()
-        assert body["active_model"] == "yolo11n.pt"
+        assert body["active_model"] == Settings().active_model
         assert body["detector_backend"] == "native"
         assert "hot_reloadable_fields" in body
         assert "restart_required_fields" in body
@@ -293,7 +293,7 @@ class TestCaptureE2E:
         assert r.status_code == 200
         body = r.json()
         assert body["state"] == "idle"
-        assert body["active_model"] == "yolo11n.pt"
+        assert body["active_model"] == Settings().active_model
 
     def test_capture_start_stop_lifecycle(self):
         """Verify the full state transitions: idle → running → idle."""

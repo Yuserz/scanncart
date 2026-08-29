@@ -134,14 +134,30 @@ class names included, and `.track()` works on it unchanged.
 
 ### Measured, on this machine
 
-| Path | ms/frame | infer fps | Classes | Offline |
-|------|---------:|----------:|---------|---------|
-| `local_api` (current) | ~100 | 9.5 | 7 grocery | ✅ (needs the server process) |
-| **custom ONNX, CPU only** | **51** | **19.6** | **7 grocery** | ✅ fully |
-| `native` yolo11n `.pt`, CUDA | 38 | 26 | 80 COCO — *not the grocery model* | ✅ fully |
+Two columns, because they disagree and only the second one matters. "Isolated" is `model.track()`
+alone in a quiet process; "in the app" is what the Live view actually reports, with the capture
+thread, JPEG preview encoding and the WebSocket all running.
 
-The custom model on **CPU alone** is already twice `local_api`, because that ~100 ms is an HTTP
-round trip, not inference.
+| Path | Isolated | In the app | Classes | Offline |
+|------|---------:|-----------:|---------|---------|
+| `local_api` | — | ~100 ms / 9.5 fps | 7 grocery | ✅ needs a second process |
+| **custom ONNX, CPU** | 51 ms / 19.6 fps | **91 ms / 10.4 fps** | **7 grocery** | ✅ fully, one process |
+| `native` yolo11n `.pt`, CUDA | 38 ms / 26 fps | ~25 ms / 28.8 fps | 80 COCO — *not the grocery model* | ✅ fully |
+
+**The isolated 19.6 fps does not survive the real pipeline.** Preview encoding costs ~12 ms, but
+that only accounts for part of the gap: the rest is CPU contention. ONNX inference runs on the CPU,
+and so do frame capture, JPEG encode and the WebSocket — they fight for the same cores. The
+`.pt` + CUDA path does not have this problem, which is why it is the only one that gets near its
+isolated number.
+
+So the custom ONNX is **roughly level with `local_api` on speed**, not twice it. Its actual
+advantages are different and still decisive:
+
+* **One process.** No inference server to remember to start, no Docker-free launcher, no HTTP hop.
+* **No network stack in the hot path** — nothing to time out, retry, or 503.
+* **The real SKUs**, which `native` with stock yolo11n weights cannot detect at all.
+
+The way to actually go faster is a `.pt` on CUDA (see below), not tuning this.
 
 ### Two caveats before treating this as the answer
 

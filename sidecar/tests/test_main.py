@@ -53,7 +53,7 @@ def test_health_reports_idle_and_model():
     assert r.status_code == 200
     body = r.json()
     assert body["state"] == "idle"
-    assert body["active_model"] == "yolo11n.pt"
+    assert body["active_model"] == Settings().active_model
     assert body["device"] in ("cpu", "cuda")
 
 

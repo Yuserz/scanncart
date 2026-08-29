@@ -1,3 +1,4 @@
+import { DEFAULT_SETTINGS } from '../lib/settingsDefaults'
 import { describe, it, expect, vi } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
 import { useSidecarSettings, type SettingsDeps } from './useSidecarSettings'
@@ -130,7 +131,10 @@ describe('useSidecarSettings', () => {
     })
 
     expect(api.updateSettings).toHaveBeenCalledWith(
-      expect.objectContaining({ active_model: 'yolo11n.pt', capture_width: 1280 })
+      expect.objectContaining({
+        active_model: DEFAULT_SETTINGS.active_model,
+        capture_width: 1280
+      })
     )
   })
 

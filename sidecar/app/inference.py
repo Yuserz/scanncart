@@ -62,13 +62,20 @@ class YoloDetector:
         self._conf = conf
         self._imgsz = imgsz
         self._tracker = tracker
+        self._is_onnx = str(model_path).lower().endswith(".onnx")
         self.names = self._model.names
 
     def infer(self, frame: np.ndarray) -> list[Detection]:
-        results = self._model.track(
-            frame, persist=True, conf=self._conf, imgsz=self._imgsz,
-            device=self._device, verbose=False, tracker=self._tracker,
+        kwargs = dict(
+            persist=True, conf=self._conf, imgsz=self._imgsz,
+            verbose=False, tracker=self._tracker,
         )
+        # An ONNX session fixes its execution provider at load time, so `device`
+        # cannot move it and only costs ultralytics a per-call device
+        # resolution — measured ~10 ms/frame on the custom grocery model.
+        if not self._is_onnx:
+            kwargs["device"] = self._device
+        results = self._model.track(frame, **kwargs)
         if not results:
             return []
         r = results[0]

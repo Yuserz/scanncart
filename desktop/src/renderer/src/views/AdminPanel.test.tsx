@@ -1,3 +1,4 @@
+import { DEFAULT_SETTINGS } from '../lib/settingsDefaults'
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -155,7 +156,10 @@ describe('AdminPanel', () => {
 
     await waitFor(() =>
       expect(api.updateSettings).toHaveBeenCalledWith(
-        expect.objectContaining({ active_model: 'yolo11n.pt', capture_width: 1280 })
+        expect.objectContaining({
+          active_model: DEFAULT_SETTINGS.active_model,
+          capture_width: 1280
+        })
       )
     )
   })

@@ -125,3 +125,39 @@ def test_yolo_detector_tracker_is_overridable():
                      tracker="botsort.yaml")
     d.infer(np.zeros((8, 8, 3), dtype=np.uint8))
     assert model.kw["tracker"] == "botsort.yaml"
+
+
+def test_onnx_model_is_not_given_a_device():
+    """An ONNX session fixes its execution provider at load, so `device`
+    cannot move it and only costs a per-call resolution (~10 ms measured)."""
+    seen = {}
+
+    class FakeModel:
+        names = {0: "a"}
+
+        def track(self, frame, **kw):
+            seen.update(kw)
+            return []
+
+    from app.inference import YoloDetector
+
+    d = YoloDetector("models/x.onnx", device="cuda", conf=0.5, model_factory=lambda p: FakeModel())
+    d.infer(np.zeros((8, 8, 3), dtype=np.uint8))
+    assert "device" not in seen
+
+
+def test_pt_model_still_gets_its_device():
+    seen = {}
+
+    class FakeModel:
+        names = {0: "a"}
+
+        def track(self, frame, **kw):
+            seen.update(kw)
+            return []
+
+    from app.inference import YoloDetector
+
+    d = YoloDetector("yolo11n.pt", device="cuda", conf=0.5, model_factory=lambda p: FakeModel())
+    d.infer(np.zeros((8, 8, 3), dtype=np.uint8))
+    assert seen["device"] == "cuda"

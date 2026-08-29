@@ -1,7 +1,13 @@
 from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
-from app.settings_store import ALLOWED_BACKENDS, ALLOWED_DEVICES, ALLOWED_MODELS
+from app.settings_store import (
+    ALLOWED_BACKENDS,
+    ALLOWED_DEVICES,
+    ALLOWED_MODELS,
+    CUSTOM_MODEL_DIR,
+    is_allowed_model,
+)
 
 
 class Detection(BaseModel):
@@ -121,8 +127,11 @@ class SettingsUpdateRequest(BaseModel):
     @field_validator("active_model")
     @classmethod
     def _validate_active_model(cls, v: str | None) -> str | None:
-        if v is not None and v not in ALLOWED_MODELS:
-            raise ValueError(f"active_model must be one of {sorted(ALLOWED_MODELS)}")
+        if v is not None and not is_allowed_model(v):
+            raise ValueError(
+                f"active_model must be one of {sorted(ALLOWED_MODELS)}, "
+                f"or a custom .onnx/.pt under {CUSTOM_MODEL_DIR}"
+            )
         return v
 
     @field_validator("device")

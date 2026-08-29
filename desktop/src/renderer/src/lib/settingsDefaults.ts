@@ -5,7 +5,7 @@
 import type { SettingsPayload } from './api'
 
 export const DEFAULT_SETTINGS: SettingsPayload = {
-  active_model: 'yolo11n.pt',
+  active_model: 'models/scanncart-grocery.onnx',
   camera_index: 0,
   capture_width: 1280,
   capture_height: 720,

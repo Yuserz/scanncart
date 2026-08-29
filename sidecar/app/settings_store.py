@@ -21,6 +21,36 @@ ALLOWED_MODELS = {
     "yolo11x.pt",
 } | EXPERIMENTAL_MODELS
 ALLOWED_DEVICES = {"auto", "cpu", "cuda"}
+
+# A custom model is any weights file under sidecar/models/. That covers the
+# Roboflow-exported grocery model, whose .onnx the local inference server
+# caches and which `YOLO()` loads directly (see docs/DETECTOR_BACKENDS.md §1a).
+#
+# `active_model` is operator-supplied and reaches `YOLO(path)`, so it is
+# constrained rather than free-form: one fixed directory, a known extension,
+# no absolute paths and no traversal. Validation deliberately never touches
+# the filesystem — settings tests stay pure, and a missing file is reported by
+# POST /api/detector/probe instead.
+CUSTOM_MODEL_DIR = "models/"
+CUSTOM_MODEL_SUFFIXES = (".onnx", ".pt")
+
+
+def is_custom_model(value: str) -> bool:
+    normalized = value.replace("\\", "/")
+    if not normalized.startswith(CUSTOM_MODEL_DIR) or ".." in normalized:
+        return False
+    name = normalized[len(CUSTOM_MODEL_DIR):]
+    # A real filename directly in models/: a non-empty stem, a known suffix,
+    # and no nested directory to walk into.
+    return (
+        name.endswith(CUSTOM_MODEL_SUFFIXES)
+        and "/" not in name
+        and len(name.rsplit(".", 1)[0]) > 0
+    )
+
+
+def is_allowed_model(value: object) -> bool:
+    return isinstance(value, str) and (value in ALLOWED_MODELS or is_custom_model(value))
 # Detector backends. "native" runs weights in-process; "local_api" talks to a
 # Roboflow inference server on this machine; "cloud_api" talks to Roboflow's
 # serverless endpoint. Mirrored by hand in desktop settingsFields.ts.
@@ -78,7 +108,7 @@ _lock = threading.Lock()
 
 def _valid_field(name: str, value: Any) -> bool:
     if name == "active_model":
-        return isinstance(value, str) and value in ALLOWED_MODELS
+        return is_allowed_model(value)
     if name == "device":
         return isinstance(value, str) and value in ALLOWED_DEVICES
     if name == "camera_index":

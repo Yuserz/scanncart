@@ -10,6 +10,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from app.settings import Settings, resolve_device
 from app.settings_store import (
+    is_custom_model,
     HOT_RELOADABLE_FIELDS,
     RESTART_REQUIRED_FIELDS,
     compute_warnings,
@@ -362,7 +363,15 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
         preset = PRESETS.get(body.name)
         if preset is None:
             raise HTTPException(status_code=404, detail=f"Unknown preset: {body.name}")
-        return _apply_settings_patch(state, preset.settings)
+        patch = dict(preset.settings)
+        # Presets pick a stock model size for the machine (yolo11n/s/m). That
+        # is meaningless for a custom model — there is only the one — and
+        # applying it would silently swap the grocery model for generic COCO
+        # weights, which is the whole point of the app. Keep the custom model
+        # and let the preset tune everything else.
+        if is_custom_model(state.settings.active_model):
+            patch.pop("active_model", None)
+        return _apply_settings_patch(state, patch)
 
     _ERROR_STATUS = {
         RoboflowAuthError: 401,
