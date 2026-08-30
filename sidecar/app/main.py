@@ -55,7 +55,7 @@ from app.schemas import (
     SystemInfoResponse,
 )
 from app.camera import CameraCapture
-from app.camera_caps import CameraProfile
+from app.camera_caps import CameraProfile, calibrate
 from app.camera_profiles import save_profile
 from app.cameras import CameraDevice, list_cameras, list_device_names
 from app.inference import RoboflowRemoteDetector, YoloDetector
@@ -218,6 +218,12 @@ class AppState:
             self.device = resolve_device(self.settings.device)
         if self.logging_store is None:
             self.logging_store = LoggingStore(self.db_path)
+        if self.calibrator is None:
+            self.calibrator = lambda: calibrate(
+                self.settings.camera_index,
+                self.settings.capture_width,
+                self.settings.capture_height,
+            )
 
 
 def _release(obj: object, *names: str) -> None:

@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 
 from app import camera_caps
-from app.camera_caps import FOCUS_RELATIVE_THRESHOLD, ControlSupport, probe_controls
+from app.camera_caps import FOCUS_RELATIVE_THRESHOLD, ControlSupport, calibrate, probe_controls
 from app.camera_quality import FrameQuality
 
 
@@ -97,3 +97,69 @@ def test_focus_proportionally_large_change_is_supported(monkeypatch):
     support = _probe_focus(monkeypatch, before_sharpness=before, after_sharpness=after)
 
     assert support.focus is True
+
+
+def test_calibrate_measures_both_exposure_modes():
+    """12 fps on auto, 30 with exposure capped — the difference is the whole
+    reason to calibrate."""
+    class _Cap:
+        def __init__(self): self.capped = False
+        def isOpened(self): return True
+        def set(self, prop, value):
+            import cv2
+            if prop == cv2.CAP_PROP_EXPOSURE: self.capped = True
+            return True
+        def get(self, prop): return 0.0
+        def read(self):
+            import numpy as np
+            return True, np.full((8, 8, 3), 40, dtype=np.uint8)
+        def release(self): pass
+
+    cap = _Cap()
+    profile = calibrate(1, 1280, 720, open_device=lambda i, b: cap,
+                        device_name="Fake Cam", sample_seconds=0.05)
+
+    assert profile.device_key.startswith("Fake Cam")
+    assert profile.fps_auto_exposure > 0
+    assert profile.fps_capped_exposure > 0
+    assert isinstance(profile.recommended, dict)
+
+
+class _ReopenCap:
+    """Minimal working camera double for the reopen-contract test below."""
+
+    def isOpened(self): return True
+
+    def set(self, prop, value): return True
+
+    def get(self, prop): return 0.0
+
+    def read(self):
+        return True, np.full((8, 8, 3), 40, dtype=np.uint8)
+
+    def release(self): pass
+
+
+def test_calibrate_reopens_device_after_destructive_probe():
+    """probe_controls is destructive by design (module docstring): it leaves
+    brightness/exposure/gain/focus pinned to whatever probe value last stuck,
+    and its docstring names calibrate() as the caller responsible for
+    reopening the device afterward. If calibrate() skips that reopen, every
+    calibrated camera silently keeps whatever values probing happened to
+    set — nothing else here would fail. Pin the reopen by counting how many
+    times the injected open_device factory is actually called: once to open
+    for probing, once again afterward for a clean handle."""
+    opened = []
+
+    def open_device(index, backend):
+        cap = _ReopenCap()
+        opened.append(cap)
+        return cap
+
+    calibrate(1, 1280, 720, open_device=open_device,
+              device_name="Fake Cam", sample_seconds=0.01)
+
+    assert len(opened) >= 2, (
+        "calibrate() must release and reopen the device after probe_controls, "
+        "not keep using the same (now-dirtied) handle"
+    )

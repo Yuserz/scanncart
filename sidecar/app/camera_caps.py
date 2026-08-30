@@ -14,6 +14,7 @@ responsible for reopening the device afterwards to get a clean state; Task
 11's `calibrate()` does exactly that.
 """
 
+import time
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -85,3 +86,80 @@ def probe_controls(cap, read_frame: Callable[[], np.ndarray]) -> ControlSupport:
     after_sharp = frame_quality(read_frame()).sharpness
     support.focus = abs(after_sharp - before_sharp) >= max(before_sharp, 1.0) * FOCUS_RELATIVE_THRESHOLD
     return support
+
+
+def _default_open(index: int, backend: int):
+    return cv2.VideoCapture(index, backend)
+
+
+def calibrate(
+    index: int,
+    width: int,
+    height: int,
+    open_device: Callable[[int, int], object] = _default_open,
+    device_name: str = "",
+    sample_seconds: float = 3.0,
+) -> CameraProfile:
+    """Measure one camera and recommend settings.
+
+    Opens the device exclusively, so the caller must have stopped capture.
+
+    `probe_controls` is destructive (see its docstring): it leaves
+    brightness/exposure/gain/focus pinned to whatever probe value last
+    stuck, and names this function as the caller responsible for reopening
+    the device afterward. This function does exactly that — release the
+    probed handle and open a fresh one — both so the exposure-capped fps
+    measurement below reflects only the exposure cap (not leftover probe
+    state) and so the device is left clean for whoever uses it next.
+    """
+    from app.camera_derive import derive_camera_settings
+    from app.camera_quality import measure_fps
+
+    def _open_and_prime():
+        opened = open_device(index, cv2.CAP_MSMF)
+        opened.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+        opened.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+        for _ in range(10):
+            opened.read()
+        return opened
+
+    cap = _open_and_prime()
+    try:
+        def read_ok() -> bool:
+            ok, _ = cap.read()
+            return bool(ok)
+
+        def read_frame():
+            ok, frame = cap.read()
+            return frame if ok else None
+
+        fps_auto = measure_fps(read_ok, seconds=sample_seconds)
+        brightness = _brightness(read_frame)
+        controls = probe_controls(cap, read_frame)
+
+        # Reopen: probe_controls just dirtied brightness/exposure/gain/focus.
+        # Measuring the exposure-capped rate on the same handle would
+        # confound the exposure effect with whatever probing left behind,
+        # and skipping this reopen entirely would silently leave the device
+        # in that dirtied state for good.
+        release = getattr(cap, "release", None)
+        if callable(release):
+            release()
+        cap = _open_and_prime()
+
+        cap.set(cv2.CAP_PROP_EXPOSURE, -6)
+        fps_capped = measure_fps(read_ok, seconds=sample_seconds)
+
+        profile = CameraProfile(
+            device_key=f"{device_name}:{index}:{width}x{height}",
+            backend="msmf", width=width, height=height,
+            fps_auto_exposure=round(fps_auto, 1),
+            fps_capped_exposure=round(fps_capped, 1),
+            controls=controls, measured_at=time.time(),
+        )
+        profile.recommended = derive_camera_settings(profile, brightness)
+        return profile
+    finally:
+        release = getattr(cap, "release", None)
+        if callable(release):
+            release()
