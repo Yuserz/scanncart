@@ -69,6 +69,18 @@ def list_device_names() -> list[str]:
         return []
 
 
+def name_for_index(index: int, names: list[str]) -> str:
+    """The Windows name at a positional index, or a numbered fallback.
+
+    Names come back from Windows with no index attached and indices come back
+    from OpenCV with no name attached (see the module docstring), so this is
+    the one place that convention lives. `list_cameras` uses it when pairing
+    the dropdown; anything else that needs a device's name (e.g. calibration's
+    device_key) should call this rather than re-deriving the fallback.
+    """
+    return names[index] if index < len(names) else f"Camera {index}"
+
+
 def _default_cap_factory(index: int):
     return cv2.VideoCapture(index)
 
@@ -123,6 +135,6 @@ def list_cameras(
         width, height = probed
         # Fall back to the index when Windows named fewer devices than opened —
         # a labeled device is a nicety, an unusable dropdown row is not.
-        name = names[index] if index < len(names) else f"Camera {index}"
+        name = name_for_index(index, names)
         devices.append(CameraDevice(index=index, name=name, width=width, height=height))
     return devices

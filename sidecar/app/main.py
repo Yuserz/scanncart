@@ -57,7 +57,7 @@ from app.schemas import (
 from app.camera import CameraCapture
 from app.camera_caps import CameraProfile, calibrate
 from app.camera_profiles import save_profile
-from app.cameras import CameraDevice, list_cameras, list_device_names
+from app.cameras import CameraDevice, list_cameras, list_device_names, name_for_index
 from app.inference import RoboflowRemoteDetector, YoloDetector
 from app.logging_store import LoggingStore
 
@@ -71,6 +71,27 @@ def _default_source_factory(settings: Settings):
         autofocus=settings.camera_autofocus,
         focus=settings.camera_focus,
     )
+
+
+def _resolve_camera_name(state: "AppState") -> str:
+    """Best-effort device name for the calibration device_key.
+
+    Deliberately re-queries `state.camera_namer()` rather than reading
+    `state.cameras`: the cached list is None until /api/cameras has been
+    called at least once (calibration must work without that ever
+    happening), and even when populated it can be stale relative to what is
+    plugged in right now. The ~550 ms PowerShell call is cheap next to the
+    seconds calibration already takes to sample frames.
+
+    Uses the same positional index -> name convention as list_cameras (via
+    name_for_index) rather than a second one, and never raises: an empty or
+    "Camera N" fallback device_key is far better than a failed calibration.
+    """
+    try:
+        names = state.camera_namer()
+        return name_for_index(state.settings.camera_index, names)
+    except Exception:  # noqa: BLE001 - naming must never block calibration
+        return f"Camera {state.settings.camera_index}"
 
 
 def backend_url(settings: Settings) -> str:
@@ -223,6 +244,7 @@ class AppState:
                 self.settings.camera_index,
                 self.settings.capture_width,
                 self.settings.capture_height,
+                device_name=_resolve_camera_name(self),
             )
 
 

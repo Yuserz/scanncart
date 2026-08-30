@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
 from app.camera_caps import CameraProfile, ControlSupport
-from app.main import AppState, build_app
+from app.main import AppState, build_app, _resolve_camera_name
 
 
 def _profile():
@@ -52,3 +52,60 @@ def test_calibrate_is_refused_while_capture_is_running(tmp_path):
 def test_apply_without_a_profile_is_a_404(tmp_path):
     client, _ = _client(tmp_path)
     assert client.post("/api/camera/profile/apply").status_code == 404
+
+
+# --- default calibrator wiring (the device_name regression) --------------
+#
+# On a real StreamCam, /api/camera/calibrate used to return
+# device_key=":1:1280x720" — the device name was never passed into
+# calibrate() at all. device_key is the persistence key camera_profiles.py
+# stores profiles under, so an empty name let two physically different
+# cameras at the same index/resolution collide on one saved profile.
+
+
+def test_default_calibrator_passes_a_nonempty_device_name(tmp_path, monkeypatch):
+    """AppState.__post_init__ wires its own calibrator when none is injected.
+    Patch the calibrate() function main.py calls (never a real device, and
+    never the state.calibrator seam, which would just bypass the wiring
+    under test) to capture what that default wiring actually passes it."""
+    captured = {}
+
+    def fake_calibrate(index, width, height, **kwargs):
+        captured.update(kwargs)
+        return _profile()
+
+    monkeypatch.setattr("app.main.calibrate", fake_calibrate)
+
+    state = AppState(
+        settings_path=str(tmp_path / "s.json"),
+        db_path=":memory:",
+        camera_namer=lambda: ["Logitech StreamCam"],
+    )
+    assert state.calibrator is not None  # built by __post_init__, not injected
+    state.calibrator()
+
+    assert captured.get("device_name") == "Logitech StreamCam"
+
+
+def test_resolve_camera_name_survives_a_failing_camera_namer(tmp_path):
+    """list_device_names() shells out to PowerShell and is documented to
+    never raise, but the fallback here must hold even if an injected namer
+    (or a future implementation) breaks that contract — a naming failure
+    must never turn into a failed calibration."""
+    def boom():
+        raise OSError("no powershell")
+
+    state = AppState(settings_path=str(tmp_path / "s.json"), db_path=":memory:",
+                      camera_namer=boom, calibrator=lambda: _profile())
+
+    assert _resolve_camera_name(state) == f"Camera {state.settings.camera_index}"
+
+
+def test_resolve_camera_name_falls_back_when_fewer_names_than_index(tmp_path):
+    """Same convention as list_cameras: Windows naming fewer devices than
+    opened degrades to 'Camera N', not an IndexError."""
+    state = AppState(settings_path=str(tmp_path / "s.json"), db_path=":memory:",
+                      camera_namer=lambda: [], calibrator=lambda: _profile())
+    state.settings.camera_index = 1
+
+    assert _resolve_camera_name(state) == "Camera 1"
