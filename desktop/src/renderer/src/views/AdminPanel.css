@@ -418,3 +418,28 @@
 .quality-value.bad {
   color: #ffb020;
 }
+
+/* Calibration review card: shows the measured fps evidence and the proposed
+   patch, and changes nothing until Apply is pressed (review-first design). */
+.calibration-result {
+  margin-top: 8px;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.calibration-result ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+
+.calibration-result .btn-primary {
+  align-self: flex-start;
+}

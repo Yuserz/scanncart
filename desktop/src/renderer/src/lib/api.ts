@@ -106,6 +106,31 @@ export interface CameraQualityResponse {
   detail: string
 }
 
+// Which physical device controls the camera actually accepted during
+// calibration (a StreamCam commonly lacks gain/focus control, for instance).
+export interface CameraControlSupport {
+  brightness: boolean
+  exposure: boolean
+  gain: boolean
+  focus: boolean
+}
+
+// Mirrors sidecar/app/schemas.py::CameraProfileResponse. Applies nothing on
+// its own — POST /api/camera/calibrate only measures; the operator reviews
+// fps_auto_exposure vs fps_capped_exposure (the evidence) before choosing to
+// apply `recommended` via POST /api/camera/profile/apply.
+export interface CameraProfileResponse {
+  device_key: string
+  backend: string
+  width: number
+  height: number
+  fps_auto_exposure: number
+  fps_capped_exposure: number
+  controls: CameraControlSupport
+  recommended: Record<string, unknown>
+  measured_at: number
+}
+
 export interface SystemInfoResponse {
   cpu_count: number
   ram_gb: number
@@ -142,6 +167,12 @@ export interface ApiClient {
   // rescan re-opens every device (slow); omit it to take the cached list.
   getCameras(rescan?: boolean): Promise<CamerasResponse>
   getCameraQuality(): Promise<CameraQualityResponse>
+  // Measures the camera; applies nothing. 409 while capture is running (the
+  // camera is exclusive) — the caller disables the button in that state.
+  calibrateCamera(): Promise<CameraProfileResponse>
+  // Applies the most recently calibrated profile's `recommended` patch. 404
+  // if nothing has been calibrated yet.
+  applyCameraProfile(): Promise<SettingsResponse>
 }
 
 export function createApiClient(port: number): ApiClient {
@@ -181,6 +212,8 @@ export function createApiClient(port: number): ApiClient {
     probeDetector: () => request<DetectorProbeResponse>('/detector/probe', 'POST'),
     getCameras: (rescan) =>
       request<CamerasResponse>(`/cameras${rescan ? '?rescan=true' : ''}`, 'GET'),
-    getCameraQuality: () => request<CameraQualityResponse>('/camera/quality', 'GET')
+    getCameraQuality: () => request<CameraQualityResponse>('/camera/quality', 'GET'),
+    calibrateCamera: () => request<CameraProfileResponse>('/camera/calibrate', 'POST'),
+    applyCameraProfile: () => request<SettingsResponse>('/camera/profile/apply', 'POST')
   }
 }

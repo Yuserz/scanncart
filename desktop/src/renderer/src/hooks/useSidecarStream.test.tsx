@@ -52,7 +52,9 @@ const makeDeps = (
         target_fps: 0,
         verdicts: {},
         detail: ''
-      }))
+      })),
+      calibrateCamera: vi.fn(),
+      applyCameraProfile: vi.fn()
     }),
     streamFactory: (o: StreamClientOptions) => {
       opts = o

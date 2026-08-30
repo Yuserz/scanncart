@@ -100,6 +100,18 @@ function makeDeps(
       verdicts: {},
       detail: ''
     })),
+    calibrateCamera: vi.fn(async () => ({
+      device_key: 'Fake Cam:0:1280x720',
+      backend: 'msmf',
+      width: 1280,
+      height: 720,
+      fps_auto_exposure: 12.3,
+      fps_capped_exposure: 30.3,
+      controls: { brightness: true, exposure: true, gain: false, focus: false },
+      recommended: { camera_exposure: -6, camera_brightness: 180 },
+      measured_at: 1
+    })),
+    applyCameraProfile: vi.fn(async () => baseSettings()),
     ...overrides
   }
   return { deps: { apiFactory: () => api, healthPollMs: 10_000 }, api }
@@ -583,6 +595,26 @@ describe('AdminPanel', () => {
     const panel = await screen.findByTestId('camera-quality')
     expect(panel).toHaveTextContent('23')
     expect(within(panel).getAllByTestId('quality-low').length).toBeGreaterThan(0)
+  })
+
+  it('shows the calibration result with its measured evidence, and applies on request', async () => {
+    const { deps, api } = makeDeps('idle')
+    render(<AdminPanel port={8765} deps={deps} />)
+
+    await userEvent.click(await screen.findByTestId('calibrate-camera'))
+
+    const card = await screen.findByTestId('calibration-result')
+    expect(card).toHaveTextContent('30.3') // the measured evidence
+    expect(card).toHaveTextContent('12.3')
+
+    await userEvent.click(within(card).getByTestId('apply-profile'))
+    expect(api.applyCameraProfile).toHaveBeenCalled()
+  })
+
+  it('disables calibration while capture is running', async () => {
+    const { deps } = makeDeps('running')
+    render(<AdminPanel port={8765} deps={deps} />)
+    expect(await screen.findByTestId('calibrate-camera')).toBeDisabled()
   })
 
   it('hides the quality readout when capture is not running', async () => {

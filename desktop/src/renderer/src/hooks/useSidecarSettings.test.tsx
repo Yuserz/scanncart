@@ -83,6 +83,18 @@ function makeDeps(overrides: Partial<ApiClient> = {}): { deps: SettingsDeps; api
       verdicts: {},
       detail: ''
     })),
+    calibrateCamera: vi.fn(async () => ({
+      device_key: 'Fake Cam:0:1280x720',
+      backend: 'msmf',
+      width: 1280,
+      height: 720,
+      fps_auto_exposure: 12.3,
+      fps_capped_exposure: 30.3,
+      controls: { brightness: true, exposure: true, gain: false, focus: false },
+      recommended: { camera_exposure: -6, camera_brightness: 180 },
+      measured_at: 1
+    })),
+    applyCameraProfile: vi.fn(async () => baseSettings()),
     ...overrides
   }
   return { deps: { apiFactory: () => api, healthPollMs: 10_000, retryDelayMs: 10 }, api }

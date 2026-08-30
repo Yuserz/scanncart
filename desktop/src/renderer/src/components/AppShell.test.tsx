@@ -71,6 +71,22 @@ function bodyForUrl(url: string): unknown {
       detail: ''
     }
   }
+  if (url.includes('/api/camera/calibrate')) {
+    return {
+      device_key: 'Fake Cam:0:1280x720',
+      backend: 'msmf',
+      width: 1280,
+      height: 720,
+      fps_auto_exposure: 12.3,
+      fps_capped_exposure: 30.3,
+      controls: { brightness: true, exposure: true, gain: false, focus: false },
+      recommended: { camera_exposure: -6, camera_brightness: 180 },
+      measured_at: 1
+    }
+  }
+  if (url.includes('/api/camera/profile/apply')) {
+    return bodyForUrl('/api/settings')
+  }
   return {}
 }
 

@@ -3,6 +3,7 @@ import {
   createApiClient,
   type ApiClient,
   type CameraInfo,
+  type CameraProfileResponse,
   type CameraQualityResponse,
   type DetectorProbeResponse,
   type PresetInfo,
@@ -44,6 +45,10 @@ export interface SidecarSettings {
   probing: boolean
   probeResult: DetectorProbeResponse | null
   cameraQuality: CameraQualityResponse | null
+  calibrate: () => Promise<CameraProfileResponse>
+  calibrating: boolean
+  profile: CameraProfileResponse | null
+  applyProfile: () => Promise<SettingsResponse>
 }
 
 function errorMessage(e: unknown): string {
@@ -76,6 +81,8 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
   const [probing, setProbing] = useState(false)
   const [probeResult, setProbeResult] = useState<DetectorProbeResponse | null>(null)
   const [cameraQuality, setCameraQuality] = useState<CameraQualityResponse | null>(null)
+  const [calibrating, setCalibrating] = useState(false)
+  const [profile, setProfile] = useState<CameraProfileResponse | null>(null)
 
   const apiRef = useRef<ApiClient | null>(null)
 
@@ -273,6 +280,42 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
     }
   }, [])
 
+  // Applies nothing itself — review-first: the operator sees fps_auto_exposure
+  // vs fps_capped_exposure (the evidence) and the recommended patch before
+  // choosing to apply it via applyProfile(). A 409 (capture running) surfaces
+  // through `error` like any other API failure.
+  const calibrate = useCallback(async (): Promise<CameraProfileResponse> => {
+    setCalibrating(true)
+    setError(null)
+    try {
+      const r = await apiRef.current!.calibrateCamera()
+      setProfile(r)
+      return r
+    } catch (e) {
+      setError(errorMessage(e))
+      throw e
+    } finally {
+      setCalibrating(false)
+    }
+  }, [])
+
+  // Applies the most recently calibrated profile's `recommended` patch, then
+  // reloads settings so the form reflects the applied values.
+  const applyProfile = useCallback(async (): Promise<SettingsResponse> => {
+    setSaving(true)
+    setError(null)
+    try {
+      const r = await apiRef.current!.applyCameraProfile()
+      await load()
+      return r
+    } catch (e) {
+      setError(errorMessage(e))
+      throw e
+    } finally {
+      setSaving(false)
+    }
+  }, [load])
+
   return {
     settings,
     systemInfo,
@@ -295,6 +338,10 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
     stopCapture,
     startCapture,
     stopping,
-    cameraQuality
+    cameraQuality,
+    calibrate,
+    calibrating,
+    profile,
+    applyProfile
   }
 }

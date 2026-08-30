@@ -67,7 +67,11 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
     stopCapture,
     startCapture,
     stopping,
-    cameraQuality
+    cameraQuality,
+    calibrate,
+    calibrating,
+    profile,
+    applyProfile
   } = useSidecarSettings(port, deps)
 
   // Holds only *unsaved* edits; reset whenever the server-confirmed settings
@@ -319,6 +323,43 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
             Opens at {selectedCamera.width}×{selectedCamera.height} — check this matches the camera
             you expect.
           </p>
+        )}
+        {field.key === 'camera_index' && (
+          <>
+            <button
+              type="button"
+              className="btn-outline btn-small"
+              disabled={running || calibrating}
+              onClick={() => void calibrate()}
+              data-testid="calibrate-camera"
+              title={running ? 'Stop capture to calibrate' : 'Measure this camera'}
+            >
+              {calibrating ? <Spinner /> : null} Calibrate camera
+            </button>
+
+            {profile && (
+              <div className="calibration-result" data-testid="calibration-result">
+                <p className="field-hint">
+                  Measured {profile.fps_auto_exposure} fps on automatic exposure,{' '}
+                  {profile.fps_capped_exposure} fps with it capped.
+                </p>
+                <ul>
+                  {Object.entries(profile.recommended).map(([k, v]) => (
+                    <li key={k}>
+                      {k}: {String(v)}
+                    </li>
+                  ))}
+                </ul>
+                <button
+                  className="btn-primary btn-small"
+                  data-testid="apply-profile"
+                  onClick={() => void applyProfile()}
+                >
+                  Apply these settings
+                </button>
+              </div>
+            )}
+          </>
         )}
         {field.key === 'active_model' && MODEL_SPEC_HINTS[String(value)] && (
           <p className="field-hint experimental" data-testid="model-spec-hint">
