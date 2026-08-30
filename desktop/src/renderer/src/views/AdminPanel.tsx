@@ -343,20 +343,30 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
                   Measured {profile.fps_auto_exposure} fps on automatic exposure,{' '}
                   {profile.fps_capped_exposure} fps with it capped.
                 </p>
-                <ul>
-                  {Object.entries(profile.recommended).map(([k, v]) => (
-                    <li key={k}>
-                      {k}: {String(v)}
-                    </li>
-                  ))}
-                </ul>
-                <button
-                  className="btn-primary btn-small"
-                  data-testid="apply-profile"
-                  onClick={() => void applyProfile()}
-                >
-                  Apply these settings
-                </button>
+                {Object.keys(profile.recommended).length === 0 ? (
+                  <p className="field-hint" data-testid="no-recommendation">
+                    No settings to change: this camera did not respond to any of the controls we can
+                    set.
+                  </p>
+                ) : (
+                  <>
+                    <ul>
+                      {Object.entries(profile.recommended).map(([k, v]) => (
+                        <li key={k}>
+                          {k}: {String(v)}
+                        </li>
+                      ))}
+                    </ul>
+                    <button
+                      className="btn-primary btn-small"
+                      disabled={saving}
+                      data-testid="apply-profile"
+                      onClick={() => void applyProfile()}
+                    >
+                      {saving ? <Spinner /> : null} Apply these settings
+                    </button>
+                  </>
+                )}
               </div>
             )}
           </>

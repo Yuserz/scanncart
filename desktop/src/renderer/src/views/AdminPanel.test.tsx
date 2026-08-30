@@ -617,6 +617,52 @@ describe('AdminPanel', () => {
     expect(await screen.findByTestId('calibrate-camera')).toBeDisabled()
   })
 
+  it('disables Apply while a request is in flight, preventing a double-submit', async () => {
+    const applyGate: { resolve: (() => void) | null } = { resolve: null }
+    const { deps, api } = makeDeps('idle', {
+      applyCameraProfile: vi.fn(
+        () =>
+          new Promise<SettingsResponse>((resolve) => {
+            applyGate.resolve = () => resolve(baseSettings())
+          })
+      )
+    })
+    render(<AdminPanel port={8765} deps={deps} />)
+
+    await userEvent.click(await screen.findByTestId('calibrate-camera'))
+    const card = await screen.findByTestId('calibration-result')
+    const applyButton = within(card).getByTestId('apply-profile')
+
+    await userEvent.click(applyButton)
+    expect(applyButton).toBeDisabled()
+    expect(api.applyCameraProfile).toHaveBeenCalledTimes(1)
+
+    applyGate.resolve?.()
+    await waitFor(() => expect(applyButton).not.toBeDisabled())
+  })
+
+  it('shows an explanatory message and hides Apply when the camera has nothing to recommend', async () => {
+    const { deps } = makeDeps('idle', {
+      calibrateCamera: vi.fn(async () => ({
+        device_key: 'Fake Cam:0:1280x720',
+        backend: 'msmf',
+        width: 1280,
+        height: 720,
+        fps_auto_exposure: 12.3,
+        fps_capped_exposure: 12.3,
+        controls: { brightness: false, exposure: false, gain: false, focus: false },
+        recommended: {},
+        measured_at: 1
+      }))
+    })
+    render(<AdminPanel port={8765} deps={deps} />)
+
+    await userEvent.click(await screen.findByTestId('calibrate-camera'))
+    const card = await screen.findByTestId('calibration-result')
+    expect(card).toHaveTextContent(/No settings to change/i)
+    expect(within(card).queryByTestId('apply-profile')).not.toBeInTheDocument()
+  })
+
   it('hides the quality readout when capture is not running', async () => {
     const { deps } = makeDeps('idle', {
       getCameraQuality: vi.fn(async () => ({
