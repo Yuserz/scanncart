@@ -2103,7 +2103,11 @@ export function CameraTuning({
 }
 ```
 
-Create `desktop/src/renderer/src/components/CameraTuning.css` with `.tuning-card`, `.tuning-toggle` (a borderless button inheriting the heading font), `.tuning-camera` (muted, smaller), `.tuning-group`, `.tuning-field`, and reuse of the existing `.quality-row` / `.quality-metric` / `.quality-value.bad` / `.quality-flag` / `.sr-only` rules — copy those five from `AdminPanel.css` rather than importing it.
+Create `desktop/src/renderer/src/components/CameraTuning.css` with the card's own rules: `.tuning-card`, `.tuning-toggle` (a borderless button inheriting the heading font), `.tuning-camera` (muted, smaller), `.tuning-group`, `.tuning-field`, `.tuning-actions`, `.tuning-profile`.
+
+**Move the shared rules rather than copying them.** The quality readout's styles currently live in `AdminPanel.css` (lines 394–435): `.quality-row`, `.quality-metric`, `.quality-label`, `.quality-value`, `.quality-value.bad`, `.quality-flag`, and `.sr-only`. Task 13 deletes Admin's only use of the quality ones, so copying would leave the originals orphaned in the wrong file and two copies to drift. Cut all seven out of `AdminPanel.css` and paste them into `desktop/src/renderer/src/assets/theme.css`, which already exists for exactly this purpose (it owns `.card`) and is imported once in `main.tsx`. Keep their comments — the `.quality-flag` and `.sr-only` ones explain accessibility decisions that are not obvious from the rules.
+
+Leave `.field-hint`, `.btn-primary`, `.btn-outline` and `.btn-small` where they are. They are also defined only in `AdminPanel.css` and `LiveView.tsx` already depends on that file being loaded — a pre-existing coupling this branch does not worsen and should not expand scope to fix.
 
 **Note:** controls are `readOnly` in this task. Task 11 makes them write.
 
