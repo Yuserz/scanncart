@@ -171,3 +171,98 @@ def test_a_source_without_set_controls_is_tolerated(tmp_path):
         client.post("/api/capture/stop")
 
     assert r.status_code == 200
+
+
+# --- persistence modes ---------------------------------------------------
+
+
+def _saved(path) -> dict:
+    import json
+
+    with open(path, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def test_a_non_persisting_patch_changes_memory_only(tmp_path):
+    """Tuning against a live feed must not write the file on every slider
+    tick, and must not make an experiment the startup config."""
+    path = tmp_path / "settings.json"
+    state = AppState(settings_path=str(path), db_path=":memory:")
+    with TestClient(build_app(lambda: state)) as client:
+        client.patch("/api/settings", json={"conf_threshold": 0.7})  # persist
+        before = _saved(path)
+        r = client.patch("/api/settings?persist=false", json={"conf_threshold": 0.9})
+
+    assert r.status_code == 200
+    assert state.settings.conf_threshold == 0.9
+    assert _saved(path) == before
+    assert _saved(path)["conf_threshold"] == 0.7
+
+
+def test_save_persists_what_is_in_memory(tmp_path):
+    path = tmp_path / "settings.json"
+    state = AppState(settings_path=str(path), db_path=":memory:")
+    with TestClient(build_app(lambda: state)) as client:
+        client.patch("/api/settings", json={"conf_threshold": 0.7})
+        client.patch("/api/settings?persist=false", json={"conf_threshold": 0.9})
+        r = client.post("/api/settings/save")
+
+    assert r.status_code == 200
+    assert r.json()["conf_threshold"] == 0.9
+    assert _saved(path)["conf_threshold"] == 0.9
+
+
+def test_a_non_persisting_patch_still_reaches_the_device(running):
+    client, _, src, _ = running
+    client.patch("/api/settings?persist=false", json={"camera_brightness": 200.0})
+
+    assert src.controls["brightness"] == 200.0
+
+
+def test_a_non_persisting_patch_still_respects_the_restart_lock(running):
+    """persist=false is about the file, not about the lock."""
+    client, _, _, _ = running
+    r = client.patch("/api/settings?persist=false", json={"capture_width": 640})
+
+    assert r.status_code == 409
+
+
+def test_reset_fields_sets_a_control_back_to_none(tmp_path):
+    """Revert's case: all four controls default to None, so on a fresh
+    install the saved baseline IS None and exclude_none would make Revert a
+    no-op on the primary path."""
+    state = AppState(settings_path=str(tmp_path / "settings.json"), db_path=":memory:")
+    with TestClient(build_app(lambda: state)) as client:
+        client.patch("/api/settings", json={"camera_brightness": 180.0})
+        r = client.patch("/api/settings", json={"reset_fields": ["camera_brightness"]})
+
+    assert r.status_code == 200
+    assert state.settings.camera_brightness is None
+    assert r.json()["camera_brightness"] is None
+
+
+def test_reset_fields_rejects_a_field_that_cannot_be_null(tmp_path):
+    """Nulling imgsz would break capture; only the device controls are
+    optional."""
+    state = AppState(settings_path=str(tmp_path / "settings.json"), db_path=":memory:")
+    with TestClient(build_app(lambda: state)) as client:
+        r = client.patch("/api/settings", json={"reset_fields": ["imgsz"]})
+
+    assert r.status_code == 422
+
+
+def test_resetting_a_control_stops_writing_it_to_the_device(running):
+    """None means 'leave the camera alone' — the device keeps whatever value
+    it currently holds until the next reopen."""
+    client, _, src, _ = running
+    client.patch("/api/settings", json={"reset_fields": ["camera_brightness"]})
+
+    assert src.controls["brightness"] is None
+
+
+def test_camera_control_bounds_are_enforced(tmp_path):
+    state = AppState(settings_path=str(tmp_path / "settings.json"), db_path=":memory:")
+    with TestClient(build_app(lambda: state)) as client:
+        assert client.patch("/api/settings", json={"camera_brightness": 999}).status_code == 422
+        assert client.patch("/api/settings", json={"camera_exposure": 5}).status_code == 422
+        assert client.patch("/api/settings", json={"camera_focus": -1}).status_code == 422

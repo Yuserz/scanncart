@@ -7,6 +7,7 @@ from app.settings_store import (
     ALLOWED_MODELS,
     ALLOWED_RESIZE_MODES,
     CUSTOM_MODEL_DIR,
+    RESETTABLE_FIELDS,
     is_allowed_model,
 )
 
@@ -118,10 +119,32 @@ class SettingsUpdateRequest(BaseModel):
     remote_infer_size: int | None = Field(default=None, ge=128, le=1920)
     remote_timeout_s: float | None = Field(default=None, ge=0.1, le=60.0)
     remote_max_retries: int | None = Field(default=None, ge=0, le=5)
-    camera_brightness: float | None = None
-    camera_exposure: float | None = None
+    # Bounds mirror settingsFields.ts's min/max for these controls. They are
+    # generous because the meaningful range is device-specific; they exist to
+    # reject nonsense, not to encode one camera's scale. Note that calibration
+    # applies its recommendation through _apply_settings_patch directly and so
+    # is not validated here.
+    camera_brightness: float | None = Field(default=None, ge=0.0, le=255.0)
+    # Windows exposure is log2 seconds: -6 is 1/64 s, 0 is one full second.
+    camera_exposure: float | None = Field(default=None, ge=-13.0, le=0.0)
     camera_autofocus: bool | None = None
-    camera_focus: float | None = None
+    camera_focus: float | None = Field(default=None, ge=0.0, le=1023.0)
+
+    # exclude_none=True means a patch can never send a field back to null, so
+    # without this Revert cannot restore "leave the camera alone" — which is
+    # the default state of all four controls, and therefore the saved baseline
+    # on a fresh install. Restricted to those four because they are the only
+    # settings whose type admits None; nulling imgsz would break capture.
+    reset_fields: list[str] | None = None
+
+    @field_validator("reset_fields")
+    @classmethod
+    def _validate_reset_fields(cls, v: list[str] | None) -> list[str] | None:
+        if v is not None:
+            unknown = set(v) - RESETTABLE_FIELDS
+            if unknown:
+                raise ValueError(f"reset_fields must be a subset of {sorted(RESETTABLE_FIELDS)}")
+        return v
 
     @field_validator("detector_backend")
     @classmethod

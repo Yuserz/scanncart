@@ -69,6 +69,15 @@ def is_allowed_model(value: object) -> bool:
 ALLOWED_BACKENDS = {"native", "local_api", "cloud_api"}
 REMOTE_BACKENDS = {"local_api", "cloud_api"}
 
+# Settings that can be set back to None ("leave the camera alone"). Only the
+# device controls: every other field has a non-optional type.
+RESETTABLE_FIELDS = {
+    "camera_brightness",
+    "camera_exposure",
+    "camera_autofocus",
+    "camera_focus",
+}
+
 # Fields the running Pipeline re-reads from `settings` every frame/track update,
 # or that _push_live_settings hands to the open camera and detector, so
 # mutating them in place takes effect without stopping capture. Everything

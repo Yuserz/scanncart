@@ -439,9 +439,27 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
         return _settings_response(state)
 
     @app.patch("/api/settings", response_model=SettingsResponse)
-    async def update_settings(body: SettingsUpdateRequest):
+    async def update_settings(body: SettingsUpdateRequest, persist: bool = True):
+        """persist=false applies the change without writing settings.json.
+
+        The Live tab's tuning card uses it so a slider drag reaches the camera
+        immediately without every intermediate value becoming the config the
+        app boots with. POST /api/settings/save commits what is in memory.
+        """
         patch = body.model_dump(exclude_none=True)
-        return _apply_settings_patch(state, patch)
+        # exclude_none drops nulls, so "set this back to null" has to travel
+        # as an explicit list of names — see SettingsUpdateRequest.reset_fields.
+        for name in patch.pop("reset_fields", []):
+            patch[name] = None
+        return _apply_settings_patch(state, patch, persist=persist)
+
+    @app.post("/api/settings/save", response_model=SettingsResponse)
+    async def save_current_settings():
+        """Persist the in-memory settings, including anything applied with
+        persist=false. Writes the whole Settings object — see the design
+        doc's 'Save is global' tradeoff."""
+        save_settings(state.settings, state.settings_path)
+        return _settings_response(state)
 
     @app.get("/api/system-info", response_model=SystemInfoResponse)
     async def system_info():
