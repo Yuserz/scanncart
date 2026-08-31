@@ -61,6 +61,13 @@ export interface SidecarSettings {
   // The saved calibration for the configured camera, or null if it has never
   // been calibrated. Says which controls the device actually honours.
   storedProfile: CameraProfileResponse | null
+  // Applies to the running camera/detector without writing settings.json.
+  liveUpdate: (patch: SettingsUpdate) => Promise<void>
+  // Commits whatever is in memory, including live-applied values.
+  save: () => Promise<SettingsResponse>
+  // The last persisted settings. Distinct from `settings`, which tracks the
+  // live values — the difference between the two is "unsaved changes".
+  savedSettings: SettingsResponse | null
 }
 
 function errorMessage(e: unknown): string {
@@ -98,6 +105,7 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
   const [calibrating, setCalibrating] = useState(false)
   const [profile, setProfile] = useState<CameraProfileResponse | null>(null)
   const [storedProfile, setStoredProfile] = useState<CameraProfileResponse | null>(null)
+  const [savedSettings, setSavedSettings] = useState<SettingsResponse | null>(null)
 
   const apiRef = useRef<ApiClient | null>(null)
 
@@ -119,6 +127,7 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
         api.getCameraProfile()
       ])
       setSettings(s)
+      setSavedSettings(s)
       setSystemInfo(sys)
       setPresets(p.presets)
       setRecommended(p.recommended)
@@ -234,6 +243,7 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
     try {
       const r = await apiRef.current!.updateSettings(patch)
       setSettings(r)
+      setSavedSettings(r)
       return r
     } catch (e) {
       setError(errorMessage(e))
@@ -249,6 +259,7 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
     try {
       const r = await apiRef.current!.applyPreset(name)
       setSettings(r)
+      setSavedSettings(r)
       return r
     } catch (e) {
       setError(errorMessage(e))
@@ -360,6 +371,34 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
     }
   }, [load])
 
+  // Deliberately does not touch savedSettings: this is an uncommitted
+  // experiment, and the gap between `settings` and `savedSettings` is exactly
+  // what the tuning card reports as unsaved changes.
+  const liveUpdate = useCallback(async (patch: SettingsUpdate): Promise<void> => {
+    setError(null)
+    try {
+      setSettings(await apiRef.current!.updateSettings(patch, false))
+    } catch (e) {
+      setError(errorMessage(e))
+    }
+  }, [])
+
+  const save = useCallback(async (): Promise<SettingsResponse> => {
+    setSaving(true)
+    setError(null)
+    try {
+      const r = await apiRef.current!.saveSettings()
+      setSettings(r)
+      setSavedSettings(r)
+      return r
+    } catch (e) {
+      setError(errorMessage(e))
+      throw e
+    } finally {
+      setSaving(false)
+    }
+  }, [])
+
   return {
     settings,
     systemInfo,
@@ -387,6 +426,9 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
     calibrating,
     profile,
     applyProfile,
-    storedProfile
+    storedProfile,
+    liveUpdate,
+    save,
+    savedSettings
   }
 }

@@ -209,6 +209,76 @@ describe('hosting inside LiveView', () => {
   })
 })
 
+describe('live apply and the saved baseline', () => {
+  it('applies without persisting', async () => {
+    const calls: [unknown, boolean | undefined][] = []
+    const { deps } = makeDeps({
+      updateSettings: vi.fn(async (patch, persist) => {
+        calls.push([patch, persist])
+        return baseSettings(patch)
+      })
+    })
+
+    const { result } = renderHook(() => useSidecarSettings(9000, deps))
+    await waitFor(() => expect(result.current.settings).not.toBeNull())
+    await act(async () => {
+      await result.current.liveUpdate({ conf_threshold: 0.9 })
+    })
+
+    expect(calls).toEqual([[{ conf_threshold: 0.9 }, false]])
+  })
+
+  it('leaves the saved baseline untouched while tuning', async () => {
+    // The regression this exists to catch: a live PATCH returns a fresh
+    // settings object, and treating that as "saved" makes every slider tick
+    // look committed, so Revert has nothing to go back to.
+    const { deps } = makeDeps({
+      updateSettings: vi.fn(async (patch) => baseSettings(patch))
+    })
+
+    const { result } = renderHook(() => useSidecarSettings(9000, deps))
+    await waitFor(() => expect(result.current.settings).not.toBeNull())
+    await act(async () => {
+      await result.current.liveUpdate({ conf_threshold: 0.9 })
+    })
+
+    expect(result.current.settings?.conf_threshold).toBe(0.9)
+    expect(result.current.savedSettings?.conf_threshold).toBe(baseSettings().conf_threshold)
+  })
+
+  it('moves the baseline on save', async () => {
+    const { deps } = makeDeps({
+      updateSettings: vi.fn(async (patch) => baseSettings(patch)),
+      saveSettings: vi.fn(async () => baseSettings({ conf_threshold: 0.9 }))
+    })
+
+    const { result } = renderHook(() => useSidecarSettings(9000, deps))
+    await waitFor(() => expect(result.current.settings).not.toBeNull())
+    await act(async () => {
+      await result.current.liveUpdate({ conf_threshold: 0.9 })
+    })
+    await act(async () => {
+      await result.current.save()
+    })
+
+    expect(result.current.savedSettings?.conf_threshold).toBe(0.9)
+  })
+
+  it('moves the baseline on an ordinary persisting update too', async () => {
+    const { deps } = makeDeps({
+      updateSettings: vi.fn(async (patch) => baseSettings(patch))
+    })
+
+    const { result } = renderHook(() => useSidecarSettings(9000, deps))
+    await waitFor(() => expect(result.current.settings).not.toBeNull())
+    await act(async () => {
+      await result.current.update({ imgsz: 960 })
+    })
+
+    expect(result.current.savedSettings?.imgsz).toBe(960)
+  })
+})
+
 describe('stored profile', () => {
   it('loads the saved calibration on mount', async () => {
     const profile = {
