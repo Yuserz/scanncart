@@ -374,12 +374,22 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
   // Deliberately does not touch savedSettings: this is an uncommitted
   // experiment, and the gap between `settings` and `savedSettings` is exactly
   // what the tuning card reports as unsaved changes.
+  //
+  // Live PATCHes can overlap: the card debounces per field, so two controls
+  // adjusted in quick succession are in flight together. Each response
+  // carries the whole settings object, so an older one landing last would
+  // revert a field the operator already moved past. Only the newest response
+  // wins.
+  const liveSeq = useRef(0)
+
   const liveUpdate = useCallback(async (patch: SettingsUpdate): Promise<void> => {
+    const seq = ++liveSeq.current
     setError(null)
     try {
-      setSettings(await apiRef.current!.updateSettings(patch, false))
+      const r = await apiRef.current!.updateSettings(patch, false)
+      if (seq === liveSeq.current) setSettings(r)
     } catch (e) {
-      setError(errorMessage(e))
+      if (seq === liveSeq.current) setError(errorMessage(e))
     }
   }, [])
 

@@ -3,6 +3,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
 import { useSidecarSettings } from './useSidecarSettings'
 import { baseSettings, makeDeps } from '../test/fakes'
+import type { SettingsResponse } from '../lib/api'
 
 describe('useSidecarSettings', () => {
   it('loads settings, system info, and presets on mount', async () => {
@@ -276,6 +277,45 @@ describe('live apply and the saved baseline', () => {
     })
 
     expect(result.current.savedSettings?.imgsz).toBe(960)
+  })
+
+  it('discards a stale liveUpdate response that resolves out of order', async () => {
+    // The tuning card debounces per field, so two live PATCHes can be in
+    // flight together. Each response carries the whole settings object, so
+    // an older response landing after a newer one must not win.
+    const resolvers: Array<() => void> = []
+    const { deps } = makeDeps({
+      updateSettings: vi.fn(
+        (patch) =>
+          new Promise<SettingsResponse>((resolve) => {
+            resolvers.push(() => resolve(baseSettings(patch)))
+          })
+      )
+    })
+
+    const { result } = renderHook(() => useSidecarSettings(9000, deps))
+    await waitFor(() => expect(result.current.settings).not.toBeNull())
+
+    let p1: Promise<void> = Promise.resolve()
+    let p2: Promise<void> = Promise.resolve()
+    act(() => {
+      p1 = result.current.liveUpdate({ conf_threshold: 0.1 })
+      p2 = result.current.liveUpdate({ conf_threshold: 0.9 })
+    })
+    await waitFor(() => expect(resolvers.length).toBe(2))
+
+    // Resolve the newer (second) request first...
+    await act(async () => {
+      resolvers[1]()
+      await p2
+    })
+    // ...then the older (first, stale) request settles after.
+    await act(async () => {
+      resolvers[0]()
+      await p1
+    })
+
+    expect(result.current.settings?.conf_threshold).toBe(0.9)
   })
 })
 
