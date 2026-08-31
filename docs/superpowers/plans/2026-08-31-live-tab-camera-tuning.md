@@ -1166,7 +1166,7 @@ In `createApiClient`'s returned object, replace `updateSettings` and add the two
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `cd desktop && npx vitest run src/renderer/src/lib/api.test.ts && npm run typecheck`
-Expected: PASS. Typecheck will flag any test fake implementing `ApiClient` that now lacks the two new methods — add them to those fakes returning `Promise.resolve(...)`.
+Expected: PASS. Typecheck will flag every test fake implementing `ApiClient` that now lacks the two new methods. There are exactly two, and you must update both: `useSidecarSettings.test.tsx:42` and `AdminPanel.test.tsx:55`. Give each a `saveSettings` returning `baseSettings()` and a `getCameraProfile` returning `{ profile: null }` — a camera with no stored calibration is the right default for existing tests, none of which exercise one.
 
 - [ ] **Step 5: Commit**
 
@@ -1483,6 +1483,8 @@ describe('stored profile', () => {
 ```
 
 **Extract them first.** Task 10 creates a new test file that needs both helpers, so move `baseSettings` and `makeDeps` verbatim into a new `desktop/src/renderer/src/test/fakes.ts`, export both, and import them back into `useSidecarSettings.test.tsx`. Do this as the first commit of this task, with the existing hook tests still passing, before writing any new test. Do not rename them.
+
+**There is a second copy.** `AdminPanel.test.tsx:55` builds its own full `ApiClient` fake with the same shape, differing only in that its returned deps carry `healthPollMs: 10_000`. Switch that file to import the shared helpers too and delete its local duplicate, passing the `healthPollMs` override at the call sites instead. Two full fakes means every future contract change edits both — this branch alone already forced that once, when Task 6 added two methods to the interface. Keep this in the same first commit, and confirm `AdminPanel.test.tsx` still passes before moving on.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
