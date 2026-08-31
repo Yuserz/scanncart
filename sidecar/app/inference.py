@@ -100,6 +100,15 @@ class YoloDetector:
         self._stretch = resize_mode == "stretch"
         self.names = self._model.names
 
+    def set_conf(self, value: float) -> None:
+        """Change the confidence threshold on a running detector.
+
+        `conf` is passed to track() on every call (see infer), so there is
+        nothing to rebuild — this is what makes conf_threshold hot-reloadable
+        while the rest of the detector's construction arguments are not.
+        """
+        self._conf = float(value)
+
     def infer(self, frame: np.ndarray) -> list[Detection]:
         kwargs = dict(
             persist=True, conf=self._conf, imgsz=self._imgsz,
@@ -171,6 +180,14 @@ class RoboflowRemoteDetector:
         self._jpeg_quality = jpeg_quality
         # No model manifest to read over HTTP; filled in as classes are seen.
         self.names: dict = {}
+
+    def set_conf(self, value: float) -> None:
+        """Change the confidence threshold on a running detector.
+
+        The workflow declares no parameters, so filtering happens client-side
+        in infer() against this value on every response.
+        """
+        self._conf = float(value)
 
     def _encode(self, frame: np.ndarray) -> tuple[str, int, int]:
         import base64

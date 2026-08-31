@@ -1,5 +1,5 @@
 import numpy as np
-from app.inference import normalize_detections, YoloDetector
+from app.inference import normalize_detections, YoloDetector, RoboflowRemoteDetector
 
 
 def test_normalize_scales_and_labels():
@@ -219,3 +219,38 @@ def test_stretching_preserves_normalized_boxes():
     squished = normalize_detections([[320.0, 0.0, 640.0, 640.0]], [0.9], [0], None,
                                     {0: "a"}, 640, 640)
     assert orig[0].box == squished[0].box
+
+
+# --- live confidence changes ---------------------------------------------
+
+
+def test_yolo_detector_conf_is_settable_without_rebuilding():
+    """conf reaches ultralytics as a per-call kwarg, so changing it needs no
+    new model load — that is what lets the Live tab tune it against a
+    running camera."""
+    calls = []
+
+    class _Results:
+        boxes = None
+
+    class _Model:
+        names = {0: "milo"}
+
+        def track(self, frame, **kwargs):
+            calls.append(kwargs["conf"])
+            return [_Results()]
+
+    det = YoloDetector("yolo11n.pt", "cpu", conf=0.5, model_factory=lambda p: _Model())
+    det.infer(np.zeros((8, 8, 3), dtype=np.uint8))
+    det.set_conf(0.8)
+    det.infer(np.zeros((8, 8, 3), dtype=np.uint8))
+
+    assert calls == [0.5, 0.8]
+
+
+def test_remote_detector_conf_is_settable_without_rebuilding():
+    """The workflow declares no parameters, so the remote path filters
+    client-side — changing the threshold is a plain reassignment."""
+    det = RoboflowRemoteDetector(client=None, conf=0.5)
+    det.set_conf(0.8)
+    assert det._conf == 0.8
