@@ -349,7 +349,40 @@ def _settings_response(state: "AppState") -> SettingsResponse:
     )
 
 
-def _apply_settings_patch(state: "AppState", patch: dict) -> SettingsResponse:
+# settings key -> CameraCapture.set_controls keyword.
+_CAMERA_CONTROL_KEYS = {
+    "camera_brightness": "brightness",
+    "camera_exposure": "exposure",
+    "camera_autofocus": "autofocus",
+    "camera_focus": "focus",
+}
+
+
+def _push_live_settings(state: "AppState", patch: dict) -> None:
+    """Hand hot-reloadable changes to the objects that already exist.
+
+    Pipeline re-reads infer_frame_skip/preview_*/track_expiry_s from settings
+    itself, but the camera and detector hold their own copies, so those two
+    need telling. Both lookups go through getattr: with capture stopped there
+    is no source or detector at all, and a source need not implement
+    set_controls (FakeFrameSource does not).
+    """
+    controls = {
+        kw: patch[key] for key, kw in _CAMERA_CONTROL_KEYS.items() if key in patch
+    }
+    if controls:
+        set_controls = getattr(state.source, "set_controls", None)
+        if callable(set_controls):
+            set_controls(**controls)
+    if "conf_threshold" in patch:
+        set_conf = getattr(state.detector, "set_conf", None)
+        if callable(set_conf):
+            set_conf(patch["conf_threshold"])
+
+
+def _apply_settings_patch(
+    state: "AppState", patch: dict, persist: bool = True
+) -> SettingsResponse:
     if state.state == "running":
         locked = set(patch) & RESTART_REQUIRED_FIELDS
         if locked:
@@ -361,7 +394,9 @@ def _apply_settings_patch(state: "AppState", patch: dict) -> SettingsResponse:
         setattr(state.settings, key, value)
     if "device" in patch:
         state.device = resolve_device(state.settings.device)
-    save_settings(state.settings, state.settings_path)
+    _push_live_settings(state, patch)
+    if persist:
+        save_settings(state.settings, state.settings_path)
     return _settings_response(state)
 
 

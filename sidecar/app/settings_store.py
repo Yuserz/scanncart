@@ -70,13 +70,23 @@ ALLOWED_BACKENDS = {"native", "local_api", "cloud_api"}
 REMOTE_BACKENDS = {"local_api", "cloud_api"}
 
 # Fields the running Pipeline re-reads from `settings` every frame/track update,
-# so mutating them in place takes effect without stopping capture. Everything
+# or that _push_live_settings hands to the open camera and detector, so
+# mutating them in place takes effect without stopping capture. Everything
 # else is baked into source/detector objects at /api/capture/start time.
 HOT_RELOADABLE_FIELDS = {
     "infer_frame_skip",
     "preview_height",
     "preview_max_fps",
     "track_expiry_s",
+    # Read per inference call (YoloDetector passes it to track(); the remote
+    # detector filters responses against it), so a setter is all it needs.
+    "conf_threshold",
+    # Plain cap.set() writes against the open handle — see
+    # CameraCapture.set_controls, which defers them to the capture thread.
+    "camera_brightness",
+    "camera_exposure",
+    "camera_autofocus",
+    "camera_focus",
 }
 RESTART_REQUIRED_FIELDS = {
     "active_model",
@@ -84,7 +94,6 @@ RESTART_REQUIRED_FIELDS = {
     "capture_width",
     "capture_height",
     "capture_fps",
-    "conf_threshold",
     "imgsz",
     "resize_mode",
     "device",
@@ -98,11 +107,6 @@ RESTART_REQUIRED_FIELDS = {
     "remote_infer_size",
     "remote_timeout_s",
     "remote_max_retries",
-    # Baked into the camera at open() time — see CameraCapture.open().
-    "camera_brightness",
-    "camera_exposure",
-    "camera_autofocus",
-    "camera_focus",
 }
 
 _COMMON_CAPTURE_MODES = {(640, 480), (1280, 720), (1920, 1080)}
