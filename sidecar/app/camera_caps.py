@@ -108,6 +108,16 @@ def _default_open(index: int, backend: int):
     return cv2.VideoCapture(index, backend)
 
 
+def device_key_for(device_name: str, index: int, width: int, height: int) -> str:
+    """The identity a CameraProfile is stored under.
+
+    Includes the resolution because control support is measured at one: a
+    device can accept exposure at 720p and ignore it at 1080p. Used by both
+    calibrate() and GET /api/camera/profile, so the format lives here once.
+    """
+    return f"{device_name}:{index}:{width}x{height}"
+
+
 def calibrate(
     index: int,
     width: int,
@@ -192,7 +202,7 @@ def calibrate(
         fps_capped = measure_fps(read_ok, seconds=sample_seconds)
 
         profile = CameraProfile(
-            device_key=f"{device_name}:{index}:{width}x{height}",
+            device_key=device_key_for(device_name, index, width, height),
             backend="msmf", width=width, height=height,
             fps_auto_exposure=round(fps_auto, 1),
             fps_capped_exposure=round(fps_capped, 1),

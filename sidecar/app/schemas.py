@@ -254,6 +254,16 @@ class CameraProfileResponse(BaseModel):
     measured_at: float = 0.0
 
 
+class StoredProfileResponse(BaseModel):
+    """The saved profile for the camera currently configured, if any.
+
+    `profile` is null for a camera that has never been calibrated — a normal
+    state the UI renders, not an error, which is why this is a 200 rather
+    than the 404 POST /api/camera/profile/apply returns.
+    """
+    profile: CameraProfileResponse | None = None
+
+
 class HardwareInfo(BaseModel):
     cpu_count: int
     ram_gb: float

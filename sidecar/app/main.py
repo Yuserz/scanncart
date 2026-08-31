@@ -52,11 +52,12 @@ from app.schemas import (
     SettingsResponse,
     SettingsUpdateRequest,
     StatusMessage,
+    StoredProfileResponse,
     SystemInfoResponse,
 )
 from app.camera import CameraCapture
-from app.camera_caps import CameraProfile, calibrate
-from app.camera_profiles import save_profile
+from app.camera_caps import CameraProfile, calibrate, device_key_for
+from app.camera_profiles import load_profiles, save_profile
 from app.cameras import CameraDevice, list_cameras, list_device_names, name_for_index
 from app.inference import RoboflowRemoteDetector, YoloDetector
 from app.logging_store import LoggingStore
@@ -590,6 +591,32 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
             detail="",
         )
 
+    def _profiles_path() -> str:
+        # Sibling of settings_path rather than camera_profiles.py's hardcoded
+        # default, so tests pointing settings_path at tmp_path never touch the
+        # real data/ directory.
+        return os.path.join(
+            os.path.dirname(state.settings_path) or ".", "camera_profiles.json"
+        )
+
+    @app.get("/api/camera/profile", response_model=StoredProfileResponse)
+    async def get_camera_profile():
+        """The stored calibration for the camera currently configured.
+
+        This is what tells the tuning card which controls the device honours,
+        and it is why a calibration survives an app restart.
+        """
+        key = device_key_for(
+            _resolve_camera_name(state),
+            state.settings.camera_index,
+            state.settings.capture_width,
+            state.settings.capture_height,
+        )
+        profile = load_profiles(_profiles_path()).get(key)
+        if profile is None:
+            return StoredProfileResponse(profile=None)
+        return StoredProfileResponse(profile=CameraProfileResponse(**asdict(profile)))
+
     @app.post("/api/camera/calibrate", response_model=CameraProfileResponse)
     async def calibrate_camera():
         """Measure the camera and return a recommendation. Applies nothing —
@@ -614,12 +641,7 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
             # calibration cannot strand the camera permanently exclusive.
             state.calibrating = False
         state.last_profile = profile
-        # Sibling of settings_path (like save_settings(state.settings, state.
-        # settings_path)) rather than camera_profiles.py's hardcoded default,
-        # so tests that point settings_path at tmp_path never touch the real
-        # data/ directory.
-        profiles_path = os.path.join(os.path.dirname(state.settings_path) or ".", "camera_profiles.json")
-        save_profile(profile, profiles_path)
+        save_profile(profile, _profiles_path())
         return CameraProfileResponse(**asdict(profile))
 
     @app.post("/api/camera/profile/apply", response_model=SettingsResponse)

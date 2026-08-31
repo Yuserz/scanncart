@@ -86,3 +86,84 @@ def test_saving_a_second_profile_preserves_the_first(tmp_path):
     assert set(loaded) == {first.device_key, second.device_key}
     assert loaded[first.device_key] == first
     assert loaded[second.device_key] == second
+
+
+# --- reading a profile back ----------------------------------------------
+
+from app.camera_caps import CameraProfile, ControlSupport, device_key_for
+from app.camera_profiles import save_profile
+from app.main import AppState, build_app
+from fastapi.testclient import TestClient
+
+
+def test_device_key_for_matches_what_calibration_writes():
+    """One format string, used by both the writer and the reader — a second
+    copy would drift and silently orphan every stored profile."""
+    assert device_key_for("Logitech StreamCam", 1, 1280, 720) == (
+        "Logitech StreamCam:1:1280x720"
+    )
+
+
+def _stored_profile(device_key: str) -> CameraProfile:
+    return CameraProfile(
+        device_key=device_key,
+        backend="MSMF",
+        width=1280,
+        height=720,
+        fps_auto_exposure=29.9,
+        fps_capped_exposure=30.8,
+        controls=ControlSupport(brightness=True, exposure=True, gain=False, focus=False),
+        recommended={"camera_autofocus": False},
+        measured_at=1.0,
+    )
+
+
+def test_a_stored_profile_is_returned_for_the_current_camera(tmp_path):
+    """Profiles were written and never read back, so a calibration did not
+    survive an app restart. This is that round trip."""
+    state = AppState(
+        settings_path=str(tmp_path / "settings.json"),
+        db_path=":memory:",
+        camera_namer=lambda: ["Logitech StreamCam"],
+    )
+    state.settings.camera_index = 0
+    state.settings.capture_width = 1280
+    state.settings.capture_height = 720
+    save_profile(_stored_profile("Logitech StreamCam:0:1280x720"), str(tmp_path / "camera_profiles.json"))
+
+    with TestClient(build_app(lambda: state)) as client:
+        body = client.get("/api/camera/profile").json()
+
+    assert body["profile"]["controls"]["brightness"] is True
+    assert body["profile"]["controls"]["focus"] is False
+
+
+def test_an_uncalibrated_camera_returns_a_null_profile(tmp_path):
+    """A normal state the card renders, not an error it handles — hence 200
+    with a null field rather than the 404 its /apply sibling uses."""
+    state = AppState(
+        settings_path=str(tmp_path / "settings.json"),
+        db_path=":memory:",
+        camera_namer=lambda: ["Some Other Camera"],
+    )
+    with TestClient(build_app(lambda: state)) as client:
+        r = client.get("/api/camera/profile")
+
+    assert r.status_code == 200
+    assert r.json()["profile"] is None
+
+
+def test_a_profile_for_a_different_resolution_does_not_match(tmp_path):
+    """Control support is measured at a resolution; the key includes it."""
+    state = AppState(
+        settings_path=str(tmp_path / "settings.json"),
+        db_path=":memory:",
+        camera_namer=lambda: ["Logitech StreamCam"],
+    )
+    state.settings.camera_index = 0
+    state.settings.capture_width = 640
+    state.settings.capture_height = 480
+    save_profile(_stored_profile("Logitech StreamCam:0:1280x720"), str(tmp_path / "camera_profiles.json"))
+
+    with TestClient(build_app(lambda: state)) as client:
+        assert client.get("/api/camera/profile").json()["profile"] is None
