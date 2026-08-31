@@ -391,55 +391,6 @@
   font-weight: 600;
 }
 
-.quality-row {
-  display: flex;
-  gap: 24px;
-  flex-wrap: wrap;
-}
-
-.quality-metric {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.quality-label {
-  font-size: 11px;
-  color: var(--dim);
-}
-
-.quality-value {
-  font-size: 16px;
-  font-weight: 600;
-  font-family: var(--font-mono);
-  color: var(--text);
-}
-
-.quality-value.bad {
-  color: #ffb020;
-}
-
-/* Non-colour signal for a failing metric: this panel exists to make a bad
-   reading visible, and colour alone does not do that for a colourblind
-   operator. */
-.quality-flag {
-  font-size: 11px;
-}
-
-/* Visually hidden but readable by screen readers — standard clip-based
-   pattern, not display:none (which VoiceOver/NVDA skip entirely). */
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
-
 /* Calibration review card: shows the measured fps evidence and the proposed
    patch, and changes nothing until Apply is pressed (review-first design). */
 .calibration-result {
