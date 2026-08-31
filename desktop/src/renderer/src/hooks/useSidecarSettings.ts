@@ -18,6 +18,15 @@ export interface SettingsDeps {
   healthPollMs?: number
   cameraPollMs?: number
   retryDelayMs?: number
+  // False when a host view already owns capture state (LiveView drives it
+  // through useSidecarStream). Two pollers in one view means two answers to
+  // "are we running", and they disagree during a start or stop. It suppresses
+  // ONLY the health call — the camera-quality read shares that timer and the
+  // tuning card depends on it.
+  pollHealth?: boolean
+  // False for a consumer that never reads `cameras`. Enumerating opens every
+  // device (~30 s), so the tuning card must not trigger it on mount.
+  pollCameras?: boolean
 }
 
 export interface SidecarSettings {
@@ -49,6 +58,9 @@ export interface SidecarSettings {
   calibrating: boolean
   profile: CameraProfileResponse | null
   applyProfile: () => Promise<SettingsResponse>
+  // The saved calibration for the configured camera, or null if it has never
+  // been calibrated. Says which controls the device actually honours.
+  storedProfile: CameraProfileResponse | null
 }
 
 function errorMessage(e: unknown): string {
@@ -66,6 +78,8 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
   // triggers the expensive scan when the device set actually changed.
   const cameraPollMs = deps.cameraPollMs ?? 15000
   const retryDelayMs = deps.retryDelayMs ?? 1000
+  const shouldPollHealth = deps.pollHealth ?? true
+  const shouldPollCameras = deps.pollCameras ?? true
 
   const [settings, setSettings] = useState<SettingsResponse | null>(null)
   const [systemInfo, setSystemInfo] = useState<SystemInfoResponse | null>(null)
@@ -83,6 +97,7 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
   const [cameraQuality, setCameraQuality] = useState<CameraQualityResponse | null>(null)
   const [calibrating, setCalibrating] = useState(false)
   const [profile, setProfile] = useState<CameraProfileResponse | null>(null)
+  const [storedProfile, setStoredProfile] = useState<CameraProfileResponse | null>(null)
 
   const apiRef = useRef<ApiClient | null>(null)
 
@@ -96,15 +111,18 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
     setLoading(true)
     setError(null)
     try {
-      const [s, sys, p] = await Promise.all([
+      const [s, sys, p, prof] = await Promise.all([
         api.getSettings(),
         api.getSystemInfo(),
-        api.getPresets()
+        api.getPresets(),
+        // Cheap: reads one small JSON file, opens no device.
+        api.getCameraProfile()
       ])
       setSettings(s)
       setSystemInfo(sys)
       setPresets(p.presets)
       setRecommended(p.recommended)
+      setStoredProfile(prof.profile)
       return true
     } catch (e) {
       setError(errorMessage(e))
@@ -144,19 +162,35 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
     }
     attemptLoad()
 
+    // `camerasLoading` starts true and nothing else would ever clear it for a
+    // consumer that opts out of camera polling — that would leave a spinner
+    // that reads as a scan which never finishes. Deferred (rather than called
+    // directly here) for the same reason the camera scan below is: a
+    // synchronous setState inside the effect body would cascade a render.
+    if (!shouldPollCameras) {
+      queueMicrotask(() => {
+        if (!cancelled) setCamerasLoading(false)
+      })
+    }
+
     // Deferred off the effect body: the probe's setState would otherwise run
     // synchronously here and cascade a render. Also lets the settings load
     // reach the sidecar first, since the scan can hold it for ~30 s.
-    const cameraTimer = setTimeout(() => void refreshCameras(), 0)
+    const cameraTimer = shouldPollCameras ? setTimeout(() => void refreshCameras(), 0) : null
 
     // Cheap enough (a few frame stats, no device I/O) to piggyback on the
     // same interval as health rather than run its own timer.
     const pollHealth = async (): Promise<void> => {
-      try {
-        const h = await api.health()
-        if (!cancelled) setCaptureState(h.state)
-      } catch {
-        // Sidecar not reachable yet; keep the last known capture state.
+      // Skipped when a host view already owns capture state. The quality read
+      // below is NOT skipped — it shares this timer and the tuning card needs
+      // it regardless of who owns capture state.
+      if (shouldPollHealth) {
+        try {
+          const h = await api.health()
+          if (!cancelled) setCaptureState(h.state)
+        } catch {
+          // Sidecar not reachable yet; keep the last known capture state.
+        }
       }
       try {
         const q = await api.getCameraQuality()
@@ -171,18 +205,28 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
     // Notice a camera plugged in after startup. The sidecar compares device
     // names (cheap) and only re-scans when they changed, so this is not the
     // 30 s scan on a timer. It skips itself while capture holds a device.
-    const cameraTicker = setInterval(() => {
-      if (!cancelled) void refreshCameras()
-    }, cameraPollMs)
+    const cameraTicker = shouldPollCameras
+      ? setInterval(() => {
+          if (!cancelled) void refreshCameras()
+        }, cameraPollMs)
+      : null
     return () => {
       cancelled = true
       if (retryTimer !== null) clearTimeout(retryTimer)
-      clearTimeout(cameraTimer)
+      if (cameraTimer !== null) clearTimeout(cameraTimer)
       clearInterval(healthTimer)
-      clearInterval(cameraTicker)
+      if (cameraTicker !== null) clearInterval(cameraTicker)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [port, apiFactory, healthPollMs, retryDelayMs, cameraPollMs])
+  }, [
+    port,
+    apiFactory,
+    healthPollMs,
+    retryDelayMs,
+    cameraPollMs,
+    shouldPollHealth,
+    shouldPollCameras
+  ])
 
   const update = useCallback(async (patch: SettingsUpdate): Promise<SettingsResponse> => {
     setSaving(true)
@@ -342,6 +386,7 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
     calibrate,
     calibrating,
     profile,
-    applyProfile
+    applyProfile,
+    storedProfile
   }
 }

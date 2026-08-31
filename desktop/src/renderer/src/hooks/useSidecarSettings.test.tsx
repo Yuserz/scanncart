@@ -125,3 +125,117 @@ describe('useSidecarSettings', () => {
     await waitFor(() => expect(vi.mocked(api.getCameras).mock.calls.length).toBeGreaterThan(2))
   })
 })
+
+describe('hosting inside LiveView', () => {
+  it('does not poll health when the host already owns capture state', async () => {
+    // LiveView drives capture through useSidecarStream. A second poller here
+    // would give the same view two answers to "are we running".
+    let healthCalls = 0
+    const { deps } = makeDeps({
+      health: vi.fn(async () => {
+        healthCalls++
+        return { state: 'idle', active_model: 'm', device: 'cpu' }
+      })
+    })
+
+    renderHook(() => useSidecarSettings(9000, { ...deps, pollHealth: false }))
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50))
+    })
+
+    expect(healthCalls).toBe(0)
+  })
+
+  it('keeps reading camera quality even with health polling off', async () => {
+    // The two share one timer. The tuning card turns health off because
+    // LiveView owns capture state, but its whole readout is quality.
+    let qualityCalls = 0
+    const { deps } = makeDeps({
+      getCameraQuality: vi.fn(async () => {
+        qualityCalls++
+        return {
+          available: true,
+          brightness: 128,
+          contrast: 40,
+          sharpness: 90,
+          capture_fps: 29,
+          target_fps: 30,
+          verdicts: {},
+          detail: ''
+        }
+      })
+    })
+
+    const { result } = renderHook(() => useSidecarSettings(9000, { ...deps, pollHealth: false }))
+    await waitFor(() => expect(result.current.cameraQuality).not.toBeNull())
+
+    expect(qualityCalls).toBeGreaterThan(0)
+  })
+
+  it('does not enumerate cameras for a consumer that never reads them', async () => {
+    // Enumerating opens every device (~30 s). The card has no camera list.
+    let cameraCalls = 0
+    const { deps } = makeDeps({
+      getCameras: vi.fn(async () => {
+        cameraCalls++
+        return { cameras: [], probed: true, detail: '' }
+      })
+    })
+
+    const { result } = renderHook(() => useSidecarSettings(9000, { ...deps, pollCameras: false }))
+    await waitFor(() => expect(result.current.settings).not.toBeNull())
+
+    expect(cameraCalls).toBe(0)
+    // Nothing else clears the initial true, and a stuck spinner reads as a
+    // scan which never finishes.
+    expect(result.current.camerasLoading).toBe(false)
+  })
+
+  it('still polls health by default, for the Admin panel', async () => {
+    let healthCalls = 0
+    const { deps } = makeDeps({
+      health: vi.fn(async () => {
+        healthCalls++
+        return { state: 'idle', active_model: 'm', device: 'cpu' }
+      })
+    })
+
+    renderHook(() => useSidecarSettings(9000, deps))
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50))
+    })
+
+    expect(healthCalls).toBeGreaterThan(0)
+  })
+})
+
+describe('stored profile', () => {
+  it('loads the saved calibration on mount', async () => {
+    const profile = {
+      device_key: 'StreamCam:0:1280x720',
+      backend: 'MSMF',
+      width: 1280,
+      height: 720,
+      fps_auto_exposure: 29.9,
+      fps_capped_exposure: 30.8,
+      controls: { brightness: true, exposure: true, gain: false, focus: false },
+      recommended: {},
+      measured_at: 1
+    }
+    const { deps } = makeDeps({ getCameraProfile: vi.fn(async () => ({ profile })) })
+
+    const { result } = renderHook(() => useSidecarSettings(9000, deps))
+    await waitFor(() => expect(result.current.storedProfile).not.toBeNull())
+
+    expect(result.current.storedProfile?.controls.focus).toBe(false)
+  })
+
+  it('leaves it null for an uncalibrated camera', async () => {
+    const { deps } = makeDeps({ getCameraProfile: vi.fn(async () => ({ profile: null })) })
+
+    const { result } = renderHook(() => useSidecarSettings(9000, deps))
+    await waitFor(() => expect(result.current.settings).not.toBeNull())
+
+    expect(result.current.storedProfile).toBeNull()
+  })
+})
