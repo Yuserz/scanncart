@@ -19,7 +19,7 @@ const PROFILE: CameraProfileResponse = {
   fps_auto_exposure: 29.9,
   fps_capped_exposure: 30.8,
   controls: { brightness: true, exposure: true, gain: false, focus: false },
-  recommended: {},
+  recommended: { camera_exposure: -6 },
   measured_at: 1
 }
 
@@ -240,5 +240,71 @@ describe('applying and committing', () => {
     await waitFor(() => expect(slider.value).toBe('180'))
     // The live PATCH landed, and the running camera should not show the idle hint.
     expect(screen.queryByTestId('tuning-idle')).toBeNull()
+  })
+})
+
+describe('calibration from the live tab', () => {
+  function renderWithLifecycle(overrides: Partial<ApiClient> = {}, order: string[] = []): string[] {
+    const { deps } = makeDeps({
+      getCameraProfile: async () => ({ profile: PROFILE }),
+      calibrateCamera: async () => {
+        order.push('calibrate')
+        return PROFILE
+      },
+      ...overrides
+    })
+    render(
+      <CameraTuning
+        port={9000}
+        running={true}
+        start={async () => {
+          order.push('start')
+        }}
+        stop={async () => {
+          order.push('stop')
+        }}
+        cameraName="Logitech StreamCam"
+        debounceMs={0}
+        deps={{ ...deps, pollHealth: false, pollCameras: false }}
+      />
+    )
+    return order
+  }
+
+  it('stops, calibrates, then restarts', async () => {
+    // The camera is exclusive during a sweep, so the sidecar 409s while
+    // capture runs. The operator should not have to know that.
+    const order = renderWithLifecycle()
+    await userEvent.click(await screen.findByTestId('tuning-calibrate'))
+
+    await waitFor(() => expect(order).toEqual(['stop', 'calibrate', 'start']))
+  })
+
+  it('restarts capture even when the sweep fails', async () => {
+    // Otherwise a failed calibration leaves the operator staring at a dark
+    // feed with no idea why.
+    const order: string[] = []
+    renderWithLifecycle(
+      {
+        calibrateCamera: async () => {
+          order.push('calibrate')
+          throw new Error('camera busy')
+        }
+      },
+      order
+    )
+    await userEvent.click(await screen.findByTestId('tuning-calibrate'))
+
+    await waitFor(() => expect(order).toEqual(['stop', 'calibrate', 'start']))
+  })
+
+  it('shows the measured evidence before applying anything', async () => {
+    renderWithLifecycle()
+    await userEvent.click(await screen.findByTestId('tuning-calibrate'))
+
+    // Review-first: the operator sees the two framerates and the proposed
+    // patch, and chooses.
+    expect(await screen.findByTestId('tuning-profile')).toHaveTextContent('29.9')
+    expect(screen.getByTestId('tuning-apply-profile')).toBeInTheDocument()
   })
 })

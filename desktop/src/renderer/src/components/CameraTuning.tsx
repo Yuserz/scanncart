@@ -29,6 +29,8 @@ const LIVE_GROUPS = SETTINGS_GROUPS.filter((g) => g.home === 'live')
 export function CameraTuning({
   port,
   running,
+  start,
+  stop,
   cameraName,
   deps,
   debounceMs: debounceMsProp
@@ -44,7 +46,11 @@ export function CameraTuning({
     liveUpdate,
     save,
     savedSettings,
-    saving
+    saving,
+    calibrate,
+    calibrating,
+    profile,
+    applyProfile
   } = useSidecarSettings(port, {
     ...deps,
     pollHealth: deps?.pollHealth ?? false,
@@ -95,6 +101,21 @@ export function CameraTuning({
     const support = SUPPORT_KEY[key]
     if (!support || !storedProfile) return false
     return storedProfile.controls[support] === false
+  }
+
+  // The sidecar refuses to calibrate while capture holds the camera, and the
+  // sweep releases and reopens the device twice (~60-90 s on a StreamCam).
+  // Driving the lifecycle here means the operator presses one button instead
+  // of learning that constraint.
+  const handleCalibrate = async (): Promise<void> => {
+    await stop()
+    try {
+      await calibrate()
+    } catch {
+      // Surfaced through the hook's `error`; the restart below still runs.
+    } finally {
+      await start()
+    }
   }
 
   const renderField = (field: FieldMeta): JSX.Element => {
@@ -200,6 +221,59 @@ export function CameraTuning({
             })}
           </section>
         ))}
+
+      <section className="tuning-group" hidden={!open}>
+        <h5>Calibration</h5>
+        <button
+          type="button"
+          className="btn-outline btn-small"
+          disabled={calibrating}
+          data-testid="tuning-calibrate"
+          onClick={() => void handleCalibrate()}
+          title="Stops capture, measures the camera, then starts again"
+        >
+          {calibrating ? <Spinner /> : null} Calibrate camera
+        </button>
+
+        {calibrating && (
+          <p className="field-hint" data-testid="tuning-calibrating">
+            Measuring camera — about a minute. The feed resumes when it finishes.
+          </p>
+        )}
+
+        {profile && !calibrating && (
+          <div className="tuning-profile" data-testid="tuning-profile">
+            <p className="field-hint">
+              Measured {profile.fps_auto_exposure} fps on automatic exposure,{' '}
+              {profile.fps_capped_exposure} fps with it capped.
+            </p>
+            {Object.keys(profile.recommended).length === 0 ? (
+              <p className="field-hint" data-testid="tuning-no-recommendation">
+                No settings to change: this camera did not respond to any of the controls we can
+                set.
+              </p>
+            ) : (
+              <>
+                <ul>
+                  {Object.entries(profile.recommended).map(([k, v]) => (
+                    <li key={k}>
+                      {k}: {String(v)}
+                    </li>
+                  ))}
+                </ul>
+                <button
+                  className="btn-primary btn-small"
+                  disabled={saving}
+                  data-testid="tuning-apply-profile"
+                  onClick={() => void applyProfile()}
+                >
+                  {saving ? <Spinner /> : null} Apply these settings
+                </button>
+              </>
+            )}
+          </div>
+        )}
+      </section>
 
       {dirtyKeys.length > 0 && (
         <div className="tuning-actions">
