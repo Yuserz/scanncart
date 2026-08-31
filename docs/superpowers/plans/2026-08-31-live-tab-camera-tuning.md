@@ -1475,7 +1475,14 @@ describe('stored profile', () => {
 })
 ```
 
-Use whatever fake-API helper the existing file already defines; if it has none, add one named `fakeApi(overrides)` that returns a full `ApiClient` of resolved stubs merged with `overrides`.
+**Helper names.** The snippets above are written against a `fakeApi(...)` helper that does not exist. The real ones already live at the top of `useSidecarSettings.test.tsx`: `baseSettings(overrides: Partial<SettingsResponse>): SettingsResponse` and `makeDeps(overrides: Partial<ApiClient>): { deps: SettingsDeps; api: ApiClient }`, where `deps` already carries `apiFactory`. Adapt every snippet to those — `useSidecarSettings(9000, { apiFactory: () => api, pollHealth: false })` becomes:
+
+```ts
+    const { deps, api } = makeDeps({ health: vi.fn(async () => { healthCalls++; return { state: 'idle', active_model: 'm', device: 'cpu' } }) })
+    renderHook(() => useSidecarSettings(9000, { ...deps, pollHealth: false }))
+```
+
+**Extract them first.** Task 10 creates a new test file that needs both helpers, so move `baseSettings` and `makeDeps` verbatim into a new `desktop/src/renderer/src/test/fakes.ts`, export both, and import them back into `useSidecarSettings.test.tsx`. Do this as the first commit of this task, with the existing hook tests still passing, before writing any new test. Do not rename them.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
