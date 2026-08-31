@@ -245,3 +245,111 @@ def test_measured_fps_survives_concurrent_reads():
     c.release()
 
     assert errors == []
+
+
+# --- live control changes -------------------------------------------------
+
+
+class _RecordingCap:
+    """Opens fine, yields frames forever, and records every set() with the
+    name of the thread that made it."""
+
+    def __init__(self):
+        self.sets: list[tuple[int, object, str]] = []
+        self.released = False
+
+    def isOpened(self):
+        return True
+
+    def set(self, prop, value):
+        self.sets.append((prop, value, threading.current_thread().name))
+        return True
+
+    def read(self):
+        time.sleep(0.001)
+        return True, np.zeros((4, 4, 3), dtype=np.uint8)
+
+    def release(self):
+        self.released = True
+
+
+def _wrote(cap, prop, value) -> bool:
+    return any(p == prop and v == value for p, v, _ in cap.sets)
+
+
+def _wait_for(predicate, timeout=2.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.005)
+    return False
+
+
+def test_control_writes_happen_on_the_capture_thread():
+    """cv2.VideoCapture is not thread-safe and _loop is calling read() on a
+    background thread, so a set() issued from the caller's thread would race
+    it. The write must be deferred to the thread that owns the handle."""
+    cap = _RecordingCap()
+    src = CameraCapture(0, 4, 4, 30, cap_factory=lambda i: cap)
+    src.open()
+    try:
+        src.set_controls(brightness=140.0)
+        assert _wait_for(lambda: _wrote(cap, cv2.CAP_PROP_BRIGHTNESS, 140.0))
+        writers = {t for p, _, t in cap.sets if p == cv2.CAP_PROP_BRIGHTNESS}
+        assert threading.current_thread().name not in writers
+    finally:
+        src.release()
+
+
+def test_set_controls_coalesces_a_fast_drag():
+    """A slider drag emits dozens of values. Only the newest matters, and
+    applying every one would stall reads behind a queue of set() calls."""
+    cap = _RecordingCap()
+    src = CameraCapture(0, 4, 4, 30, cap_factory=lambda i: cap)
+    src.open()
+    try:
+        src.set_controls(brightness=100.0)
+        src.set_controls(brightness=110.0)
+        src.set_controls(brightness=120.0)
+        assert _wait_for(lambda: _wrote(cap, cv2.CAP_PROP_BRIGHTNESS, 120.0))
+        written = [v for p, v, _ in cap.sets if p == cv2.CAP_PROP_BRIGHTNESS]
+        assert 110.0 not in written
+    finally:
+        src.release()
+
+
+def test_controls_set_live_survive_a_reopen():
+    """A restart (resolution change, say) rebuilds the handle. Values tuned
+    live must come back with it, or a restart silently reverts them."""
+    caps = []
+
+    def factory(index):
+        cap = _RecordingCap()
+        caps.append(cap)
+        return cap
+
+    src = CameraCapture(0, 4, 4, 30, cap_factory=factory)
+    src.open()
+    src.set_controls(brightness=140.0)
+    assert _wait_for(lambda: _wrote(caps[0], cv2.CAP_PROP_BRIGHTNESS, 140.0))
+    src.release()
+
+    src.open()
+    src.release()
+    assert _wrote(caps[1], cv2.CAP_PROP_BRIGHTNESS, 140.0)
+
+
+def test_autofocus_is_written_before_focus_when_set_live():
+    """Same ordering open() has always used: a focus value written while
+    autofocus is on is immediately hunted away from."""
+    cap = _RecordingCap()
+    src = CameraCapture(0, 4, 4, 30, cap_factory=lambda i: cap)
+    src.open()
+    try:
+        src.set_controls(focus=30.0, autofocus=False)
+        assert _wait_for(lambda: _wrote(cap, cv2.CAP_PROP_FOCUS, 30.0))
+        props = [p for p, _, _ in cap.sets]
+        assert props.index(cv2.CAP_PROP_AUTOFOCUS) < props.index(cv2.CAP_PROP_FOCUS)
+    finally:
+        src.release()

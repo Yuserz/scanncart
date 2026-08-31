@@ -89,6 +89,11 @@ class CameraCapture:
         self._exposure = exposure
         self._autofocus = autofocus
         self._focus = focus
+        # Control changes queued by another thread, drained by _loop between
+        # reads. cv2.VideoCapture is not thread-safe, so set() must never be
+        # called from the FastAPI request thread while read() is in flight.
+        self._controls_lock = threading.Lock()
+        self._pending_controls: dict[str, float | bool | None] = {}
         self._cap = None
         self._buffer = LatestFrameBuffer()
         self._thread = None
@@ -107,21 +112,60 @@ class CameraCapture:
         # requested fps is a request; this is what arrived.
         self._read_times: deque[float] = deque(maxlen=120)
 
+    def _current_controls(self) -> dict:
+        return {
+            "autofocus": self._autofocus,
+            "focus": self._focus,
+            "brightness": self._brightness,
+            "exposure": self._exposure,
+        }
+
+    @staticmethod
+    def _write_controls(cap, controls: dict) -> None:
+        """Write device controls in dependency order.
+
+        Autofocus goes first: a focus value written while autofocus is on is
+        immediately hunted away from. Keys absent or None mean "leave the
+        camera alone" — see Settings.camera_brightness et al.
+        """
+        if controls.get("autofocus") is not None:
+            cap.set(cv2.CAP_PROP_AUTOFOCUS, 1 if controls["autofocus"] else 0)
+        if controls.get("focus") is not None:
+            cap.set(cv2.CAP_PROP_FOCUS, controls["focus"])
+        if controls.get("brightness") is not None:
+            cap.set(cv2.CAP_PROP_BRIGHTNESS, controls["brightness"])
+        if controls.get("exposure") is not None:
+            cap.set(cv2.CAP_PROP_EXPOSURE, controls["exposure"])
+
+    def set_controls(self, **changes) -> None:
+        """Queue control changes for the capture thread.
+
+        Accepts brightness/exposure/autofocus/focus. Updating a dict rather
+        than appending to a queue coalesces a fast slider drag to its newest
+        value, so the capture thread never works through a backlog.
+        """
+        with self._controls_lock:
+            self._pending_controls.update(changes)
+
+    def _drain_controls(self) -> None:
+        with self._controls_lock:
+            if not self._pending_controls:
+                return
+            changes = self._pending_controls
+            self._pending_controls = {}
+        # Merge onto the instance fields so a later reopen replays them.
+        for name, value in changes.items():
+            setattr(self, f"_{name}", value)
+        # Deliberately outside the lock: cap.set() can block on some
+        # backends, and holding the lock across it would stall the caller.
+        self._write_controls(self._cap, changes)
+
     def open(self) -> bool:
         self._cap = self._cap_factory(self.index)
         self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
         self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
         self._cap.set(cv2.CAP_PROP_FPS, self.fps)
-        # Order matters: turn autofocus off before writing a focus value, or
-        # the device may immediately hunt away from it.
-        if self._autofocus is not None:
-            self._cap.set(cv2.CAP_PROP_AUTOFOCUS, 1 if self._autofocus else 0)
-        if self._focus is not None:
-            self._cap.set(cv2.CAP_PROP_FOCUS, self._focus)
-        if self._brightness is not None:
-            self._cap.set(cv2.CAP_PROP_BRIGHTNESS, self._brightness)
-        if self._exposure is not None:
-            self._cap.set(cv2.CAP_PROP_EXPOSURE, self._exposure)
+        self._write_controls(self._cap, self._current_controls())
         if not self._cap.isOpened():
             self.is_open = False
             return False
@@ -160,6 +204,7 @@ class CameraCapture:
                 continue
             self._consecutive_failures = 0
             self._failing_since = None
+            self._drain_controls()
             self._read_times.append(time.monotonic())
             self._seq += 1
             self._buffer.put(self._seq, frame)
