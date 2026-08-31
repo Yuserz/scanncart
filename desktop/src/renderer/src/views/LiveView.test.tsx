@@ -195,4 +195,19 @@ describe('LiveView', () => {
 
     expect(screen.queryByTestId('live-error')).not.toBeInTheDocument()
   })
+
+  it('shows the camera tuning card in the side rail', async () => {
+    const h = makeHarness()
+    render(<LiveView port={8765} deps={h.deps} />)
+    expect(await screen.findByTestId('camera-tuning')).toBeInTheDocument()
+  })
+
+  it('gives the tuning card the same capture state the toolbar uses', async () => {
+    // One owner: LiveView drives capture through useSidecarStream, and the
+    // card is told. A second health poller would disagree mid start/stop.
+    const h = makeHarness()
+    render(<LiveView port={8765} deps={h.deps} />)
+    await screen.findByTestId('camera-tuning')
+    expect(screen.getByTestId('tuning-idle')).toBeInTheDocument()
+  })
 })

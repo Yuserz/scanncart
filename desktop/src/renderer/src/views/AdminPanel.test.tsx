@@ -493,125 +493,6 @@ describe('AdminPanel', () => {
     expect(screen.getByTestId('pending-count')).not.toHaveTextContent('Saved')
   })
 
-  it('shows live image quality with a warning when the frame is too dark', async () => {
-    // Brightness 23/255 was the real cause of "detection is broken".
-    const { deps } = makeDeps('running', {
-      getCameraQuality: vi.fn(async () => ({
-        available: true,
-        brightness: 23,
-        contrast: 27,
-        sharpness: 4.8,
-        capture_fps: 12,
-        target_fps: 60,
-        verdicts: { brightness: 'low', sharpness: 'low', capture_fps: 'low' },
-        detail: ''
-      }))
-    })
-    render(<AdminPanel port={8765} deps={deps} />)
-
-    const panel = await screen.findByTestId('camera-quality')
-    expect(panel).toHaveTextContent('23')
-    expect(within(panel).getAllByTestId('quality-low').length).toBeGreaterThan(0)
-  })
-
-  it('marks a failing metric with more than colour, for a colourblind operator', async () => {
-    // This panel's whole purpose is making a bad reading visible, so a
-    // failing metric must be identifiable without relying on hue: a visible
-    // symbol plus text a screen reader can announce.
-    const { deps } = makeDeps('running', {
-      getCameraQuality: vi.fn(async () => ({
-        available: true,
-        brightness: 23,
-        contrast: 27,
-        sharpness: 200,
-        capture_fps: 60,
-        target_fps: 60,
-        verdicts: { brightness: 'low', sharpness: 'ok', capture_fps: 'ok' },
-        detail: ''
-      }))
-    })
-    render(<AdminPanel port={8765} deps={deps} />)
-
-    const panel = await screen.findByTestId('camera-quality')
-    const failing = within(panel).getAllByTestId('quality-low')
-    expect(failing).toHaveLength(1)
-    // A symbol is present in the rendered text, not just a CSS colour class.
-    expect(failing[0].textContent).toMatch(/[^\d\s]/)
-    // And an accessible name conveys the failing state to a screen reader.
-    expect(failing[0]).toHaveTextContent(/outside the expected range/i)
-
-    const passing = within(panel).getAllByTestId('quality-ok')
-    for (const el of passing) {
-      expect(el).not.toHaveTextContent(/outside the expected range/i)
-    }
-  })
-
-  it('shows the calibration result with its measured evidence, and applies on request', async () => {
-    const { deps, api } = makeDeps('idle')
-    render(<AdminPanel port={8765} deps={deps} />)
-
-    await userEvent.click(await screen.findByTestId('calibrate-camera'))
-
-    const card = await screen.findByTestId('calibration-result')
-    expect(card).toHaveTextContent('30.3') // the measured evidence
-    expect(card).toHaveTextContent('12.3')
-
-    await userEvent.click(within(card).getByTestId('apply-profile'))
-    expect(api.applyCameraProfile).toHaveBeenCalled()
-  })
-
-  it('disables calibration while capture is running', async () => {
-    const { deps } = makeDeps('running')
-    render(<AdminPanel port={8765} deps={deps} />)
-    expect(await screen.findByTestId('calibrate-camera')).toBeDisabled()
-  })
-
-  it('disables Apply while a request is in flight, preventing a double-submit', async () => {
-    const applyGate: { resolve: (() => void) | null } = { resolve: null }
-    const { deps, api } = makeDeps('idle', {
-      applyCameraProfile: vi.fn(
-        () =>
-          new Promise<SettingsResponse>((resolve) => {
-            applyGate.resolve = () => resolve(baseSettings())
-          })
-      )
-    })
-    render(<AdminPanel port={8765} deps={deps} />)
-
-    await userEvent.click(await screen.findByTestId('calibrate-camera'))
-    const card = await screen.findByTestId('calibration-result')
-    const applyButton = within(card).getByTestId('apply-profile')
-
-    await userEvent.click(applyButton)
-    expect(applyButton).toBeDisabled()
-    expect(api.applyCameraProfile).toHaveBeenCalledTimes(1)
-
-    applyGate.resolve?.()
-    await waitFor(() => expect(applyButton).not.toBeDisabled())
-  })
-
-  it('shows an explanatory message and hides Apply when the camera has nothing to recommend', async () => {
-    const { deps } = makeDeps('idle', {
-      calibrateCamera: vi.fn(async () => ({
-        device_key: 'Fake Cam:0:1280x720',
-        backend: 'msmf',
-        width: 1280,
-        height: 720,
-        fps_auto_exposure: 12.3,
-        fps_capped_exposure: 12.3,
-        controls: { brightness: false, exposure: false, gain: false, focus: false },
-        recommended: {},
-        measured_at: 1
-      }))
-    })
-    render(<AdminPanel port={8765} deps={deps} />)
-
-    await userEvent.click(await screen.findByTestId('calibrate-camera'))
-    const card = await screen.findByTestId('calibration-result')
-    expect(card).toHaveTextContent(/No settings to change/i)
-    expect(within(card).queryByTestId('apply-profile')).not.toBeInTheDocument()
-  })
-
   it('hides the quality readout when capture is not running', async () => {
     const { deps } = makeDeps('idle', {
       getCameraQuality: vi.fn(async () => ({
@@ -629,5 +510,38 @@ describe('AdminPanel', () => {
 
     await screen.findByTestId('hardware-info')
     expect(screen.queryByTestId('camera-quality')).not.toBeInTheDocument()
+  })
+
+  describe('after the tuning fields moved to Live', () => {
+    it('no longer renders the relocated fields', async () => {
+      const { deps } = makeDeps('idle')
+      render(<AdminPanel port={8765} deps={deps} />)
+      await screen.findByTestId('hardware-info')
+      for (const key of [
+        'conf_threshold',
+        'infer_frame_skip',
+        'preview_height',
+        'preview_max_fps',
+        'track_expiry_s'
+      ]) {
+        expect(document.getElementById(key)).toBeNull()
+      }
+    })
+
+    it('no longer renders the calibration card or the quality readout', async () => {
+      const { deps } = makeDeps('idle')
+      render(<AdminPanel port={8765} deps={deps} />)
+      await screen.findByTestId('hardware-info')
+      expect(screen.queryByTestId('calibrate-camera')).toBeNull()
+      expect(screen.queryByTestId('camera-quality')).toBeNull()
+    })
+
+    it('still renders the fields that need a restart', async () => {
+      const { deps } = makeDeps('idle')
+      render(<AdminPanel port={8765} deps={deps} />)
+      await screen.findByTestId('hardware-info')
+      expect(document.getElementById('capture_width')).not.toBeNull()
+      expect(document.getElementById('imgsz')).not.toBeNull()
+    })
   })
 })

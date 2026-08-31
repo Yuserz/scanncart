@@ -7,6 +7,7 @@ import {
   type StreamClient,
   type StreamClientOptions
 } from '../lib/ws'
+import type { SettingsDeps } from './useSidecarSettings'
 
 export interface LoggedItem {
   track_id: number
@@ -18,6 +19,9 @@ export interface LoggedItem {
 export interface StreamDeps {
   apiFactory?: (port: number) => ApiClient
   streamFactory?: (opts: StreamClientOptions) => StreamClient
+  // Passed through to CameraTuning; never used by the stream hook itself.
+  // Lives here so LiveView keeps taking exactly one `deps` prop.
+  settingsDeps?: SettingsDeps
 }
 
 export interface SidecarStream {

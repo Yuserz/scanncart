@@ -66,12 +66,7 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
     camerasLoading,
     stopCapture,
     startCapture,
-    stopping,
-    cameraQuality,
-    calibrate,
-    calibrating,
-    profile,
-    applyProfile
+    stopping
   } = useSidecarSettings(port, deps)
 
   // Holds only *unsaved* edits; reset whenever the server-confirmed settings
@@ -324,53 +319,6 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
             you expect.
           </p>
         )}
-        {field.key === 'camera_index' && (
-          <>
-            <button
-              type="button"
-              className="btn-outline btn-small"
-              disabled={running || calibrating}
-              onClick={() => void calibrate()}
-              data-testid="calibrate-camera"
-              title={running ? 'Stop capture to calibrate' : 'Measure this camera'}
-            >
-              {calibrating ? <Spinner /> : null} Calibrate camera
-            </button>
-
-            {profile && (
-              <div className="calibration-result" data-testid="calibration-result">
-                <p className="field-hint">
-                  Measured {profile.fps_auto_exposure} fps on automatic exposure,{' '}
-                  {profile.fps_capped_exposure} fps with it capped.
-                </p>
-                {Object.keys(profile.recommended).length === 0 ? (
-                  <p className="field-hint" data-testid="no-recommendation">
-                    No settings to change: this camera did not respond to any of the controls we can
-                    set.
-                  </p>
-                ) : (
-                  <>
-                    <ul>
-                      {Object.entries(profile.recommended).map(([k, v]) => (
-                        <li key={k}>
-                          {k}: {String(v)}
-                        </li>
-                      ))}
-                    </ul>
-                    <button
-                      className="btn-primary btn-small"
-                      disabled={saving}
-                      data-testid="apply-profile"
-                      onClick={() => void applyProfile()}
-                    >
-                      {saving ? <Spinner /> : null} Apply these settings
-                    </button>
-                  </>
-                )}
-              </div>
-            )}
-          </>
-        )}
         {field.key === 'active_model' && MODEL_SPEC_HINTS[String(value)] && (
           <p className="field-hint experimental" data-testid="model-spec-hint">
             {MODEL_SPEC_HINTS[String(value)]}
@@ -500,58 +448,6 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
           </p>
         )}
       </section>
-
-      {cameraQuality?.available && (
-        <section className="camera-quality" data-testid="camera-quality">
-          <h4>Live image</h4>
-          <div className="quality-row">
-            {[
-              [
-                'Brightness',
-                cameraQuality.brightness,
-                cameraQuality.verdicts.brightness,
-                '110–160'
-              ],
-              [
-                'Sharpness',
-                cameraQuality.sharpness,
-                cameraQuality.verdicts.sharpness,
-                'higher is sharper'
-              ],
-              [
-                'Capture fps',
-                cameraQuality.capture_fps,
-                cameraQuality.verdicts.capture_fps,
-                `≥ ${Math.round(cameraQuality.target_fps * 0.8)}`
-              ]
-            ].map(([label, value, verdict, hint]) => {
-              const failing = verdict !== 'ok'
-              return (
-                <div key={String(label)} className="quality-metric">
-                  <span className="quality-label">{label}</span>
-                  <span
-                    className={failing ? 'quality-value bad' : 'quality-value'}
-                    data-testid={failing ? 'quality-low' : 'quality-ok'}
-                  >
-                    {/* Colour alone fails a colourblind operator reading a
-                        panel whose whole purpose is flagging a bad reading —
-                        a symbol carries the same signal without relying on
-                        hue, and the hidden text names it for screen readers. */}
-                    {failing && (
-                      <span className="quality-flag" aria-hidden="true">
-                        ▲{' '}
-                      </span>
-                    )}
-                    {value}
-                    {failing && <span className="sr-only"> — outside the expected range</span>}
-                  </span>
-                  <span className="field-hint">{hint}</span>
-                </div>
-              )
-            })}
-          </div>
-        </section>
-      )}
 
       <div className="admin-groups">
         {visibleGroups.map((group) => (

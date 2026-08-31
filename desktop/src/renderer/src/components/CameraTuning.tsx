@@ -10,7 +10,9 @@ export interface CameraTuningProps {
   running: boolean
   start: () => Promise<void>
   stop: () => Promise<void>
-  cameraName: string
+  // Optional: the card falls back to the configured index when the host
+  // does not know the device's name.
+  cameraName?: string
   deps?: SettingsDeps
   // Trailing-edge debounce for slider writes; overridden to 0 in tests.
   debounceMs?: number
@@ -171,7 +173,9 @@ export function CameraTuning({
         >
           {open ? '▾' : '▸'} Camera tuning
         </button>
-        <span className="tuning-camera">{cameraName}</span>
+        <span className="tuning-camera">
+          {cameraName ?? (settings ? `Camera ${settings.camera_index}` : '')}
+        </span>
       </h4>
 
       {loading && !settings && (

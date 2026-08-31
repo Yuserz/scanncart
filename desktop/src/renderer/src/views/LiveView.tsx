@@ -2,6 +2,7 @@ import { useState, type CSSProperties, type JSX } from 'react'
 import { useSidecarStream, type StreamDeps } from '../hooks/useSidecarStream'
 import { boxToPercent } from '../lib/overlay'
 import { Spinner } from '../components/Spinner'
+import { CameraTuning } from '../components/CameraTuning'
 import './LiveView.css'
 
 export interface LiveViewProps {
@@ -164,6 +165,14 @@ export function LiveView({ port, deps }: LiveViewProps): JSX.Element {
               )}
             </div>
           </div>
+
+          <CameraTuning
+            port={port}
+            running={running}
+            start={start}
+            stop={stop}
+            deps={deps?.settingsDeps}
+          />
 
           <div className="card log-card">
             <h4>
