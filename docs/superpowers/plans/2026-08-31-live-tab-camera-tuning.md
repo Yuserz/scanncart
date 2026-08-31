@@ -725,6 +725,39 @@ def test_a_non_persisting_patch_still_respects_the_restart_lock(running):
     assert r.status_code == 409
 
 
+def test_reset_fields_sets_a_control_back_to_none(tmp_path):
+    """Revert's case: all four controls default to None, so on a fresh
+    install the saved baseline IS None and exclude_none would make Revert a
+    no-op on the primary path."""
+    state = AppState(settings_path=str(tmp_path / "settings.json"), db_path=":memory:")
+    with TestClient(build_app(lambda: state)) as client:
+        client.patch("/api/settings", json={"camera_brightness": 180.0})
+        r = client.patch("/api/settings", json={"reset_fields": ["camera_brightness"]})
+
+    assert r.status_code == 200
+    assert state.settings.camera_brightness is None
+    assert r.json()["camera_brightness"] is None
+
+
+def test_reset_fields_rejects_a_field_that_cannot_be_null(tmp_path):
+    """Nulling imgsz would break capture; only the device controls are
+    optional."""
+    state = AppState(settings_path=str(tmp_path / "settings.json"), db_path=":memory:")
+    with TestClient(build_app(lambda: state)) as client:
+        r = client.patch("/api/settings", json={"reset_fields": ["imgsz"]})
+
+    assert r.status_code == 422
+
+
+def test_resetting_a_control_stops_writing_it_to_the_device(running):
+    """None means 'leave the camera alone' — the device keeps whatever value
+    it currently holds until the next reopen."""
+    client, _, src, _ = running
+    client.patch("/api/settings", json={"reset_fields": ["camera_brightness"]})
+
+    assert src.controls["brightness"] is None
+
+
 def test_camera_control_bounds_are_enforced(tmp_path):
     state = AppState(settings_path=str(tmp_path / "settings.json"), db_path=":memory:")
     with TestClient(build_app(lambda: state)) as client:
@@ -755,6 +788,41 @@ In `sidecar/app/schemas.py`, replace the four unbounded camera fields in `Settin
     camera_focus: float | None = Field(default=None, ge=0.0, le=1023.0)
 ```
 
+Add to `SettingsUpdateRequest`, after the camera controls:
+
+```python
+    # exclude_none=True means a patch can never send a field back to null, so
+    # without this Revert cannot restore "leave the camera alone" — which is
+    # the default state of all four controls, and therefore the saved baseline
+    # on a fresh install. Restricted to those four because they are the only
+    # settings whose type admits None; nulling imgsz would break capture.
+    reset_fields: list[str] | None = None
+
+    @field_validator("reset_fields")
+    @classmethod
+    def _validate_reset_fields(cls, v: list[str] | None) -> list[str] | None:
+        if v is not None:
+            unknown = set(v) - RESETTABLE_FIELDS
+            if unknown:
+                raise ValueError(f"reset_fields must be a subset of {sorted(RESETTABLE_FIELDS)}")
+        return v
+```
+
+In `sidecar/app/settings_store.py`, beside the other field sets:
+
+```python
+# Settings that can be set back to None ("leave the camera alone"). Only the
+# device controls: every other field has a non-optional type.
+RESETTABLE_FIELDS = {
+    "camera_brightness",
+    "camera_exposure",
+    "camera_autofocus",
+    "camera_focus",
+}
+```
+
+Import it in `schemas.py` alongside `ALLOWED_BACKENDS`.
+
 In `sidecar/app/main.py`, replace the `update_settings` route with:
 
 ```python
@@ -767,6 +835,10 @@ In `sidecar/app/main.py`, replace the `update_settings` route with:
         app boots with. POST /api/settings/save commits what is in memory.
         """
         patch = body.model_dump(exclude_none=True)
+        # exclude_none drops nulls, so "set this back to null" has to travel
+        # as an explicit list of names — see SettingsUpdateRequest.reset_fields.
+        for name in patch.pop("reset_fields", []):
+            patch[name] = None
         return _apply_settings_patch(state, patch, persist=persist)
 
     @app.post("/api/settings/save", response_model=SettingsResponse)
@@ -1043,7 +1115,19 @@ Expected: FAIL — `saveSettings is not a function`.
 
 - [ ] **Step 3: Write the implementation**
 
-In `desktop/src/renderer/src/lib/api.ts`, add after `CameraProfileResponse`:
+In `desktop/src/renderer/src/lib/api.ts`, widen `SettingsUpdate`:
+
+```ts
+// Mirrors sidecar/app/schemas.py::SettingsUpdateRequest. `reset_fields` names
+// settings to set back to null; it exists because the sidecar drops nulls from
+// a patch (exclude_none), so "leave the camera alone" cannot travel as a value.
+// Only the four camera controls are resettable — see RESETTABLE_FIELDS.
+export type SettingsUpdate = Partial<SettingsPayload> & {
+  reset_fields?: (keyof SettingsPayload)[]
+}
+```
+
+Add after `CameraProfileResponse`:
 
 ```ts
 // Mirrors sidecar/app/schemas.py::StoredProfileResponse. `profile` is null
@@ -1308,6 +1392,46 @@ describe('hosting inside LiveView', () => {
     expect(healthCalls).toBe(0)
   })
 
+  it('keeps reading camera quality even with health polling off', async () => {
+    // The two share one timer. The tuning card turns health off because
+    // LiveView owns capture state, but its whole readout is quality.
+    let qualityCalls = 0
+    const api = fakeApi({
+      getCameraQuality: async () => {
+        qualityCalls++
+        return { available: true, brightness: 128, contrast: 40, sharpness: 90, capture_fps: 29, target_fps: 30, verdicts: {}, detail: '' }
+      }
+    })
+
+    const { result } = renderHook(() =>
+      useSidecarSettings(9000, { apiFactory: () => api, pollHealth: false })
+    )
+    await waitFor(() => expect(result.current.cameraQuality).not.toBeNull())
+
+    expect(qualityCalls).toBeGreaterThan(0)
+  })
+
+  it('does not enumerate cameras for a consumer that never reads them', async () => {
+    // Enumerating opens every device (~30 s). The card has no camera list.
+    let cameraCalls = 0
+    const api = fakeApi({
+      getCameras: async () => {
+        cameraCalls++
+        return { cameras: [], probed: true, detail: '' }
+      }
+    })
+
+    const { result } = renderHook(() =>
+      useSidecarSettings(9000, { apiFactory: () => api, pollCameras: false })
+    )
+    await waitFor(() => expect(result.current.settings).not.toBeNull())
+
+    expect(cameraCalls).toBe(0)
+    // Nothing else clears the initial true, and a stuck spinner reads as a
+    // scan that never finishes.
+    expect(result.current.camerasLoading).toBe(false)
+  })
+
   it('still polls health by default, for the Admin panel', async () => {
     let healthCalls = 0
     const api = fakeApi({ health: async () => { healthCalls++; return { state: 'idle', active_model: 'm', device: 'cpu' } } })
@@ -1365,8 +1489,13 @@ In `useSidecarSettings.ts`, add to `SettingsDeps`:
 ```ts
   // False when a host view already owns capture state (LiveView drives it
   // through useSidecarStream). Two pollers in one view means two answers to
-  // "are we running", and they disagree during a start or stop.
+  // "are we running", and they disagree during a start or stop. It suppresses
+  // ONLY the health call — the camera-quality read shares that timer and the
+  // tuning card depends on it.
   pollHealth?: boolean
+  // False for a consumer that never reads `cameras`. Enumerating opens every
+  // device (~30 s), so the tuning card must not trigger it on mount.
+  pollCameras?: boolean
 ```
 
 Add to `SidecarSettings`:
@@ -1381,6 +1510,7 @@ Inside the hook, after the other `deps` reads:
 
 ```ts
   const shouldPollHealth = deps.pollHealth ?? true
+  const shouldPollCameras = deps.pollCameras ?? true
 ```
 
 Add the state:
@@ -1406,25 +1536,62 @@ Inside `load()`, extend the `Promise.all` and its destructuring:
       setStoredProfile(prof.profile)
 ```
 
-Guard the poller in the mount effect. Replace the `void pollHealth()` / `setInterval` pair with:
+**The guard goes inside `pollHealth()`, not around it.** That function does two things on one timer: `api.health()` and `api.getCameraQuality()`. The tuning card passes `pollHealth: false` because `LiveView` owns capture state — but it still needs the quality readout, so suppressing the whole function would blank it. Change only the health half:
 
 ```ts
-    let healthTimer: ReturnType<typeof setInterval> | null = null
-    if (shouldPollHealth) {
-      void pollHealth()
-      healthTimer = setInterval(() => void pollHealth(), healthPollMs)
+    const pollHealth = async (): Promise<void> => {
+      // Skipped when a host view already owns capture state. The quality read
+      // below is NOT skipped — it shares this timer and the tuning card needs
+      // it regardless of who owns capture state.
+      if (shouldPollHealth) {
+        try {
+          const h = await api.health()
+          if (!cancelled) setCaptureState(h.state)
+        } catch {
+          // Sidecar not reachable yet; keep the last known capture state.
+        }
+      }
+      try {
+        const q = await api.getCameraQuality()
+        if (!cancelled) setCameraQuality(q)
+      } catch {
+        // Sidecar not reachable yet; keep the last known reading.
+      }
     }
 ```
 
-and in the cleanup replace `clearInterval(healthTimer)` with:
+The timer itself stays unconditional.
+
+Guard the camera scan, which a consumer that never reads `cameras` should not trigger — it opens every device. Replace the `cameraTimer` line and the `cameraTicker` interval with:
 
 ```ts
-      if (healthTimer !== null) clearInterval(healthTimer)
+    const cameraTimer = shouldPollCameras ? setTimeout(() => void refreshCameras(), 0) : null
 ```
 
-Add `shouldPollHealth` to the effect's dependency array. Return `storedProfile` from the hook.
+```ts
+    const cameraTicker = shouldPollCameras
+      ? setInterval(() => {
+          if (!cancelled) void refreshCameras()
+        }, cameraPollMs)
+      : null
+```
 
-**Note:** `pollHealth()` also refreshes `cameraQuality`, which the tuning card needs. Task 13 restores that for the `pollHealth: false` case; do not add a second timer here.
+and in the cleanup:
+
+```ts
+      if (cameraTimer !== null) clearTimeout(cameraTimer)
+      if (cameraTicker !== null) clearInterval(cameraTicker)
+```
+
+When `shouldPollCameras` is false, set `camerasLoading` to false at the same point rather than leaving it stuck true — `useState(true)` is its initial value and nothing else would clear it:
+
+```ts
+    if (!shouldPollCameras) setCamerasLoading(false)
+```
+
+Place that inside the effect body, before the timers.
+
+Add `shouldPollHealth` and `shouldPollCameras` to the effect's dependency array. Return `storedProfile` from the hook.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -1775,9 +1942,13 @@ export function CameraTuning({
   cameraName,
   deps
 }: CameraTuningProps): JSX.Element {
+  // LiveView owns capture state and passes it as `running`, so this instance
+  // must not poll health too. It has no use for the camera list either, and
+  // enumerating opens every device. Quality still reads — see useSidecarSettings.
   const { settings, storedProfile, cameraQuality, loading } = useSidecarSettings(port, {
     ...deps,
-    pollHealth: deps?.pollHealth ?? false
+    pollHealth: deps?.pollHealth ?? false,
+    pollCameras: deps?.pollCameras ?? false
   })
   const [open, setOpen] = useState(false)
 
@@ -2016,6 +2187,29 @@ describe('applying and committing', () => {
     )
   })
 
+  it('reverts a control back to "leave the camera alone"', async () => {
+    // All four controls default to null, so this is the fresh-install path:
+    // tune brightness for the first time, then Revert.
+    const calls: unknown[] = []
+    renderCard({
+      getSettings: async () => ({ ...BASE_SETTINGS, camera_brightness: null }),
+      updateSettings: async (patch: unknown) => {
+        calls.push(patch)
+        return { ...BASE_SETTINGS, ...(patch as object) }
+      }
+    })
+    await screen.findByLabelText('Brightness')
+    await userEvent.click(screen.getByRole('button', { name: /Camera tuning/ }))
+    fireEvent.change(screen.getByLabelText('Brightness'), { target: { value: '180' } })
+    await screen.findByTestId('tuning-dirty')
+
+    await userEvent.click(screen.getByTestId('tuning-revert'))
+
+    await waitFor(() =>
+      expect(calls.at(-1)).toEqual({ reset_fields: ['camera_brightness'] })
+    )
+  })
+
   it('offers nothing to save when nothing changed', async () => {
     renderCard()
     await screen.findByLabelText('Brightness')
@@ -2106,9 +2300,17 @@ Add the actions block before the `!running` hint:
             data-testid="tuning-revert"
             onClick={() => {
               if (!savedSettings) return
-              const patch = Object.fromEntries(
-                dirtyKeys.map((k) => [k, savedSettings[k]])
+              // A saved value of null means "leave the camera alone", which is
+              // the default for all four controls — so on a fresh install this
+              // is the common case, not an edge one. exclude_none on the
+              // sidecar drops nulls from a patch, so they travel by name in
+              // reset_fields instead.
+              const restore = dirtyKeys.filter((k) => savedSettings[k] !== null)
+              const reset = dirtyKeys.filter((k) => savedSettings[k] === null)
+              const patch: SettingsUpdate = Object.fromEntries(
+                restore.map((k) => [k, savedSettings[k]])
               ) as SettingsUpdate
+              if (reset.length > 0) patch.reset_fields = reset
               void liveUpdate(patch)
             }}
           >
@@ -2416,6 +2618,8 @@ In `AdminPanel.tsx`:
 - Delete the `camera_index` calibration block (the `<>…</>` containing `calibrate-camera` and `calibration-result`) from `renderField`.
 - Delete the entire `{cameraQuality?.available && (<section className="camera-quality" …>)}` block.
 - Remove `cameraQuality`, `calibrate`, `calibrating`, `profile`, `applyProfile` from the destructured hook result.
+
+**Delete the Admin tests for what moved.** `AdminPanel.test.tsx` has passing tests covering the calibration card, the quality readout, and the relocated fields; removing the source without removing them turns the suite red. Before deleting each one, check whether `CameraTuning.test.tsx` covers the same behaviour — the behaviour moved, it did not vanish. If a deleted Admin test asserted something the card's tests do not, port it across rather than losing the coverage. Name every test you delete in your report.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
