@@ -90,7 +90,7 @@ export interface FieldMeta {
   key: keyof SettingsPayload
   label: string
   hint: string
-  type: 'select' | 'number' | 'text'
+  type: 'select' | 'number' | 'text' | 'boolean'
   options?: readonly string[]
   min?: number
   max?: number
@@ -269,18 +269,55 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
     min: 0.1,
     max: 30,
     step: 0.5
+  },
+  {
+    key: 'camera_brightness',
+    label: 'Brightness',
+    hint: 'Boosts the image after the sensor, so it costs no framerate — but it amplifies noise along with the picture. Reach for exposure first and use this to finish. Bounds mirror the sidecar; the meaningful range is device-specific.',
+    type: 'number',
+    min: 0,
+    max: 255,
+    step: 5
+  },
+  {
+    key: 'camera_exposure',
+    label: 'Exposure',
+    hint: 'How long the shutter stays open, as log2 seconds: -6 is 1/64 s, -4 is 1/16 s, -2 is a quarter of a second. Each step up doubles the light and halves the framerate — -2 caps the camera at 4 fps. Watch the capture fps reading above after every change.',
+    type: 'number',
+    min: -13,
+    max: 0,
+    step: 1
+  },
+  {
+    key: 'camera_autofocus',
+    label: 'Autofocus',
+    hint: "The StreamCam's autofocus hunts for faces, which a checkout counter does not have — it drifts off the item and back. Off, with a fixed focus, is steadier for a camera that never moves.",
+    type: 'boolean'
+  },
+  {
+    key: 'camera_focus',
+    label: 'Focus',
+    hint: 'Fixed focus distance, only meaningful with autofocus off. Lower is farther away. Adjust until the sharpness reading above stops rising.',
+    type: 'number',
+    min: 0,
+    max: 1023,
+    step: 5
   }
 ]
 
 export interface FieldGroup {
   label: string
+  // Which view renders this group. One list, filtered by both views, so a
+  // field cannot end up in both places or neither.
+  home: 'live' | 'admin'
   keys: (keyof SettingsPayload)[]
 }
 
 export const SETTINGS_GROUPS: FieldGroup[] = [
-  { label: 'Model & Device', keys: ['active_model', 'device'] },
+  { label: 'Model & Device', home: 'admin', keys: ['active_model', 'device'] },
   {
     label: 'Roboflow API backends',
+    home: 'admin',
     keys: [
       'local_api_url',
       'cloud_api_url',
@@ -292,18 +329,26 @@ export const SETTINGS_GROUPS: FieldGroup[] = [
     ]
   },
   {
+    // Everything here needs the device reopened, which costs ~30 s on a
+    // StreamCam — so it stays in Admin rather than on the tuning card.
     label: 'Camera & Capture',
-    keys: [
-      'camera_index',
-      'capture_width',
-      'capture_height',
-      'capture_fps',
-      'preview_height',
-      'preview_max_fps'
-    ]
+    home: 'admin',
+    keys: ['camera_index', 'capture_width', 'capture_height', 'capture_fps']
   },
   {
     label: 'Detection & Tracking',
-    keys: ['conf_threshold', 'imgsz', 'resize_mode', 'infer_frame_skip', 'track_expiry_s']
+    home: 'admin',
+    keys: ['imgsz', 'resize_mode']
+  },
+  {
+    label: 'Image',
+    home: 'live',
+    keys: ['camera_brightness', 'camera_exposure', 'camera_autofocus', 'camera_focus']
+  },
+  { label: 'Detection', home: 'live', keys: ['conf_threshold'] },
+  {
+    label: 'Stream',
+    home: 'live',
+    keys: ['infer_frame_skip', 'preview_height', 'preview_max_fps', 'track_expiry_s']
   }
 ]

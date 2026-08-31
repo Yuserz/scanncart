@@ -131,24 +131,6 @@ describe('AdminPanel', () => {
     expect(screen.getByLabelText(/Model/i)).toHaveValue('yolo11n.pt')
   })
 
-  it('editing and saving a hot-reloadable field while running succeeds', async () => {
-    const { deps, api } = makeDeps('running')
-    const user = userEvent.setup()
-    render(<AdminPanel port={8765} deps={deps} />)
-
-    await waitFor(() => expect(screen.getByTestId('capture-state')).toHaveTextContent('running'))
-
-    const frameSkip = screen.getByLabelText(/Frame skip/i)
-    await user.clear(frameSkip)
-    await user.type(frameSkip, '3')
-
-    const saveButton = screen.getByTestId('save-settings')
-    await waitFor(() => expect(saveButton).toBeEnabled())
-    await user.click(saveButton)
-
-    await waitFor(() => expect(api.updateSettings).toHaveBeenCalledWith({ infer_frame_skip: 3 }))
-  })
-
   it('editing a restart-required field while running blocks Save with a warning', async () => {
     const { deps } = makeDeps('running')
     const user = userEvent.setup()
@@ -156,12 +138,12 @@ describe('AdminPanel', () => {
 
     await waitFor(() => expect(screen.getByTestId('capture-state')).toHaveTextContent('running'))
 
-    const confInput = screen.getByLabelText(/Confidence threshold/i)
-    await user.clear(confInput)
-    await user.type(confInput, '0.7')
+    const imgszInput = screen.getByLabelText(/Inference size/i)
+    await user.clear(imgszInput)
+    await user.type(imgszInput, '960')
 
     await waitFor(() => expect(screen.getByTestId('restart-warning')).toBeInTheDocument())
-    expect(screen.getByTestId('restart-warning')).toHaveTextContent('conf_threshold')
+    expect(screen.getByTestId('restart-warning')).toHaveTextContent('imgsz')
     expect(screen.getByTestId('save-settings')).toBeDisabled()
   })
 

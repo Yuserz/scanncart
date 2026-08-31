@@ -132,7 +132,7 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
   const backendIsRemote = REMOTE_BACKENDS.includes(selectedBackend)
   // The Roboflow URL/workspace fields are noise when running native weights.
   const visibleGroups = SETTINGS_GROUPS.filter(
-    (g) => g.label !== 'Roboflow API backends' || backendIsRemote
+    (g) => g.home === 'admin' && (g.label !== 'Roboflow API backends' || backendIsRemote)
   )
   const canSave = pendingFields.length > 0 && !blockedByRunning
   const selectedCamera = cameras.find((c) => c.index === Number(valueOf('camera_index')))
