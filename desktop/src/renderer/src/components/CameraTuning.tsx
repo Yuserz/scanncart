@@ -1,6 +1,6 @@
-import { useState, type JSX } from 'react'
+import { useEffect, useRef, useState, type JSX } from 'react'
 import { useSidecarSettings, type SettingsDeps } from '../hooks/useSidecarSettings'
-import type { SettingsPayload } from '../lib/api'
+import type { SettingsPayload, SettingsUpdate } from '../lib/api'
 import { SETTINGS_FIELDS, SETTINGS_GROUPS, type FieldMeta } from '../lib/settingsFields'
 import { Spinner } from './Spinner'
 import './CameraTuning.css'
@@ -26,16 +26,64 @@ const SUPPORT_KEY: Partial<Record<keyof SettingsPayload, 'brightness' | 'exposur
 
 const LIVE_GROUPS = SETTINGS_GROUPS.filter((g) => g.home === 'live')
 
-export function CameraTuning({ port, running, cameraName, deps }: CameraTuningProps): JSX.Element {
+export function CameraTuning({
+  port,
+  running,
+  cameraName,
+  deps,
+  debounceMs: debounceMsProp
+}: CameraTuningProps): JSX.Element {
   // LiveView owns capture state and passes it as `running`, so this instance
   // must not poll health too. It has no use for the camera list either, and
   // enumerating opens every device. Quality still reads — see useSidecarSettings.
-  const { settings, storedProfile, cameraQuality, loading } = useSidecarSettings(port, {
+  const {
+    settings,
+    storedProfile,
+    cameraQuality,
+    loading,
+    liveUpdate,
+    save,
+    savedSettings,
+    saving
+  } = useSidecarSettings(port, {
     ...deps,
     pollHealth: deps?.pollHealth ?? false,
     pollCameras: deps?.pollCameras ?? false
   })
   const [open, setOpen] = useState(false)
+
+  const debounceMs = debounceMsProp ?? 150
+  const timers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+
+  // A drag emits dozens of change events; each would otherwise be a full
+  // PATCH. Trailing edge, keyed per field so two sliders do not cancel each
+  // other.
+  const applyDebounced = (key: keyof SettingsPayload, value: number | boolean): void => {
+    const existing = timers.current.get(key)
+    if (existing) clearTimeout(existing)
+    timers.current.set(
+      key,
+      setTimeout(() => {
+        timers.current.delete(key)
+        void liveUpdate({ [key]: value } as SettingsUpdate)
+      }, debounceMs)
+    )
+  }
+
+  useEffect(
+    () => () => {
+      for (const t of timers.current.values()) clearTimeout(t)
+    },
+    []
+  )
+
+  // Unsaved changes are the gap between the live settings and the last
+  // persisted ones — never a local draft, because a live PATCH returns a
+  // fresh settings object that would otherwise look committed.
+  const dirtyKeys =
+    settings && savedSettings
+      ? LIVE_GROUPS.flatMap((g) => g.keys).filter((k) => settings[k] !== savedSettings[k])
+      : []
 
   const valueOf = (key: keyof SettingsPayload): string | number | boolean =>
     (settings?.[key] ?? '') as string | number | boolean
@@ -64,7 +112,7 @@ export function CameraTuning({ port, running, cameraName, deps }: CameraTuningPr
             type="checkbox"
             checked={valueOf(field.key) === true}
             disabled={disabled}
-            readOnly
+            onChange={(e) => applyDebounced(field.key, e.target.checked)}
           />
         ) : (
           <input
@@ -75,7 +123,10 @@ export function CameraTuning({ port, running, cameraName, deps }: CameraTuningPr
             max={field.max}
             step={field.step}
             disabled={disabled}
-            readOnly
+            onChange={(e) => {
+              const n = e.target.valueAsNumber
+              if (!Number.isNaN(n)) applyDebounced(field.key, n)
+            }}
           />
         )}
         {unsupported(field.key) && (
@@ -149,6 +200,43 @@ export function CameraTuning({ port, running, cameraName, deps }: CameraTuningPr
             })}
           </section>
         ))}
+
+      {dirtyKeys.length > 0 && (
+        <div className="tuning-actions">
+          <span data-testid="tuning-dirty">
+            {dirtyKeys.length} unsaved change{dirtyKeys.length === 1 ? '' : 's'}
+          </span>
+          <button
+            className="btn-primary btn-small"
+            disabled={saving}
+            data-testid="tuning-save"
+            onClick={() => void save()}
+          >
+            {saving ? <Spinner /> : null} Save
+          </button>
+          <button
+            className="btn-outline btn-small"
+            data-testid="tuning-revert"
+            onClick={() => {
+              if (!savedSettings) return
+              // A saved value of null means "leave the camera alone", which is
+              // the default for all four controls — so on a fresh install this
+              // is the common case, not an edge one. exclude_none on the
+              // sidecar drops nulls from a patch, so they travel by name in
+              // reset_fields instead.
+              const restore = dirtyKeys.filter((k) => savedSettings[k] !== null)
+              const reset = dirtyKeys.filter((k) => savedSettings[k] === null)
+              const patch: SettingsUpdate = Object.fromEntries(
+                restore.map((k) => [k, savedSettings[k]])
+              ) as SettingsUpdate
+              if (reset.length > 0) patch.reset_fields = reset
+              void liveUpdate(patch)
+            }}
+          >
+            Revert
+          </button>
+        </div>
+      )}
 
       {!running && (
         <p className="field-hint" data-testid="tuning-idle">

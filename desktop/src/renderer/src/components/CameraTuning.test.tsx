@@ -1,8 +1,14 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import type { ApiClient, CameraProfileResponse } from '../lib/api'
 import { baseSettings, makeDeps } from '../test/fakes'
 import { CameraTuning } from './CameraTuning'
+
+// The brief's snippets reference a bare `BASE_SETTINGS` — this is that,
+// built from the same fake the rest of the suite (and makeDeps' default
+// getSettings) uses, so overrides here stay consistent with renderCard.
+const BASE_SETTINGS = baseSettings()
 
 // Reuse the shape the hook tests already establish.
 const PROFILE: CameraProfileResponse = {
@@ -17,7 +23,7 @@ const PROFILE: CameraProfileResponse = {
   measured_at: 1
 }
 
-function renderCard(overrides: Partial<ApiClient> = {}): ReturnType<typeof render> {
+function renderCard(overrides: Partial<ApiClient> = {}, running = true): ReturnType<typeof render> {
   const { deps } = makeDeps({
     getCameraProfile: async () => ({ profile: PROFILE }),
     getCameraQuality: async () => ({
@@ -35,7 +41,7 @@ function renderCard(overrides: Partial<ApiClient> = {}): ReturnType<typeof rende
   return render(
     <CameraTuning
       port={9000}
-      running={true}
+      running={running}
       start={async () => {}}
       stop={async () => {}}
       cameraName="Logitech StreamCam"
@@ -100,5 +106,139 @@ describe('CameraTuning', () => {
     // do nothing, which the quality readout makes visible.
     renderCard({ getCameraProfile: async () => ({ profile: null }) })
     await waitFor(() => expect(screen.getByLabelText('Focus')).toBeEnabled())
+  })
+})
+
+describe('applying and committing', () => {
+  it('coalesces a drag into one request', async () => {
+    const calls: unknown[] = []
+    renderCard({
+      updateSettings: async (patch: unknown) => {
+        calls.push(patch)
+        return { ...BASE_SETTINGS, ...(patch as object) }
+      }
+    })
+    await screen.findByLabelText('Brightness')
+    await userEvent.click(screen.getByRole('button', { name: /Camera tuning/ }))
+
+    const slider = screen.getByLabelText('Brightness')
+    fireEvent.change(slider, { target: { value: '100' } })
+    fireEvent.change(slider, { target: { value: '150' } })
+    fireEvent.change(slider, { target: { value: '180' } })
+
+    // debounceMs is 0 in tests, but the trailing edge still collapses the
+    // burst to one write — a real drag emits dozens.
+    await waitFor(() => expect(calls.length).toBe(1))
+    expect(calls[0]).toEqual({ camera_brightness: 180 })
+  })
+
+  it('does not persist while tuning', async () => {
+    const persists: (boolean | undefined)[] = []
+    renderCard({
+      updateSettings: async (patch: unknown, persist?: boolean) => {
+        persists.push(persist)
+        return { ...BASE_SETTINGS, ...(patch as object) }
+      }
+    })
+    await screen.findByLabelText('Brightness')
+    await userEvent.click(screen.getByRole('button', { name: /Camera tuning/ }))
+    fireEvent.change(screen.getByLabelText('Brightness'), { target: { value: '180' } })
+
+    await waitFor(() => expect(persists).toEqual([false]))
+  })
+
+  it('reports unsaved changes and clears them on save', async () => {
+    let saved = false
+    renderCard({
+      updateSettings: async (patch: unknown) => ({ ...BASE_SETTINGS, ...(patch as object) }),
+      saveSettings: async () => {
+        saved = true
+        return { ...BASE_SETTINGS, camera_brightness: 180 }
+      }
+    })
+    await screen.findByLabelText('Brightness')
+    await userEvent.click(screen.getByRole('button', { name: /Camera tuning/ }))
+    fireEvent.change(screen.getByLabelText('Brightness'), { target: { value: '180' } })
+
+    await screen.findByTestId('tuning-dirty')
+    await userEvent.click(screen.getByTestId('tuning-save'))
+
+    expect(saved).toBe(true)
+    await waitFor(() => expect(screen.queryByTestId('tuning-dirty')).toBeNull())
+  })
+
+  it('reverts to the last saved values', async () => {
+    // A non-null saved baseline, so this exercises the "restore the previous
+    // value" path — distinct from the null/"leave the camera alone" path
+    // covered below.
+    const SAVED_BRIGHTNESS = 100
+    const calls: unknown[] = []
+    renderCard({
+      getSettings: async () => ({ ...BASE_SETTINGS, camera_brightness: SAVED_BRIGHTNESS }),
+      updateSettings: async (patch: unknown) => {
+        calls.push(patch)
+        return { ...BASE_SETTINGS, camera_brightness: SAVED_BRIGHTNESS, ...(patch as object) }
+      }
+    })
+    await screen.findByLabelText('Brightness')
+    await userEvent.click(screen.getByRole('button', { name: /Camera tuning/ }))
+    fireEvent.change(screen.getByLabelText('Brightness'), { target: { value: '180' } })
+    await screen.findByTestId('tuning-dirty')
+
+    await userEvent.click(screen.getByTestId('tuning-revert'))
+
+    await waitFor(() => expect(calls.at(-1)).toEqual({ camera_brightness: SAVED_BRIGHTNESS }))
+  })
+
+  it('reverts a control back to "leave the camera alone"', async () => {
+    // All four controls default to null, so this is the fresh-install path:
+    // tune brightness for the first time, then Revert.
+    const calls: unknown[] = []
+    renderCard({
+      getSettings: async () => ({ ...BASE_SETTINGS, camera_brightness: null }),
+      updateSettings: async (patch: unknown) => {
+        calls.push(patch)
+        return { ...BASE_SETTINGS, ...(patch as object) }
+      }
+    })
+    await screen.findByLabelText('Brightness')
+    await userEvent.click(screen.getByRole('button', { name: /Camera tuning/ }))
+    fireEvent.change(screen.getByLabelText('Brightness'), { target: { value: '180' } })
+    await screen.findByTestId('tuning-dirty')
+
+    await userEvent.click(screen.getByTestId('tuning-revert'))
+
+    await waitFor(() => expect(calls.at(-1)).toEqual({ reset_fields: ['camera_brightness'] }))
+  })
+
+  it('offers nothing to save when nothing changed', async () => {
+    renderCard()
+    await screen.findByLabelText('Brightness')
+    expect(screen.queryByTestId('tuning-dirty')).toBeNull()
+  })
+
+  // Coverage debt: an earlier task deleted an Admin test asserting that
+  // editing a hot-reloadable field while capture is RUNNING succeeds. After
+  // the settings moved, nothing in Admin was hot-reloadable any more, so
+  // there was nowhere to retarget it — that behaviour now lives here. The
+  // tests above assert the PATCH shape; this one proves the live edit
+  // actually round-trips end to end against a running pipeline.
+  it('applies a live edit against a running pipeline and reflects the new value', async () => {
+    renderCard(
+      {
+        updateSettings: async (patch: unknown) => ({ ...BASE_SETTINGS, ...(patch as object) })
+      },
+      true // running
+    )
+    await screen.findByLabelText('Brightness')
+    await userEvent.click(screen.getByRole('button', { name: /Camera tuning/ }))
+
+    const slider = screen.getByLabelText('Brightness') as HTMLInputElement
+    expect(slider).toBeEnabled()
+    fireEvent.change(slider, { target: { value: '180' } })
+
+    await waitFor(() => expect(slider.value).toBe('180'))
+    // The live PATCH landed, and the running camera should not show the idle hint.
+    expect(screen.queryByTestId('tuning-idle')).toBeNull()
   })
 })
