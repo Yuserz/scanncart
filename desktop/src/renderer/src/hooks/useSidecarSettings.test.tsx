@@ -95,6 +95,8 @@ function makeDeps(overrides: Partial<ApiClient> = {}): { deps: SettingsDeps; api
       measured_at: 1
     })),
     applyCameraProfile: vi.fn(async () => baseSettings()),
+    saveSettings: vi.fn(async () => baseSettings()),
+    getCameraProfile: vi.fn(async () => ({ profile: null })),
     ...overrides
   }
   return { deps: { apiFactory: () => api, healthPollMs: 10_000, retryDelayMs: 10 }, api }

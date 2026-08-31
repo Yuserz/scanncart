@@ -54,7 +54,9 @@ const makeDeps = (
         detail: ''
       })),
       calibrateCamera: vi.fn(),
-      applyCameraProfile: vi.fn()
+      applyCameraProfile: vi.fn(),
+      saveSettings: vi.fn(),
+      getCameraProfile: vi.fn(async () => ({ profile: null }))
     }),
     streamFactory: (o: StreamClientOptions) => {
       opts = o

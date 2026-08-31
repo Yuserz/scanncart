@@ -148,3 +148,54 @@ describe('createApiClient', () => {
     expect(JSON.parse(init?.body as string)).toEqual({ name: 'mid_range' })
   })
 })
+
+describe('live tuning endpoints', () => {
+  it('omits the persist flag by default so ordinary saves still write the file', async () => {
+    const calls: string[] = []
+    vi.stubGlobal('fetch', async (url: string) => {
+      calls.push(url)
+      return { ok: true, json: async () => ({}) } as Response
+    })
+
+    await createApiClient(9000).updateSettings({ conf_threshold: 0.7 })
+
+    expect(calls[0]).toBe('http://127.0.0.1:9000/api/settings')
+  })
+
+  it('asks the sidecar not to persist when tuning live', async () => {
+    const calls: string[] = []
+    vi.stubGlobal('fetch', async (url: string) => {
+      calls.push(url)
+      return { ok: true, json: async () => ({}) } as Response
+    })
+
+    await createApiClient(9000).updateSettings({ conf_threshold: 0.9 }, false)
+
+    expect(calls[0]).toBe('http://127.0.0.1:9000/api/settings?persist=false')
+  })
+
+  it('saves what is in memory', async () => {
+    const calls: [string, string][] = []
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      calls.push([url, init?.method ?? 'GET'])
+      return { ok: true, json: async () => ({}) } as Response
+    })
+
+    await createApiClient(9000).saveSettings()
+
+    expect(calls[0]).toEqual(['http://127.0.0.1:9000/api/settings/save', 'POST'])
+  })
+
+  it('reads the stored camera profile', async () => {
+    vi.stubGlobal(
+      'fetch',
+      async () =>
+        ({
+          ok: true,
+          json: async () => ({ profile: null })
+        }) as Response
+    )
+
+    await expect(createApiClient(9000).getCameraProfile()).resolves.toEqual({ profile: null })
+  })
+})

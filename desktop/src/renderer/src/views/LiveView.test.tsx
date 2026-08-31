@@ -53,7 +53,9 @@ const makeHarness = (): {
         detail: ''
       })),
       calibrateCamera: vi.fn(),
-      applyCameraProfile: vi.fn()
+      applyCameraProfile: vi.fn(),
+      saveSettings: vi.fn(),
+      getCameraProfile: vi.fn(async () => ({ profile: null }))
     }),
     streamFactory: (opts: StreamClientOptions) => {
       captured = opts

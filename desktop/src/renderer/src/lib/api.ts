@@ -93,7 +93,13 @@ export interface DetectorProbeResponse {
   class_names: string[]
 }
 
-export type SettingsUpdate = Partial<SettingsPayload>
+// Mirrors sidecar/app/schemas.py::SettingsUpdateRequest. `reset_fields` names
+// settings to set back to null; it exists because the sidecar drops nulls from
+// a patch (exclude_none), so "leave the camera alone" cannot travel as a value.
+// Only the four camera controls are resettable — see RESETTABLE_FIELDS.
+export type SettingsUpdate = Partial<SettingsPayload> & {
+  reset_fields?: (keyof SettingsPayload)[]
+}
 
 export interface CameraQualityResponse {
   available: boolean
@@ -131,6 +137,12 @@ export interface CameraProfileResponse {
   measured_at: number
 }
 
+// Mirrors sidecar/app/schemas.py::StoredProfileResponse. `profile` is null
+// for a camera that has never been calibrated — a normal state, not an error.
+export interface StoredProfileResponse {
+  profile: CameraProfileResponse | null
+}
+
 export interface SystemInfoResponse {
   cpu_count: number
   ram_gb: number
@@ -159,7 +171,14 @@ export interface ApiClient {
   stop(): Promise<StateResponse>
   getLogs(): Promise<LogsResponse>
   getSettings(): Promise<SettingsResponse>
-  updateSettings(patch: SettingsUpdate): Promise<SettingsResponse>
+  // persist=false applies the change to the running camera/detector without
+  // writing settings.json — the Live tab's tuning card drags sliders through
+  // this, then commits once via saveSettings().
+  updateSettings(patch: SettingsUpdate, persist?: boolean): Promise<SettingsResponse>
+  saveSettings(): Promise<SettingsResponse>
+  // The stored calibration for the currently configured camera, or
+  // { profile: null } if it has never been calibrated.
+  getCameraProfile(): Promise<StoredProfileResponse>
   getSystemInfo(): Promise<SystemInfoResponse>
   getPresets(): Promise<PresetsResponse>
   applyPreset(name: string): Promise<SettingsResponse>
@@ -205,7 +224,10 @@ export function createApiClient(port: number): ApiClient {
     stop: () => request<StateResponse>('/capture/stop', 'POST'),
     getLogs: () => request<LogsResponse>('/logs', 'GET'),
     getSettings: () => request<SettingsResponse>('/settings', 'GET'),
-    updateSettings: (patch) => request<SettingsResponse>('/settings', 'PATCH', patch),
+    updateSettings: (patch, persist = true) =>
+      request<SettingsResponse>(`/settings${persist ? '' : '?persist=false'}`, 'PATCH', patch),
+    saveSettings: () => request<SettingsResponse>('/settings/save', 'POST'),
+    getCameraProfile: () => request<StoredProfileResponse>('/camera/profile', 'GET'),
     getSystemInfo: () => request<SystemInfoResponse>('/system-info', 'GET'),
     getPresets: () => request<PresetsResponse>('/presets', 'GET'),
     applyPreset: (name) => request<SettingsResponse>('/settings/preset', 'POST', { name }),
