@@ -1350,10 +1350,28 @@ export const SETTINGS_GROUPS: FieldGroup[] = [
 ]
 ```
 
+**Keep the suite green in the same commit.** `AdminPanel` renders `SETTINGS_GROUPS` filtered only by the Roboflow condition, so the moment you add the three `home: 'live'` groups it would start rendering them — including `camera_autofocus`, whose new `'boolean'` type has no branch in `AdminPanel`'s `renderField` and would fall through to the number input. Task 13 adds the real filter, but one line of it has to land here. In `desktop/src/renderer/src/views/AdminPanel.tsx`, change:
+
+```tsx
+  const visibleGroups = SETTINGS_GROUPS.filter(
+    (g) => g.label !== 'Roboflow API backends' || backendIsRemote
+  )
+```
+
+to:
+
+```tsx
+  const visibleGroups = SETTINGS_GROUPS.filter(
+    (g) => g.home === 'admin' && (g.label !== 'Roboflow API backends' || backendIsRemote)
+  )
+```
+
+That is the whole Admin change for this task — leave the calibration card and quality readout alone; Task 13 removes those.
+
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `cd desktop && npx vitest run src/renderer/src/lib/settingsFields.test.ts && npm run typecheck`
-Expected: PASS
+Run: `cd desktop && npx vitest run src/renderer/src/lib/settingsFields.test.ts && npm test && npm run typecheck`
+Expected: PASS. The full suite matters here: this task moves five fields out of Admin's groups, so any Admin test asserting on one of them by id will now fail. Those five (`conf_threshold`, `infer_frame_skip`, `preview_height`, `preview_max_fps`, `track_expiry_s`) move to the Live tab in Task 13 and their coverage moves with them — delete or retarget the failing assertions, and name every one you touched in your report.
 
 - [ ] **Step 5: Commit**
 
