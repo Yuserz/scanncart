@@ -328,9 +328,11 @@ describe('stored profile', () => {
       height: 720,
       fps_auto_exposure: 29.9,
       fps_capped_exposure: 30.8,
-      controls: { brightness: true, exposure: true, gain: false, focus: false },
+      controls: { brightness: true, exposure: true, gain: false, focus: false, autofocus: true },
       recommended: {},
-      measured_at: 1
+      measured_at: 1,
+      measured: {},
+      sweep_version: 1
     }
     const { deps } = makeDeps({ getCameraProfile: vi.fn(async () => ({ profile })) })
 

@@ -114,11 +114,25 @@ export interface CameraQualityResponse {
 
 // Which physical device controls the camera actually accepted during
 // calibration (a StreamCam commonly lacks gain/focus control, for instance).
+// Mirrors sidecar/app/camera_caps.py::ControlSupport. `autofocus` is measured
+// by probe_autofocus, not asked of the driver.
 export interface CameraControlSupport {
   brightness: boolean
   exposure: boolean
   gain: boolean
   focus: boolean
+  autofocus: boolean
+}
+
+// One entry of CameraProfile.measured: what the sweep found for one control.
+// `baseline` is the metric before the sweep, so the card can show the
+// improvement rather than a bare number.
+export interface MeasuredControl {
+  value: number
+  metric: number
+  baseline: number
+  reached: boolean
+  probes: number
 }
 
 // Mirrors sidecar/app/schemas.py::CameraProfileResponse. Applies nothing on
@@ -135,6 +149,9 @@ export interface CameraProfileResponse {
   controls: CameraControlSupport
   recommended: Record<string, unknown>
   measured_at: number
+  measured: Record<string, MeasuredControl>
+  // 0 = calibrated before levels were measured, not "nothing is supported".
+  sweep_version: number
 }
 
 // Mirrors sidecar/app/schemas.py::StoredProfileResponse. `profile` is null

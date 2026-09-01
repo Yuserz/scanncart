@@ -184,3 +184,25 @@ def test_resolve_camera_name_falls_back_when_fewer_names_than_index(tmp_path):
     state.settings.camera_index = 1
 
     assert _resolve_camera_name(state) == "Camera 1"
+
+
+def test_the_calibrate_response_carries_the_measured_evidence():
+    """CameraProfileResponse(**asdict(profile)) silently drops fields the
+    model does not declare, so a schema that lags the dataclass loses data
+    with no error anywhere."""
+    profile = CameraProfile(
+        device_key="StreamCam:0:1280x720", backend="msmf", width=1280, height=720,
+        fps_auto_exposure=30.0, fps_capped_exposure=29.0,
+        controls=ControlSupport(exposure=True, autofocus=True),
+        measured={"camera_exposure": {"value": -7.0, "metric": 129.0,
+                                      "baseline": 23.0, "reached": True, "probes": 4}},
+        sweep_version=1,
+    )
+    state = AppState(calibrator=lambda: profile, db_path=":memory:")
+
+    with TestClient(build_app(lambda: state)) as client:
+        body = client.post("/api/camera/calibrate").json()
+
+    assert body["sweep_version"] == 1
+    assert body["measured"]["camera_exposure"]["value"] == -7.0
+    assert body["controls"]["autofocus"] is True

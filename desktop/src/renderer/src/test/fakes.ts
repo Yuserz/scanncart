@@ -91,9 +91,11 @@ export function makeDeps(overrides: Partial<ApiClient> = {}): {
       height: 720,
       fps_auto_exposure: 12.3,
       fps_capped_exposure: 30.3,
-      controls: { brightness: true, exposure: true, gain: false, focus: false },
+      controls: { brightness: true, exposure: true, gain: false, focus: false, autofocus: true },
       recommended: { camera_exposure: -6, camera_brightness: 180 },
-      measured_at: 1
+      measured_at: 1,
+      measured: {},
+      sweep_version: 1
     })),
     applyCameraProfile: vi.fn(async () => baseSettings()),
     saveSettings: vi.fn(async () => baseSettings()),

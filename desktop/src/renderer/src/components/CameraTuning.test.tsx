@@ -18,9 +18,11 @@ const PROFILE: CameraProfileResponse = {
   height: 720,
   fps_auto_exposure: 29.9,
   fps_capped_exposure: 30.8,
-  controls: { brightness: true, exposure: true, gain: false, focus: false },
+  controls: { brightness: true, exposure: true, gain: false, focus: false, autofocus: true },
   recommended: { camera_exposure: -6 },
-  measured_at: 1
+  measured_at: 1,
+  measured: {},
+  sweep_version: 1
 }
 
 function renderCard(overrides: Partial<ApiClient> = {}, running = true): ReturnType<typeof render> {

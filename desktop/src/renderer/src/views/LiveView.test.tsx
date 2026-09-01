@@ -14,9 +14,11 @@ const PROFILE: CameraProfileResponse = {
   height: 720,
   fps_auto_exposure: 30,
   fps_capped_exposure: 30,
-  controls: { brightness: true, exposure: true, gain: false, focus: true },
+  controls: { brightness: true, exposure: true, gain: false, focus: true, autofocus: true },
   recommended: {},
-  measured_at: 1
+  measured_at: 1,
+  measured: {},
+  sweep_version: 1
 }
 
 function frameWith(dets: FrameMessage['detections']): FrameMessage {

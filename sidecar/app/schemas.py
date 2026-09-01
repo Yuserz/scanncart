@@ -240,6 +240,7 @@ class ControlSupportPayload(BaseModel):
     exposure: bool = False
     gain: bool = False
     focus: bool = False
+    autofocus: bool = False
 
 
 class CameraProfileResponse(BaseModel):
@@ -252,6 +253,14 @@ class CameraProfileResponse(BaseModel):
     controls: ControlSupportPayload
     recommended: dict = {}
     measured_at: float = 0.0
+    # Evidence per control: value, metric, baseline, reached, probes. Mirrors
+    # CameraProfile.measured — this model is built with **asdict(profile) and
+    # Pydantic drops unknown keys silently, so a field missing here vanishes
+    # between the sidecar and the UI with no error raised.
+    measured: dict = {}
+    # 0 means the profile predates the sweep, which the card must report
+    # differently from "this camera responded to nothing".
+    sweep_version: int = 0
 
 
 class StoredProfileResponse(BaseModel):
