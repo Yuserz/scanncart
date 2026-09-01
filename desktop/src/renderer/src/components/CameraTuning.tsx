@@ -169,6 +169,12 @@ export function CameraTuning({
     }
   }
 
+  // A stored profile from before the sweep existed. Its empty `recommended`
+  // means "we never looked", not "this camera responded to nothing" — and
+  // the fix for one is re-calibrating while the fix for the other is a
+  // different camera.
+  const profileIsStale = storedProfile !== null && storedProfile.sweep_version === 0
+
   const renderField = (field: FieldMeta): JSX.Element => {
     // Writing a focus value while autofocus is on is meaningless: the device
     // immediately hunts away from it.
@@ -302,6 +308,12 @@ export function CameraTuning({
 
         <section className="tuning-group" hidden={!open}>
           <h5>Calibration</h5>
+          {profileIsStale && !busy && (
+            <p className="field-hint" data-testid="tuning-stale-profile">
+              This camera was calibrated before we measured control levels. Re-calibrate to get
+              recommended values.
+            </p>
+          )}
           <button
             type="button"
             className="btn-outline btn-small"
@@ -372,17 +384,26 @@ export function CameraTuning({
               </p>
               {Object.keys(profile.recommended).length === 0 ? (
                 <p className="field-hint" data-testid="tuning-no-recommendation">
-                  No settings to change: this camera did not respond to any of the controls we can
-                  set.
+                  Nothing to change: this camera ignored every control we can set, or there was no
+                  item in view for the focus sweep to find.
                 </p>
               ) : (
                 <>
-                  <ul>
-                    {Object.entries(profile.recommended).map(([k, v]) => (
-                      <li key={k}>
-                        {k}: {String(v)}
-                      </li>
-                    ))}
+                  <ul data-testid="tuning-evidence">
+                    {Object.entries(profile.recommended).map(([k, v]) => {
+                      const m = profile.measured?.[k]
+                      return (
+                        <li key={k}>
+                          {k}: {String(v)}
+                          {m && (
+                            <span className="field-hint">
+                              {' '}
+                              — {m.metric} (was {m.baseline}){m.reached ? '' : ', best available'}
+                            </span>
+                          )}
+                        </li>
+                      )
+                    })}
                   </ul>
                   <button
                     className="btn-primary btn-small"

@@ -620,3 +620,84 @@ describe('the staged scene gate', () => {
     expect(await screen.findByTestId('tuning-phases')).toHaveTextContent('focus')
   })
 })
+
+describe('the review card', () => {
+  const SWEPT = {
+    ...PROFILE,
+    sweep_version: 1,
+    recommended: { camera_focus: 400 },
+    measured: {
+      camera_focus: { value: 400, metric: 84.2, baseline: 31.5, reached: true, probes: 9 }
+    }
+  }
+
+  it('shows what each value achieved, not just the value', async () => {
+    // Review-first is only meaningful if the operator can see the evidence.
+    const { deps } = makeDeps({
+      getCameraProfile: async () => ({ profile: PROFILE }),
+      calibrateCamera: async () => SWEPT
+    })
+    render(
+      <CameraTuning
+        port={9000}
+        running={true}
+        start={async () => {}}
+        stop={async () => {}}
+        debounceMs={0}
+        deps={{ ...deps, pollHealth: false, pollCameras: false }}
+      />
+    )
+    await userEvent.click(await screen.findByTestId('tuning-calibrate'))
+    await userEvent.click(await screen.findByTestId('tuning-scene-ready'))
+
+    const evidence = await screen.findByTestId('tuning-evidence')
+    expect(evidence).toHaveTextContent('84.2')
+    expect(evidence).toHaveTextContent('31.5')
+  })
+
+  it('says a peak could not be found rather than inventing one', async () => {
+    // A flat sharpness curve means nothing was in frame — the failure the
+    // scene gate exists to prevent.
+    const { deps } = makeDeps({
+      getCameraProfile: async () => ({ profile: PROFILE }),
+      calibrateCamera: async () => ({ ...SWEPT, recommended: {}, measured: {} })
+    })
+    render(
+      <CameraTuning
+        port={9000}
+        running={true}
+        start={async () => {}}
+        stop={async () => {}}
+        debounceMs={0}
+        deps={{ ...deps, pollHealth: false, pollCameras: false }}
+      />
+    )
+    await userEvent.click(await screen.findByTestId('tuning-calibrate'))
+    await userEvent.click(await screen.findByTestId('tuning-scene-ready'))
+
+    expect(await screen.findByTestId('tuning-no-recommendation')).toHaveTextContent(/item in view/i)
+  })
+
+  it('tells the operator an old profile predates level measurement', async () => {
+    // Otherwise sweep_version 0 reads as "this camera responded to nothing",
+    // which is a completely different thing to do about it.
+    const { deps } = makeDeps({
+      getCameraProfile: async () => ({
+        profile: { ...PROFILE, sweep_version: 0, recommended: {}, measured: {} }
+      })
+    })
+    render(
+      <CameraTuning
+        port={9000}
+        running={true}
+        start={async () => {}}
+        stop={async () => {}}
+        debounceMs={0}
+        deps={{ ...deps, pollHealth: false, pollCameras: false }}
+      />
+    )
+    await userEvent.click(await screen.findByRole('button', { name: /Camera tuning/ }))
+
+    expect(await screen.findByTestId('tuning-stale-profile')).toBeInTheDocument()
+  })
+})

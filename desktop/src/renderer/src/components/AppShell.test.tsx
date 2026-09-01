@@ -87,6 +87,9 @@ function bodyForUrl(url: string): unknown {
   if (url.includes('/api/camera/profile/apply')) {
     return bodyForUrl('/api/settings')
   }
+  if (url.includes('/api/camera/profile')) {
+    return { profile: null }
+  }
   return {}
 }
 
