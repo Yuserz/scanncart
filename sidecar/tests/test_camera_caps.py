@@ -565,13 +565,24 @@ def test_a_control_whose_frames_never_arrive_is_omitted_rather_than_scored():
 def test_a_failed_probe_does_not_take_down_the_other_controls():
     """sweep_controls wraps exposure, focus, and brightness in three separate
     try/except ProbeUnavailable blocks, not one around the whole function.
-    Every other omission test above uses `lambda: None`, which fails all
-    three probes identically and would not notice if those guards were
-    collapsed into a single try/except — this fails only the focus probe by
-    going dark exclusively right after CAP_PROP_FOCUS is written, and checks
-    that exposure still comes back with a real, correct value."""
+
+    Sweep order is exposure -> focus -> brightness. Asserting only that
+    exposure (which runs BEFORE focus) survives a focus failure doesn't
+    discriminate: a single try/except wrapping the whole function would
+    also leave exposure's already-written result sitting in `measured`
+    when focus's exception is caught, and `return measured` would hand
+    back the same dict. The only way to prove the three guards are
+    independent is to check a control that runs AFTER the failing one —
+    brightness must still get its own, real, correct value, which only
+    happens if focus's ProbeUnavailable was swallowed by its own handler
+    and execution fell through to the brightness block rather than
+    jumping straight to `return measured`.
+
+    Fails only the focus probe by going dark exclusively right after
+    CAP_PROP_FOCUS is written; exposure and brightness use the normal
+    reader throughout."""
     cap = _SweepCap()
-    support = ControlSupport(exposure=True, focus=True, autofocus=True)
+    support = ControlSupport(exposure=True, focus=True, brightness=True, autofocus=True)
     base = _sweep_reader(cap)
 
     def flaky_reader():
@@ -584,3 +595,10 @@ def test_a_failed_probe_does_not_take_down_the_other_controls():
     assert "camera_focus" not in measured
     assert "camera_exposure" in measured
     assert measured["camera_exposure"]["value"] == -7
+    # camera_brightness only appears with a real, correctly-searched value if
+    # execution reached its block at all — the collapse this test targets
+    # would jump straight from focus's exception to `return measured`,
+    # omitting this key entirely rather than getting its value wrong.
+    assert "camera_brightness" in measured
+    assert measured["camera_brightness"]["value"] == 64
+    assert measured["camera_brightness"]["reached"] is True
