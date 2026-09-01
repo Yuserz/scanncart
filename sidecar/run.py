@@ -16,19 +16,30 @@ os.environ.setdefault("YOLO_AUTOINSTALL", "false")
 from app.main import build_app  # noqa: E402 - must follow the env guard above
 
 
-def pick_port(preferred: int) -> int:
+def bind_port(preferred: int) -> socket.socket:
+    """Bind and listen, and hand back the live socket.
+
+    Deliberately not "pick a port, close it, let uvicorn bind it again".
+    Announcing a port nothing is listening on yet is a race the renderer
+    loses: main/index.ts forwards SIDECAR_PORT the instant it is printed, the
+    AppShell mounts, and the settings hook's one-shot load lands on a port
+    that is not accepting — a bare "Failed to fetch" with no retry behind it.
+    Handing uvicorn a socket that is already listening means the kernel
+    queues that connection in the backlog instead of refusing it, so an early
+    request waits rather than failing.
+
+    It also closes the window where another process took the port between our
+    test bind and uvicorn's real one.
+    """
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         s.bind(("127.0.0.1", preferred))
-        s.close()
-        return preferred
     except OSError:
         s.close()
-        s2 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s2.bind(("127.0.0.1", 0))
-        port = s2.getsockname()[1]
-        s2.close()
-        return port
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.bind(("127.0.0.1", 0))
+    s.listen(128)
+    return s
 
 
 def watch_parent(poll_s: float = 2.0) -> None:
@@ -83,9 +94,11 @@ def watch_parent(poll_s: float = 2.0) -> None:
 def main() -> None:
     import uvicorn
     watch_parent()
-    port = pick_port(8765)
+    sock = bind_port(8765)
+    port = sock.getsockname()[1]
     print(f"SIDECAR_PORT={port}", flush=True)
-    uvicorn.run(build_app(), host="127.0.0.1", port=port)
+    config = uvicorn.Config(build_app(), host="127.0.0.1", port=port)
+    uvicorn.Server(config).run(sockets=[sock])
 
 
 if __name__ == "__main__":
