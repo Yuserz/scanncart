@@ -213,6 +213,19 @@ export function createApiClient(port: number): ApiClient {
           }
     const res = await fetch(`${base}${path}`, init)
     if (!res.ok) {
+      // The sidecar puts the actionable half of every refusal in `detail` —
+      // "Calibration is in progress; the camera is exclusive", "Cannot change
+      // [...] while capture is running; stop capture first". Throwing the bare
+      // status discarded exactly the sentence that tells an operator what to
+      // do, leaving them with "failed: 409". FastAPI's own validation errors
+      // put a list there instead, which is for us, not them — fall back.
+      let detail: unknown
+      try {
+        detail = (await res.json())?.detail
+      } catch {
+        // Not a JSON body; the status line is all there is.
+      }
+      if (typeof detail === 'string' && detail !== '') throw new Error(detail)
       throw new Error(`sidecar ${method} ${path} failed: ${res.status}`)
     }
     return (await res.json()) as T

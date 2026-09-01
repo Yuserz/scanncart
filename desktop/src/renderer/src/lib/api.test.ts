@@ -49,9 +49,11 @@ describe('createApiClient', () => {
   })
 
   it('rejects with a useful error on non-OK response', async () => {
+    // "Useful" is the sidecar's sentence, not the status code — see the
+    // detail-handling block below.
     mockFetchOnce({ detail: 'boom' }, false, 500)
     const api = createApiClient(8765)
-    await expect(api.health()).rejects.toThrow(/500/)
+    await expect(api.health()).rejects.toThrow(/boom/)
   })
 
   it('getLogs() GETs /api/logs and returns parsed JSON', async () => {
@@ -197,5 +199,46 @@ describe('live tuning endpoints', () => {
     )
 
     await expect(createApiClient(9000).getCameraProfile()).resolves.toEqual({ profile: null })
+  })
+})
+
+describe('what a failed request tells the operator', () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it("uses the sidecar's own explanation rather than a bare status", async () => {
+    // The sidecar answers a start during calibration with a 409 whose detail
+    // says what to do about it. Throwing only the status turned that into
+    // "sidecar POST /capture/start failed: 409" in the banner.
+    mockFetchOnce(
+      { detail: 'Calibration is in progress; the camera is exclusive. Wait for it to finish.' },
+      false,
+      409
+    )
+    await expect(createApiClient(9000).start()).rejects.toThrow(
+      /Calibration is in progress; the camera is exclusive/
+    )
+  })
+
+  it('falls back to the status when there is no usable detail', async () => {
+    // FastAPI's request-validation errors put a list in `detail` — that is
+    // for us, not for the operator.
+    mockFetchOnce({ detail: [{ loc: ['body', 'camera_index'], msg: 'wrong' }] }, false, 422)
+    await expect(createApiClient(9000).start()).rejects.toThrow(/failed: 422/)
+  })
+
+  it('falls back to the status when the body is not JSON at all', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: false,
+        status: 500,
+        json: async () => {
+          throw new SyntaxError('Unexpected token < in JSON')
+        }
+      }))
+    )
+    await expect(createApiClient(9000).start()).rejects.toThrow(/failed: 500/)
   })
 })
