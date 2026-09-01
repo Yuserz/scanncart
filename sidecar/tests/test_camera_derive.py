@@ -16,7 +16,13 @@ def _profile(**over):
 
 def test_a_dark_streamcam_gets_exposure_capped_and_brightness_raised():
     """The measured case: 12 fps on auto exposure, 30 with it capped."""
-    patch = derive_camera_settings(_profile(), measured_brightness=23.0)
+    patch = derive_camera_settings(
+        _profile(
+            controls=ControlSupport(brightness=True, exposure=True, gain=False,
+                                     focus=False, autofocus=True)
+        ),
+        measured_brightness=23.0,
+    )
 
     assert patch["camera_exposure"] is not None
     assert patch["camera_brightness"] is not None
@@ -89,3 +95,94 @@ def test_a_consistent_near_and_far_confidence_leaves_imgsz_alone():
         _profile(), measured_brightness=130.0, near_conf=0.85, far_conf=0.80, imgsz=640
     )
     assert "imgsz" not in patch
+
+
+def test_a_measured_exposure_is_preferred_over_the_hardcoded_constant():
+    """EXPOSURE_CAPPED was a guess standing in for a sweep that did not
+    exist. Where one has run, its answer wins."""
+    patch = derive_camera_settings(
+        _profile(
+            controls=ControlSupport(exposure=True, autofocus=True),
+            measured={"camera_exposure": {"value": -8.0, "metric": 128.0,
+                                          "baseline": 23.0, "reached": True}},
+            sweep_version=1,
+        ),
+        measured_brightness=23.0,
+    )
+
+    assert patch["camera_exposure"] == -8.0
+
+
+def test_a_measured_focus_is_recommended():
+    patch = derive_camera_settings(
+        _profile(
+            controls=ControlSupport(focus=True, autofocus=True),
+            measured={"camera_focus": {"value": 400.0, "metric": 92.0,
+                                       "baseline": 31.0, "reached": True}},
+            sweep_version=1,
+        ),
+        measured_brightness=130.0,
+    )
+
+    assert patch["camera_focus"] == 400.0
+
+
+def test_focus_is_withheld_when_the_autofocus_lock_will_not_take():
+    """The lens hunts straight off it. Recommending it anyway would be
+    confidently wrong, which is worse than recommending nothing."""
+    patch = derive_camera_settings(
+        _profile(
+            controls=ControlSupport(focus=True, autofocus=False),
+            measured={"camera_focus": {"value": 400.0, "metric": 92.0,
+                                       "baseline": 31.0, "reached": True}},
+            sweep_version=1,
+        ),
+        measured_brightness=130.0,
+    )
+
+    assert "camera_focus" not in patch
+    assert "camera_autofocus" not in patch
+
+
+def test_autofocus_is_only_locked_on_a_device_that_honours_the_lock():
+    """It used to be proposed off a proxy — 'some other control worked'."""
+    patch = derive_camera_settings(
+        _profile(controls=ControlSupport(brightness=True, autofocus=True)),
+        measured_brightness=130.0,
+    )
+    assert patch["camera_autofocus"] is False
+
+    patch = derive_camera_settings(
+        _profile(controls=ControlSupport(brightness=True, autofocus=False)),
+        measured_brightness=130.0,
+    )
+    assert "camera_autofocus" not in patch
+
+
+def test_an_old_profile_still_yields_the_constant_based_recommendation():
+    """sweep_version 0 profiles predate the sweep. derive stays total: they
+    get the old behaviour rather than nothing."""
+    patch = derive_camera_settings(
+        _profile(controls=ControlSupport(brightness=True, exposure=True, autofocus=True)),
+        measured_brightness=23.0,
+    )
+
+    assert patch["camera_exposure"] == -6.0
+    assert patch["camera_brightness"] == 180.0
+
+
+def test_a_measured_value_is_recommended_even_on_a_frame_that_is_not_dark():
+    """The constants only fired below BRIGHTNESS_MIN because a guess is only
+    worth risking on a clearly broken image. A measured optimum is not a
+    guess, so it applies whenever it exists."""
+    patch = derive_camera_settings(
+        _profile(
+            controls=ControlSupport(exposure=True, autofocus=True),
+            measured={"camera_exposure": {"value": -8.0, "metric": 128.0,
+                                          "baseline": 118.0, "reached": True}},
+            sweep_version=1,
+        ),
+        measured_brightness=118.0,
+    )
+
+    assert patch["camera_exposure"] == -8.0

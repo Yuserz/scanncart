@@ -3,14 +3,12 @@
 Pure and total: no I/O, no device. All the judgement lives here so it can be
 tested against hand-written profiles.
 
-The objective, once: when the measured frame is below BRIGHTNESS_MIN, propose
-a fixed brightness boost and (fps permitting) a capped exposure for the
-operator to review on the calibration card. This is a flat boost, not a value
-computed to land on BRIGHTNESS_TARGET: the control's units are device-specific
-and its transfer function is unknown without a dedicated brightness sweep,
-which is out of scope here. Exposure is preferred over brightness because it
-is real light rather than amplification, but it is also what costs frames, so
-the fps floor gates it.
+The objective, once: recommend the value the sweep measured. Where no sweep
+has run — a profile written before camera_search existed, or a control the
+device ignores — fall back to a flat boost below BRIGHTNESS_MIN, which is a
+guess and so is only risked on an image that is already clearly broken.
+Exposure is preferred over brightness because it is real light rather than
+amplification, but it is also what costs frames, so the fps floor gates it.
 """
 
 from app.camera_caps import CameraProfile
@@ -34,29 +32,37 @@ def derive_camera_settings(
     target_fps: float | None = None,
 ) -> dict:
     patch: dict = {}
+    measured = profile.measured or {}
 
-    # The StreamCam's smart AF/AE follows faces. A counter has none, so auto
-    # has nothing to lock onto and hunts. Lock it whenever any control that
-    # implies a settled, controllable camera is present. NOTE: this is a
-    # proxy inference, not a measured capability — ControlSupport has no
-    # `autofocus` field, and CAP_PROP_AUTOFOCUS (a distinct UVC property) is
-    # never probed by camera_caps.probe_controls.
-    if profile.controls.focus or profile.controls.exposure or profile.controls.brightness:
+    # Measured, not inferred. This used to fire whenever any control worked,
+    # as a proxy for "the camera is settled and controllable" — the code said
+    # so. probe_autofocus now answers it directly, and proposing the lock on a
+    # device that ignores the property is noise.
+    if profile.controls.autofocus:
         patch["camera_autofocus"] = False
 
-    # Relative to what the operator actually configured, exactly like the
-    # capture-fps VERDICT in main.py's /api/camera/quality — the shipped
-    # low_end preset asks for capture_fps=15, so gating on the absolute
-    # FPS_MIN=25 silently withheld camera_exposure on that hardware even
-    # when the capped-exposure rate comfortably cleared its own target.
-    # FPS_MIN remains the fallback floor when no target is supplied (e.g.
-    # existing callers/tests that predate this parameter).
     fps_floor = target_fps * 0.8 if target_fps is not None else FPS_MIN
     too_dark = measured_brightness < BRIGHTNESS_MIN
-    if too_dark and profile.controls.exposure and profile.fps_capped_exposure >= fps_floor:
+
+    # A swept value is an observation, so it applies whenever it exists. The
+    # constants below are guesses, and a guess is only worth risking on an
+    # image that is already clearly broken — hence the `too_dark` gate on
+    # those and not on these.
+    if "camera_exposure" in measured and profile.fps_capped_exposure >= fps_floor:
+        patch["camera_exposure"] = measured["camera_exposure"]["value"]
+    elif too_dark and profile.controls.exposure and profile.fps_capped_exposure >= fps_floor:
         patch["camera_exposure"] = EXPOSURE_CAPPED
-    if too_dark and profile.controls.brightness:
+
+    if "camera_brightness" in measured:
+        patch["camera_brightness"] = measured["camera_brightness"]["value"]
+    elif too_dark and profile.controls.brightness:
         patch["camera_brightness"] = BRIGHTNESS_BOOST
+
+    # Focus needs the lock to hold, or the lens wanders off the value within
+    # seconds of applying it. Withhold the lock proposal too: on a device
+    # that ignores CAP_PROP_AUTOFOCUS it buys nothing.
+    if "camera_focus" in measured and profile.controls.autofocus:
+        patch["camera_focus"] = measured["camera_focus"]["value"]
 
     # A distant item is a small item. Raising imgsz keeps more of it, and CUDA
     # made that affordable (~20 ms/frame on the custom model).
