@@ -14,6 +14,7 @@ responsible for reopening the device afterwards to get a clean state; Task
 11's `calibrate()` does exactly that.
 """
 
+import math
 import statistics
 import time
 from dataclasses import dataclass, field
@@ -22,7 +23,8 @@ from typing import Callable
 import cv2
 import numpy as np
 
-from app.camera_quality import FOCUS_DRIFT_MAX, focus_drift, frame_quality
+from app.camera_quality import BRIGHTNESS_TARGET, FOCUS_DRIFT_MAX, focus_drift, frame_quality
+from app.camera_search import SearchResult, search_for_peak, search_to_target
 
 # A control must move mean brightness by at least this much to count. Below it
 # we cannot distinguish a real effect from sensor noise.
@@ -149,6 +151,159 @@ def _sharpness(read_frame: Callable[[], np.ndarray]) -> float | None:
     keeps a single flaky read from escaping as an HTTP 500 mid-calibration."""
     frame = read_frame()
     return frame_quality(frame).sharpness if frame is not None else None
+
+
+# Bounds mirror SettingsUpdateRequest's ge/le — a value outside them is
+# rejected by the API that would have to apply it.
+EXPOSURE_RANGE = (-13.0, 0.0)
+BRIGHTNESS_RANGE = (0.0, 255.0)
+FOCUS_RANGE = (0.0, 1023.0)
+# Focus to +/- one step of this. Finer buys nothing: depth of field on a
+# fixed counter camera is far wider than 16 units.
+FOCUS_STEP = 16.0
+# Half the distance between BRIGHTNESS_MIN and BRIGHTNESS_MAX: anywhere in
+# the band the quality readout calls "ok" is a hit.
+BRIGHTNESS_TOLERANCE = 25.0
+# Sharpness must move at least this much across a focus sweep for the peak to
+# be real rather than sensor noise. A soft StreamCam frame measures ~5.
+MIN_SHARPNESS_SPAN = 10.0
+# Frames discarded after a write, then averaged, per probe. A UVC device
+# applies a control within a frame or two; averaging three rides out noise.
+SETTLE_FRAMES = 3
+AVERAGE_FRAMES = 3
+
+
+class ProbeUnavailable(RuntimeError):
+    """The device stopped delivering frames mid-probe, so this control cannot
+    be measured. Raised rather than scored, because any score would be a
+    fabricated data point the search would then optimise against."""
+
+
+def exposure_ceiling(fps_floor: float) -> int:
+    """The longest exposure, in log2 seconds, that still permits `fps_floor`.
+
+    Windows exposure is log2 seconds: a value e holds the shutter open 2^e
+    seconds and so caps delivery at 1/2^e fps. That makes the ceiling
+    arithmetic. Measuring it would mean walking the search off the framerate
+    cliff to discover where the edge was.
+    """
+    lo, hi = EXPOSURE_RANGE
+    if fps_floor <= 0:
+        return int(hi)
+    return int(max(lo, min(hi, math.floor(-math.log2(fps_floor)))))
+
+
+def _metric_probe(cap, read_frame, prop, metric_of):
+    """A probe closure: write the control, let it settle, average the metric."""
+
+    def probe(value: float) -> float:
+        cap.set(prop, value)
+        for _ in range(SETTLE_FRAMES):
+            read_frame()
+        seen = [m for m in (metric_of(read_frame) for _ in range(AVERAGE_FRAMES)) if m is not None]
+        if not seen:
+            # One retry: a single dropped read is normal right after a write.
+            seen = [m for m in (metric_of(read_frame) for _ in range(AVERAGE_FRAMES)) if m is not None]
+        if not seen:
+            raise ProbeUnavailable(f"no frames while probing property {prop}")
+        return sum(seen) / len(seen)
+
+    return probe
+
+
+def _mean_brightness(read_frame) -> float | None:
+    frame = read_frame()
+    return frame_quality(frame).brightness if frame is not None else None
+
+
+def _record(result: SearchResult, baseline: float) -> dict:
+    return {
+        "value": result.value,
+        "metric": round(result.metric, 1),
+        "baseline": round(baseline, 1),
+        "reached": result.reached,
+        "probes": result.probes,
+    }
+
+
+def sweep_controls(
+    cap,
+    read_frame: Callable[[], np.ndarray],
+    support: ControlSupport,
+    *,
+    fps_floor: float,
+) -> dict[str, dict]:
+    """Search each supported control for its best value.
+
+    Order is a dependency chain, not a preference:
+
+    1. Autofocus off, or the device hunts away from any focus value written.
+    2. Exposure onto the brightness target — sharpness is unmeasurable on a
+       badly exposed frame, because a blown-out or black image has no
+       gradient for the Laplacian to find.
+    3. Focus for the sharpness peak, now that the image is exposed properly.
+    4. Brightness, only to trim what exposure could not reach. It amplifies
+       noise along with the picture, so it goes last and does the least.
+
+    Returns evidence keyed by `Settings` field name. A control that cannot be
+    measured is omitted rather than guessed at; the caller distinguishes
+    "no recommendation" from "recommendation of zero".
+    """
+    measured: dict[str, dict] = {}
+
+    if support.autofocus:
+        cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
+
+    if support.exposure:
+        baseline = _mean_brightness(read_frame) or 0.0
+        try:
+            result = search_to_target(
+                _metric_probe(cap, read_frame, cv2.CAP_PROP_EXPOSURE, _mean_brightness),
+                lo=EXPOSURE_RANGE[0],
+                hi=float(exposure_ceiling(fps_floor)),
+                target=BRIGHTNESS_TARGET,
+                tolerance=BRIGHTNESS_TOLERANCE,
+            )
+        except ProbeUnavailable:
+            pass
+        else:
+            measured["camera_exposure"] = _record(result, baseline)
+
+    # Focus only when the lock will actually take. Otherwise the lens wanders
+    # off whatever we find, and shipping it anyway would be the worst
+    # outcome: confident and wrong.
+    if support.focus and support.autofocus:
+        baseline = _sharpness(read_frame) or 0.0
+        try:
+            result = search_for_peak(
+                _metric_probe(cap, read_frame, cv2.CAP_PROP_FOCUS, _sharpness),
+                lo=FOCUS_RANGE[0],
+                hi=FOCUS_RANGE[1],
+                step=FOCUS_STEP,
+                min_span=MIN_SHARPNESS_SPAN,
+            )
+        except ProbeUnavailable:
+            pass
+        else:
+            if result.reached:
+                measured["camera_focus"] = _record(result, baseline)
+
+    if support.brightness:
+        baseline = _mean_brightness(read_frame) or 0.0
+        try:
+            result = search_to_target(
+                _metric_probe(cap, read_frame, cv2.CAP_PROP_BRIGHTNESS, _mean_brightness),
+                lo=BRIGHTNESS_RANGE[0],
+                hi=BRIGHTNESS_RANGE[1],
+                target=BRIGHTNESS_TARGET,
+                tolerance=BRIGHTNESS_TOLERANCE,
+            )
+        except ProbeUnavailable:
+            pass
+        else:
+            measured["camera_brightness"] = _record(result, baseline)
+
+    return measured
 
 
 def _default_open(index: int, backend: int):

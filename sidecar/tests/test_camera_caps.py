@@ -3,7 +3,14 @@ import numpy as np
 import pytest
 
 from app import camera_caps
-from app.camera_caps import FOCUS_RELATIVE_THRESHOLD, ControlSupport, calibrate, probe_controls
+from app.camera_caps import (
+    FOCUS_RELATIVE_THRESHOLD,
+    ControlSupport,
+    calibrate,
+    exposure_ceiling,
+    probe_controls,
+    sweep_controls,
+)
 from app.camera_quality import FrameQuality
 
 
@@ -382,3 +389,165 @@ def test_calibrate_threads_target_fps_into_derive_camera_settings(monkeypatch):
               device_name="Fake Cam", sample_seconds=0.01, target_fps=15.0)
 
     assert captured["target_fps"] == 15.0
+
+
+def test_the_exposure_ceiling_is_arithmetic_not_measured():
+    """Exposure is log2 seconds, so value e caps delivery at 1/2^e fps. The
+    default capture_fps of 30 gives a floor of 24, and -5 is 1/32 s -> 32 fps
+    — the longest exposure that still clears it. No probe is spent finding
+    this cliff by falling off it."""
+    assert exposure_ceiling(24.0) == -5
+    assert exposure_ceiling(30.0) == -5
+    assert exposure_ceiling(12.0) == -4
+
+
+def test_the_exposure_ceiling_stays_inside_the_settable_range():
+    """SettingsUpdateRequest bounds camera_exposure to -13..0."""
+    assert exposure_ceiling(0.0) == 0
+    assert exposure_ceiling(100000.0) == -13
+
+
+class _SweepCap:
+    """A device with a known response curve for each control.
+
+    brightness rises with exposure and with brightness; sharpness peaks at
+    focus 400. Deliberately not the real physics — just monotone and unimodal
+    respectively, which is all the searches assume.
+    """
+
+    def __init__(self, support_focus=True, support_exposure=True, support_brightness=True):
+        self.exposure = -13.0
+        self.brightness = 0.0
+        self.focus = 0.0
+        self.writes: list[int] = []
+        self.support = dict(
+            focus=support_focus, exposure=support_exposure, brightness=support_brightness
+        )
+
+    def set(self, prop, value):
+        self.writes.append(prop)
+        if prop == cv2.CAP_PROP_EXPOSURE and self.support["exposure"]:
+            self.exposure = value
+        elif prop == cv2.CAP_PROP_BRIGHTNESS and self.support["brightness"]:
+            self.brightness = value
+        elif prop == cv2.CAP_PROP_FOCUS and self.support["focus"]:
+            self.focus = value
+        return True
+
+    def get(self, prop):
+        return 0.0
+
+    def level(self) -> float:
+        # 0 at exposure -13, 130 at -7, clipped to a byte.
+        return max(0.0, min(255.0, (self.exposure + 13) * 21.7 + self.brightness * 0.4))
+
+    def sharp(self) -> float:
+        return 100.0 - ((self.focus - 400) / 100.0) ** 2
+
+
+# Gain/baseline for rendering cap.sharp() into the fake frame below. cap.sharp()
+# only spans ~61..100 and is locally almost flat within one FOCUS_STEP of its
+# peak (it is a parabola's vertex) — embedded directly as a pixel value, the
+# uint8 cast that frame_quality's cv2.cvtColor performs rounds that whole
+# neighbourhood down to the same integer, turning the peak into a >150-wide
+# plateau search_for_peak cannot resolve. Rescaling the swing above its floor
+# by 10x before truncating keeps adjacent focus steps distinguishable near the
+# peak without saturating the frame elsewhere in the range.
+_FOCUS_GAIN = 10.0
+_FOCUS_GAIN_FLOOR = 60.0  # just under cap.sharp()'s minimum (~61.19), so the
+# gained amplitude never goes negative.
+
+
+def _sweep_reader(cap):
+    def read():
+        frame = np.zeros((8, 8, 3), dtype=np.uint8)
+        level = cap.level()
+        # +half/-half rather than a single modulated patch: the pair's mean
+        # stays pinned to `level` (cancels out) regardless of `half`'s size,
+        # so the brightness reading the exposure/brightness searches take
+        # from this same frame isn't biased by whatever focus happens to be
+        # doing. See the gain comment above for why `half` is scaled up
+        # rather than using cap.sharp() directly.
+        half = _FOCUS_GAIN * (cap.sharp() - _FOCUS_GAIN_FLOOR) / 2.0
+        frame[:] = int(max(0.0, min(255.0, level)))
+        # Modulate a quarter of pixels up and a different quarter down so
+        # Laplacian variance tracks cap.sharp() while the mean stays at level.
+        frame[::2, ::2] = int(max(0.0, min(255.0, level + half)))
+        frame[1::2, 1::2] = int(max(0.0, min(255.0, level - half)))
+        return frame
+    return read
+
+
+def test_the_sweep_finds_an_exposure_that_hits_the_brightness_target():
+    cap = _SweepCap(support_focus=False)
+    support = ControlSupport(exposure=True, autofocus=True)
+    measured = sweep_controls(cap, _sweep_reader(cap), support, fps_floor=24.0)
+
+    assert "camera_exposure" in measured
+    assert measured["camera_exposure"]["reached"] is True
+    # -7 lands on the target; the ceiling for a 24 fps floor is -5, so the
+    # search had room without needing to be clamped.
+    assert measured["camera_exposure"]["value"] == -7
+
+
+def test_the_sweep_never_proposes_an_exposure_that_would_break_the_fps_floor():
+    """A dark room the shutter cannot fix. Without the ceiling the search
+    walks to -1 and caps the camera at 2 fps."""
+    cap = _SweepCap(support_focus=False)
+    cap.level = lambda: 20.0
+    support = ControlSupport(exposure=True, autofocus=True)
+    measured = sweep_controls(cap, _sweep_reader(cap), support, fps_floor=24.0)
+
+    assert measured["camera_exposure"]["value"] <= -5
+    assert measured["camera_exposure"]["reached"] is False
+
+
+def test_the_sweep_finds_the_focus_with_the_highest_sharpness():
+    cap = _SweepCap(support_exposure=False, support_brightness=False)
+    support = ControlSupport(focus=True, autofocus=True)
+    measured = sweep_controls(cap, _sweep_reader(cap), support, fps_floor=24.0)
+
+    assert abs(measured["camera_focus"]["value"] - 400) <= 32
+    assert measured["camera_focus"]["baseline"] < measured["camera_focus"]["metric"]
+
+
+def test_a_control_the_device_ignores_is_never_swept():
+    """probe_controls already established support. Sweeping a deaf control
+    spends probes to discover a flat line we already knew about."""
+    cap = _SweepCap()
+    support = ControlSupport(brightness=False, exposure=False, focus=False, autofocus=False)
+    measured = sweep_controls(cap, _sweep_reader(cap), support, fps_floor=24.0)
+
+    assert measured == {}
+    assert cap.writes == []
+
+
+def test_focus_is_not_swept_when_the_autofocus_lock_will_not_take():
+    """The lens would hunt straight off whatever we measured, so the probes
+    are wasted and the answer would be confidently wrong."""
+    cap = _SweepCap()
+    support = ControlSupport(focus=True, exposure=True, autofocus=False)
+    measured = sweep_controls(cap, _sweep_reader(cap), support, fps_floor=24.0)
+
+    assert "camera_focus" not in measured
+    assert "camera_exposure" in measured
+
+
+def test_the_sweep_writes_the_autofocus_lock_before_any_focus_value():
+    """Order is a dependency, not a preference: a value written under a live
+    autofocus is hunted away from immediately."""
+    cap = _SweepCap()
+    support = ControlSupport(focus=True, autofocus=True)
+    sweep_controls(cap, _sweep_reader(cap), support, fps_floor=24.0)
+
+    assert cap.writes.index(cv2.CAP_PROP_AUTOFOCUS) < cap.writes.index(cv2.CAP_PROP_FOCUS)
+
+
+def test_a_control_whose_frames_never_arrive_is_omitted_rather_than_scored():
+    """Scoring an unreadable candidate 0 would poison a peak search into
+    choosing whichever value happened to read successfully."""
+    cap = _SweepCap()
+    support = ControlSupport(focus=True, autofocus=True)
+    measured = sweep_controls(cap, lambda: None, support, fps_floor=24.0)
+
+    assert measured == {}
