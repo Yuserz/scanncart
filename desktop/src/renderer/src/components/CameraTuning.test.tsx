@@ -378,10 +378,18 @@ describe('failures the card must not swallow', () => {
     expect(banner).toHaveAttribute('role', 'alert')
   })
 
-  it('ignores a second click during the stop and start either side of a sweep', async () => {
-    // `calibrating` covers only the sweep. The stop before it and the start
-    // after it are awaited too, and a click landing in either window used to
-    // launch a whole second overlapping sequence.
+  it('cannot start a second sweep while one is in flight', async () => {
+    // The guard used to live in handleCalibrate's `if (busy) return`, and the
+    // old version of this test proved that by bypassing the button's
+    // `disabled` attribute with fireEvent so a second click could actually
+    // re-enter the handler. Now that Calibrate only opens the gate
+    // (`setGateOpen(true)`) and the gate itself unmounts the moment `busy`
+    // becomes true (render condition `gateOpen && !busy`), a second physical
+    // click can no longer reach handleCalibrate at all — React commits
+    // `setBusy(true)` (synchronous, before handleCalibrate's first `await`)
+    // and unmounts Ready before a second click can land on it. The guard is
+    // now structural; `if (busy) return` stays in handleCalibrate as defence
+    // in depth, but it is no longer what this test is proving.
     const order: string[] = []
     let releaseStop: () => void = () => {}
     const stopped = new Promise<void>((r) => {
@@ -415,11 +423,23 @@ describe('failures the card must not swallow', () => {
     // Still inside the awaited stop() — the sweep has not begun.
     expect(order).toEqual(['stop'])
     expect(button).toBeDisabled()
+    // Ready is gone: gateOpen && !busy cannot hold mid-sequence, so there is
+    // nothing left to re-confirm.
+    expect(screen.queryByTestId('tuning-scene-ready')).toBeNull()
 
+    // fireEvent, not userEvent: deliberately bypass the `disabled` attribute
+    // so this exercises the render condition rather than the button's own
+    // disabled state.
     fireEvent.click(button)
+    // setGateOpen(true) fired, but gateOpen && !busy is still false — the
+    // gate does not reopen.
+    expect(screen.queryByTestId('tuning-scene-gate')).toBeNull()
+
     releaseStop()
 
     await waitFor(() => expect(order).toEqual(['stop', 'calibrate', 'start']))
+    // Exactly one sequence — no second stop/calibrate/start got launched.
+    expect(order).toEqual(['stop', 'calibrate', 'start'])
   })
 })
 
