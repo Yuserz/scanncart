@@ -1,5 +1,5 @@
 from app.camera_caps import CameraProfile, ControlSupport
-from app.camera_derive import derive_camera_settings
+from app.camera_derive import EXPOSURE_CAPPED, derive_camera_settings
 
 
 def _profile(**over):
@@ -186,3 +186,75 @@ def test_a_measured_value_is_recommended_even_on_a_frame_that_is_not_dark():
     )
 
     assert patch["camera_exposure"] == -8.0
+
+
+def test_a_non_dict_measured_entry_falls_back_to_the_constant_without_crashing():
+    """measured can arrive from load_profiles deserializing a hand-edited or
+    truncated camera_profiles.json, with no validation of its interior. A
+    malformed entry must read as 'not measured', not raise."""
+    patch = derive_camera_settings(
+        _profile(
+            controls=ControlSupport(exposure=True, brightness=True, autofocus=True),
+            measured={
+                "camera_exposure": "oops",
+                "camera_brightness": {"value": 200.0, "metric": 100.0,
+                                      "baseline": 20.0, "reached": True},
+            },
+            sweep_version=1,
+        ),
+        measured_brightness=23.0,
+    )
+
+    assert patch["camera_exposure"] == EXPOSURE_CAPPED
+    assert patch["camera_brightness"] == 200.0
+
+
+def test_a_measured_entry_missing_value_falls_back_to_the_constant_without_crashing():
+    patch = derive_camera_settings(
+        _profile(
+            controls=ControlSupport(exposure=True, brightness=True, autofocus=True),
+            measured={
+                "camera_exposure": {"metric": 1.0, "baseline": 1.0, "reached": True},
+                "camera_brightness": {"value": 200.0, "metric": 100.0,
+                                      "baseline": 20.0, "reached": True},
+            },
+            sweep_version=1,
+        ),
+        measured_brightness=23.0,
+    )
+
+    assert patch["camera_exposure"] == EXPOSURE_CAPPED
+    assert patch["camera_brightness"] == 200.0
+
+
+def test_a_malformed_focus_entry_is_simply_absent_where_too_dark_does_not_apply():
+    """camera_focus has no constant fallback, so a malformed entry just
+    yields no recommendation rather than a crash."""
+    patch = derive_camera_settings(
+        _profile(
+            controls=ControlSupport(focus=True, autofocus=True),
+            measured={"camera_focus": {"metric": 92.0, "baseline": 31.0, "reached": True}},
+            sweep_version=1,
+        ),
+        measured_brightness=130.0,
+    )
+
+    assert "camera_focus" not in patch
+
+
+def test_a_measured_exposure_below_the_fps_floor_is_withheld():
+    """The guard stopping a measured optimum from silently capping the
+    camera's framerate: fps_capped_exposure below the floor must withhold
+    camera_exposure even though a measured value exists."""
+    patch = derive_camera_settings(
+        _profile(
+            controls=ControlSupport(exposure=True, autofocus=True),
+            fps_capped_exposure=10.0, fps_auto_exposure=10.0,
+            measured={"camera_exposure": {"value": -8.0, "metric": 128.0,
+                                          "baseline": 23.0, "reached": True}},
+            sweep_version=1,
+        ),
+        measured_brightness=23.0,
+    )
+
+    assert "camera_exposure" not in patch

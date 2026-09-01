@@ -23,6 +23,27 @@ IMGSZ_STEP = 320
 IMGSZ_MAX = 1280
 
 
+def _measured_value(measured: dict, key: str) -> float | int | None:
+    """The numeric `value` of one measured entry, or None if the entry is
+    missing or malformed.
+
+    `measured` is not always sweep_controls' own output: it can arrive from
+    `load_profiles` deserializing a hand-edited or truncated
+    data/camera_profiles.json with no validation of its interior. A
+    malformed entry there must read as "not measured" — falling through to
+    the constant-based branch exactly as if the control had never been
+    swept — rather than raising and taking every other recommendation in
+    the patch down with it.
+    """
+    entry = measured.get(key)
+    if not isinstance(entry, dict):
+        return None
+    value = entry.get("value")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return value
+
+
 def derive_camera_settings(
     profile: CameraProfile,
     measured_brightness: float,
@@ -48,21 +69,24 @@ def derive_camera_settings(
     # constants below are guesses, and a guess is only worth risking on an
     # image that is already clearly broken — hence the `too_dark` gate on
     # those and not on these.
-    if "camera_exposure" in measured and profile.fps_capped_exposure >= fps_floor:
-        patch["camera_exposure"] = measured["camera_exposure"]["value"]
+    exposure_value = _measured_value(measured, "camera_exposure")
+    if exposure_value is not None and profile.fps_capped_exposure >= fps_floor:
+        patch["camera_exposure"] = exposure_value
     elif too_dark and profile.controls.exposure and profile.fps_capped_exposure >= fps_floor:
         patch["camera_exposure"] = EXPOSURE_CAPPED
 
-    if "camera_brightness" in measured:
-        patch["camera_brightness"] = measured["camera_brightness"]["value"]
+    brightness_value = _measured_value(measured, "camera_brightness")
+    if brightness_value is not None:
+        patch["camera_brightness"] = brightness_value
     elif too_dark and profile.controls.brightness:
         patch["camera_brightness"] = BRIGHTNESS_BOOST
 
     # Focus needs the lock to hold, or the lens wanders off the value within
     # seconds of applying it. Withhold the lock proposal too: on a device
     # that ignores CAP_PROP_AUTOFOCUS it buys nothing.
-    if "camera_focus" in measured and profile.controls.autofocus:
-        patch["camera_focus"] = measured["camera_focus"]["value"]
+    focus_value = _measured_value(measured, "camera_focus")
+    if focus_value is not None and profile.controls.autofocus:
+        patch["camera_focus"] = focus_value
 
     # A distant item is a small item. Raising imgsz keeps more of it, and CUDA
     # made that affordable (~20 ms/frame on the custom model).
