@@ -94,6 +94,10 @@ class CameraCapture:
         # called from the FastAPI request thread while read() is in flight.
         self._controls_lock = threading.Lock()
         self._pending_controls: dict[str, float | bool | None] = {}
+        # Set when a live control write is refused by the device. Not a
+        # capture failure — the stream keeps running — so it stays separate
+        # from `failure`.
+        self.control_error: str | None = None
         self._cap = None
         self._buffer = LatestFrameBuffer()
         self._thread = None
@@ -158,7 +162,16 @@ class CameraCapture:
             setattr(self, f"_{name}", value)
         # Deliberately outside the lock: cap.set() can block on some
         # backends, and holding the lock across it would stall the caller.
-        self._write_controls(self._cap, changes)
+        #
+        # Swallowed rather than raised: this runs on the capture thread, which
+        # has no handler above it. A backend that rejects one value would
+        # otherwise kill the thread mid-loop, leaving `failure` unset and
+        # `_running` true — the feed freezes with nothing to explain it. A
+        # control that will not take is not worth the stream.
+        try:
+            self._write_controls(self._cap, changes)
+        except Exception as exc:  # noqa: BLE001 - see above
+            self.control_error = f"Camera {self.index} rejected {sorted(changes)}: {exc}"
 
     def open(self) -> bool:
         self._cap = self._cap_factory(self.index)

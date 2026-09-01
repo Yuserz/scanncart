@@ -2,6 +2,7 @@ import asyncio
 import os
 import queue
 import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 from dataclasses import asdict, dataclass, field
@@ -717,19 +718,43 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
                 StreamCam (~9.5 s to open plus ~18.7 s for the 1080p mode-set,
                 plus detector setup). Inline on the event loop that froze the
                 whole sidecar: /api/health stopped answering and the renderer's
-                WebSocket could not even complete its handshake."""
-                source = state.source_factory(state.settings)
-                if hasattr(source, "open"):
-                    source.open()
-                try:
-                    return source, state.detector_factory(state.settings, state.device)
-                except RoboflowError:
-                    # `source.open()` already started the capture thread, and
-                    # frame sources expose release(), not close() — the old
-                    # getattr(source, "close") never matched, so every failed
-                    # start leaked the camera device and its thread.
-                    _release(source, "release", "close")
-                    raise
+                WebSocket could not even complete its handshake.
+
+                The detector factory (which imports ultralytics, ~7 s) is
+                started in a background thread *before* the camera opens so
+                the two costs overlap instead of stacking. Overlapping them
+                means either half can fail while the other is still building,
+                so both are resolved before anything is returned and whichever
+                one succeeded is released — otherwise a camera that fails to
+                open strands a fully loaded model, holding VRAM until GC."""
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    detector_fut = pool.submit(
+                        state.detector_factory, state.settings, state.device,
+                    )
+                    source: object | None = None
+                    source_exc: BaseException | None = None
+                    try:
+                        source = state.source_factory(state.settings)
+                        if hasattr(source, "open"):
+                            source.open()
+                    except BaseException as exc:  # noqa: BLE001 - re-raised below
+                        source_exc = exc
+                    # Always resolved, never abandoned: the pool's shutdown
+                    # waits for this call anyway, so skipping result() would
+                    # only lose the object, not the cost of building it.
+                    try:
+                        detector = detector_fut.result()
+                    except BaseException:
+                        if source is not None:
+                            # `source.open()` already started the capture
+                            # thread, and frame sources expose release(),
+                            # not close().
+                            _release(source, "release", "close")
+                        raise
+                    if source_exc is not None:
+                        _release(detector, "close")
+                        raise source_exc
+                    return source, detector
 
             try:
                 source, detector = await run_in_threadpool(_acquire)

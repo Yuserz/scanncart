@@ -7,3 +7,6 @@ graphify-out/cache/
 # sidecar/. A stray root copy is a 5.6 MB duplicate.
 /yolo11n.pt
 /yolo*.pt
+
+# Sidecar runtime logs from a manually launched `python run.py`.
+sidecar/*.log

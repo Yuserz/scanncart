@@ -353,3 +353,32 @@ def test_autofocus_is_written_before_focus_when_set_live():
         assert props.index(cv2.CAP_PROP_AUTOFOCUS) < props.index(cv2.CAP_PROP_FOCUS)
     finally:
         src.release()
+
+
+def test_a_rejected_control_write_does_not_kill_the_capture_thread():
+    """_loop has no handler above it. A backend that raises on set() would
+    otherwise end the thread mid-loop with `failure` unset and `_running`
+    still true — the feed freezes and nothing says why. Losing one control
+    is not worth losing the stream."""
+
+    class _RefusingCap(_RecordingCap):
+        def set(self, prop, value):
+            if prop == cv2.CAP_PROP_BRIGHTNESS and value == 999.0:
+                raise RuntimeError("backend refused brightness")
+            return super().set(prop, value)
+
+    cap = _RefusingCap()
+    src = CameraCapture(0, 4, 4, 30, cap_factory=lambda i: cap)
+    src.open()
+    try:
+        src.set_controls(brightness=999.0)
+        assert _wait_for(lambda: src.control_error is not None)
+        assert "brightness" in src.control_error
+        assert src.failure is None
+
+        # Still delivering frames, and still accepting later writes.
+        src.set_controls(exposure=-6.0)
+        assert _wait_for(lambda: _wrote(cap, cv2.CAP_PROP_EXPOSURE, -6.0))
+        assert src._thread.is_alive()
+    finally:
+        src.release()

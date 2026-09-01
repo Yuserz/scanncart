@@ -218,6 +218,30 @@ def test_a_detector_that_fails_at_start_releases_the_camera():
     assert st.state == "idle"
 
 
+def test_a_camera_that_fails_to_open_releases_the_detector():
+    """The detector is built on a worker thread that starts *before* the
+    camera opens, so the two waits overlap. That means a camera failure can
+    land while a model is still loading: the future must be resolved and the
+    detector closed, or every failed start strands a loaded model (VRAM on
+    CUDA) until GC."""
+    detector = OkDetector()
+
+    def bad_source(settings):
+        raise RuntimeError("camera 0 is in use by another program")
+
+    st = AppState(
+        source_factory=bad_source,
+        detector_factory=lambda s, d: detector,
+        db_path=":memory:",
+    )
+    with TestClient(build_app(lambda: st)) as client:
+        with pytest.raises(RuntimeError):
+            client.post("/api/capture/start")
+
+    assert detector.closed is True
+    assert st.state == "idle"
+
+
 # --- Normal stop ----------------------------------------------------------
 
 
