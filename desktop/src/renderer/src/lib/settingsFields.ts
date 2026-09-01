@@ -179,7 +179,7 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
   {
     key: 'infer_frame_skip',
     label: 'Frame skip',
-    hint: "Skip N frames between inferences. Higher means less CPU/GPU load but staler tracking — pair with a larger track expiry so items aren't marked 'left' between inferences.",
+    hint: 'Skip N frames between inferences. Higher = less GPU load but stale tracking. Pair with longer track expiry.',
     type: 'number',
     min: 0,
     max: 30,
@@ -188,7 +188,7 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
   {
     key: 'preview_height',
     label: 'Preview height (px)',
-    hint: 'Resolution of the JPEG preview streamed to this UI — purely visual, does not affect detection accuracy.',
+    hint: 'JPEG preview resolution — purely visual, does not affect detection.',
     type: 'number',
     min: 120,
     max: 1080,
@@ -197,7 +197,7 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
   {
     key: 'preview_max_fps',
     label: 'Preview FPS',
-    hint: 'How often the live image refreshes, independently of detection. Inference blocks for ~100-200 ms per frame, so without this the preview updated only when a detection finished — 9 fps from a 60 fps camera, with freezes up to 431 ms. Boxes still update at the detection rate, so they trail the image slightly. Each frame costs a JPEG encode; lower it if detection is starved, or 0 to refresh only on detection.',
+    hint: 'Live image refresh rate. Inference blocks ~100-200 ms, so without this preview freezes between detections. 0 = detection-only.',
     type: 'number',
     min: 0,
     max: 120,
@@ -273,7 +273,7 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
   {
     key: 'camera_brightness',
     label: 'Brightness',
-    hint: 'Boosts the image after the sensor, so it costs no framerate — but it amplifies noise along with the picture. Reach for exposure first and use this to finish. Bounds mirror the sidecar; the meaningful range is device-specific.',
+    hint: 'Post-sensor boost — no framerate cost, but amplifies noise. Try exposure first.',
     type: 'number',
     min: 0,
     max: 255,
@@ -282,7 +282,10 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
   {
     key: 'camera_exposure',
     label: 'Exposure',
-    hint: 'How long the shutter stays open, as log2 seconds: -6 is 1/64 s, -4 is 1/16 s, -2 is a quarter of a second. Each step up doubles the light and halves the framerate — -2 caps the camera at 4 fps. Watch the capture fps reading above after every change.',
+    // The capture-fps sentence is load-bearing, not padding: it is the only
+    // warning an operator gets before exposure quietly caps the camera at
+    // 4 fps. See the design doc's "Exposure can destroy framerate".
+    hint: 'Log2 seconds: -6 = 1/64 s, -2 = 1/4 s. Each step up doubles the light and halves the framerate — -2 caps the camera at 4 fps. Watch the capture fps reading above after every change.',
     type: 'number',
     min: -13,
     max: 0,
@@ -291,13 +294,13 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
   {
     key: 'camera_autofocus',
     label: 'Autofocus',
-    hint: "The StreamCam's autofocus hunts for faces, which a checkout counter does not have — it drifts off the item and back. Off, with a fixed focus, is steadier for a camera that never moves.",
+    hint: 'Hunts for faces — off is steadier for a fixed checkout camera.',
     type: 'boolean'
   },
   {
     key: 'camera_focus',
     label: 'Focus',
-    hint: 'Fixed focus distance, only meaningful with autofocus off. Lower is farther away. Adjust until the sharpness reading above stops rising.',
+    hint: 'Fixed distance, only meaningful with autofocus off. Lower is farther. Adjust until the sharpness reading above stops rising.',
     type: 'number',
     min: 0,
     max: 1023,

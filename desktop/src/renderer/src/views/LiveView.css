@@ -7,7 +7,12 @@
   background: var(--bg);
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
+  /* Row layout distributes a fixed height budget and each card scrolls
+     itself, so nothing should overflow here. The stacked layout below 900px
+     is the opposite: it drops the height budget and grows to natural content
+     height, so the page itself has to scroll or the item log and the
+     Save/Revert bar become unreachable. */
+  overflow: hidden;
   max-width: 1600px;
   width: 100%;
   margin: 0 auto;
@@ -173,6 +178,7 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+  overflow: hidden;
 }
 
 .side-rail .card {
@@ -285,6 +291,21 @@
   .side-rail {
     min-width: 0;
     width: 100%;
+    /* Content-height cards in stacked mode; clipping them here would hide
+       whatever the capped .item-log below does not. */
+    overflow: visible;
+  }
+
+  .live-view {
+    overflow-y: auto;
+  }
+
+  .tuning-card {
+    overflow: visible;
+  }
+
+  .tuning-body {
+    overflow-y: visible;
   }
 
   /* No height budget in stacked mode -- cap the log so it scrolls
