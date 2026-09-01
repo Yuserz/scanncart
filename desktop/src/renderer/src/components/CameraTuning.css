@@ -79,6 +79,11 @@
   display: flex;
   align-items: center;
   gap: 4px;
+  /* The tooltip's positioning context. Anchoring to the `?` itself and
+     centering on it put the tooltip half outside the card, where
+     .tuning-body's overflow clipped it — a two-column rail has no room to
+     centre a 180px panel on a 14px icon. */
+  position: relative;
 }
 
 .tuning-field-label label {
@@ -94,7 +99,6 @@
    a button: activating it does nothing, and announcing "button" would promise
    an action there isn't one. */
 .field-info {
-  position: relative;
   flex-shrink: 0;
   width: 14px;
   height: 14px;
@@ -125,8 +129,6 @@
   display: none;
   position: absolute;
   top: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%);
   width: 180px;
   padding: 6px 8px;
   background: var(--panel);
@@ -148,6 +150,21 @@
 .field-info:focus .field-tooltip,
 .field-info:focus-within .field-tooltip {
   display: block;
+}
+
+/* Hang the panel inward from whichever card edge the column sits against, so
+   180px always lands inside a ~250px rail. */
+.tuning-grid > .tuning-field:nth-child(odd) .field-tooltip {
+  left: 0;
+}
+
+.tuning-grid > .tuning-field:nth-child(even) .field-tooltip {
+  right: 0;
+}
+
+/* Single-column groups (Detection) have no second column to hang from. */
+.tuning-group > .tuning-field .field-tooltip {
+  left: 0;
 }
 
 .tuning-field input[type='range'] {
