@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { ApiClient, CameraProfileResponse } from '../lib/api'
 import { baseSettings, makeDeps } from '../test/fakes'
 import { CameraTuning } from './CameraTuning'
@@ -657,10 +657,25 @@ describe('the review card', () => {
 
   it('says a peak could not be found rather than inventing one', async () => {
     // A flat sharpness curve means nothing was in frame — the failure the
-    // scene gate exists to prevent.
+    // scene gate exists to prevent. Realistic profile, unlike the old
+    // fixture this replaces: `derive_camera_settings` always proposes
+    // camera_autofocus when controls.autofocus is true (camera_derive.py),
+    // so a profile with autofocus true can never actually come back with
+    // `recommended: {}` — the old fixture asserted against a combination
+    // the sidecar cannot produce. Here focus support is real (so a sweep
+    // was attempted), exposure was measured fine, and only camera_focus is
+    // missing from `measured` — the flat-curve signature.
+    const NO_FOCUS_PEAK = {
+      ...SWEPT,
+      controls: { ...PROFILE.controls, focus: true, autofocus: true },
+      recommended: { camera_autofocus: false, camera_exposure: -6 },
+      measured: {
+        camera_exposure: { value: -6, metric: 128, baseline: 60, reached: true, probes: 4 }
+      }
+    }
     const { deps } = makeDeps({
       getCameraProfile: async () => ({ profile: PROFILE }),
-      calibrateCamera: async () => ({ ...SWEPT, recommended: {}, measured: {} })
+      calibrateCamera: async () => NO_FOCUS_PEAK
     })
     render(
       <CameraTuning
@@ -675,7 +690,37 @@ describe('the review card', () => {
     await userEvent.click(await screen.findByTestId('tuning-calibrate'))
     await userEvent.click(await screen.findByTestId('tuning-scene-ready'))
 
-    expect(await screen.findByTestId('tuning-no-recommendation')).toHaveTextContent(/item in view/i)
+    expect(await screen.findByTestId('tuning-no-focus-peak')).toHaveTextContent(/item in view/i)
+    // The rest of the sweep still has something to show — this is not the
+    // "camera ignored everything" case.
+    expect(screen.queryByTestId('tuning-no-recommendation')).toBeNull()
+    expect(await screen.findByTestId('tuning-evidence')).toHaveTextContent('camera_exposure')
+  })
+
+  it('stays silent about a focus peak when focus was never swept', async () => {
+    // controls.focus is false in PROFILE/SWEPT, so no sweep of focus was
+    // even attempted — that is "device does not support it", a different
+    // fact from "nothing was in frame", and must not show the focus-peak
+    // message.
+    const { deps } = makeDeps({
+      getCameraProfile: async () => ({ profile: PROFILE }),
+      calibrateCamera: async () => SWEPT
+    })
+    render(
+      <CameraTuning
+        port={9000}
+        running={true}
+        start={async () => {}}
+        stop={async () => {}}
+        debounceMs={0}
+        deps={{ ...deps, pollHealth: false, pollCameras: false }}
+      />
+    )
+    await userEvent.click(await screen.findByTestId('tuning-calibrate'))
+    await userEvent.click(await screen.findByTestId('tuning-scene-ready'))
+
+    await screen.findByTestId('tuning-evidence')
+    expect(screen.queryByTestId('tuning-no-focus-peak')).toBeNull()
   })
 
   it('tells the operator an old profile predates level measurement', async () => {
@@ -699,6 +744,46 @@ describe('the review card', () => {
     await userEvent.click(await screen.findByRole('button', { name: /Camera tuning/ }))
 
     expect(await screen.findByTestId('tuning-stale-profile')).toBeInTheDocument()
+  })
+
+  it('clears the stale-profile banner once a calibration finishes', async () => {
+    // storedProfile drives `profileIsStale`, and calibrate() used to leave it
+    // untouched — the banner then rendered right beside the fresh evidence
+    // from the sweep that just fixed it. getCameraProfile is stateful here:
+    // the first call (on mount) answers with the old sweep_version 0
+    // profile, and every call after a successful calibrate answers with the
+    // sidecar's freshly persisted sweep_version 1 one.
+    let sweptYet = false
+    const getCameraProfile = vi.fn(async () => ({
+      profile: sweptYet
+        ? { ...PROFILE, sweep_version: 1 }
+        : { ...PROFILE, sweep_version: 0, recommended: {}, measured: {} }
+    }))
+    const { deps } = makeDeps({
+      getCameraProfile,
+      calibrateCamera: async () => {
+        sweptYet = true
+        return { ...PROFILE, sweep_version: 1 }
+      }
+    })
+    render(
+      <CameraTuning
+        port={9000}
+        running={true}
+        start={async () => {}}
+        stop={async () => {}}
+        debounceMs={0}
+        deps={{ ...deps, pollHealth: false, pollCameras: false }}
+      />
+    )
+    await userEvent.click(await screen.findByRole('button', { name: /Camera tuning/ }))
+    expect(await screen.findByTestId('tuning-stale-profile')).toBeInTheDocument()
+
+    await userEvent.click(await screen.findByTestId('tuning-calibrate'))
+    await userEvent.click(await screen.findByTestId('tuning-scene-ready'))
+
+    await screen.findByTestId('tuning-profile')
+    await waitFor(() => expect(screen.queryByTestId('tuning-stale-profile')).toBeNull())
   })
 
   it('renders a recommended key with no measured entry cleanly', async () => {

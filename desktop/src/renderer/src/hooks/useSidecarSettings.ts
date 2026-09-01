@@ -345,6 +345,16 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
     try {
       const r = await apiRef.current!.calibrateCamera()
       setProfile(r)
+      // The sidecar persists the profile before returning (main.py's
+      // calibrate handler calls save_profile first), so a refetch here
+      // picks up the sweep that just ran. Without this, `storedProfile`
+      // stays the pre-calibration copy: the stale-profile banner keeps
+      // showing right beside the fresh evidence, and `unsupported()` keeps
+      // reading support the new sweep just proved wrong until the operator
+      // hits Apply or restarts the app. Only reached on success — a failed
+      // calibration changed nothing on disk, so there is nothing to refetch.
+      const stored = await apiRef.current!.getCameraProfile()
+      setStoredProfile(stored.profile)
       return r
     } catch (e) {
       setError(errorMessage(e))

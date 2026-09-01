@@ -600,7 +600,12 @@ def test_a_failed_probe_does_not_take_down_the_other_controls():
     # would jump straight from focus's exception to `return measured`,
     # omitting this key entirely rather than getting its value wrong.
     assert "camera_brightness" in measured
-    assert measured["camera_brightness"]["value"] == 64
+    # Exposure already landed the level curve at ~130 (target) before
+    # brightness even starts, so brightness=0 (the floor) is the objectively
+    # closest value — search_to_target now checks that bound directly rather
+    # than wandering to whichever interior probe happens to land in-band
+    # first.
+    assert measured["camera_brightness"]["value"] == 0
     assert measured["camera_brightness"]["reached"] is True
 
 

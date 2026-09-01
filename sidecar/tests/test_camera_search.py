@@ -9,7 +9,9 @@ def test_binary_search_lands_on_the_target_of_a_monotone_curve():
 
     assert result.value == -7
     assert result.reached is True
-    assert result.probes <= 5
+    # 2 probes to rule out hi and lo as the answer (neither qualifies here),
+    # then 4 more narrowing the interior bracket onto -7 exactly.
+    assert result.probes == 6
 
 
 def test_binary_search_reports_a_target_it_could_not_reach():
@@ -19,6 +21,32 @@ def test_binary_search_reports_a_target_it_could_not_reach():
 
     assert result.reached is False
     assert result.metric == 20.0
+
+
+def test_binary_search_returns_the_hi_bound_when_the_target_lies_beyond_it():
+    """The exposure ceiling is exactly this shape: metric(hi) still falls
+    short of target, so hi -- the highest exposure the ceiling permits -- is
+    the correct answer, not an interior value one step inside it. This is
+    the case a constant curve (see the test above) cannot expose: it never
+    proves the search actually reaches the boundary, only that it reports
+    an unreached target somewhere."""
+    # metric(v) = 10*v + 200 -> metric(hi=-5) == 150, still short of 200.
+    result = search_to_target(lambda v: 10 * v + 200, lo=-13, hi=-5, target=200.0, tolerance=1.0)
+
+    assert result.value == -5
+    assert result.probes == 1
+    assert result.reached is False
+
+
+def test_binary_search_returns_the_lo_bound_when_the_floor_already_overshoots():
+    """Symmetric case: metric(lo) already exceeds target, so lo is the
+    closest achievable and needs no bracketing either."""
+    # metric(v) = 10*v + 200 -> metric(lo=0) == 200, already past 130.
+    result = search_to_target(lambda v: 10 * v + 200, lo=0, hi=13, target=130.0, tolerance=1.0)
+
+    assert result.value == 0
+    assert result.probes == 2
+    assert result.reached is False
 
 
 def test_binary_search_respects_its_probe_budget():

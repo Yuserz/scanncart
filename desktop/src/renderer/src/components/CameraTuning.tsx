@@ -382,10 +382,24 @@ export function CameraTuning({
                 Measured {profile.fps_auto_exposure} fps on automatic exposure,{' '}
                 {profile.fps_capped_exposure} fps with it capped.
               </p>
+              {/* Reachable exactly when a focus sweep was possible (the
+                  profile was actually swept, and the device supports both
+                  focus and the autofocus lock) but came back with no
+                  camera_focus evidence — a flat sharpness curve, meaning
+                  nothing was in frame. Distinct from "nothing recommended"
+                  below: this device may still have plenty else to show. */}
+              {profile.sweep_version >= 1 &&
+                profile.controls.focus &&
+                profile.controls.autofocus &&
+                !profile.measured?.camera_focus && (
+                  <p className="field-hint" data-testid="tuning-no-focus-peak">
+                    Couldn&apos;t find a focus peak — was an item in view? Re-run calibration with
+                    the item in frame.
+                  </p>
+                )}
               {Object.keys(profile.recommended).length === 0 ? (
                 <p className="field-hint" data-testid="tuning-no-recommendation">
-                  Nothing to change: this camera ignored every control we can set, or there was no
-                  item in view for the focus sweep to find.
+                  Nothing to change: this camera ignored every control we can set.
                 </p>
               ) : (
                 <>
