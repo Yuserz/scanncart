@@ -308,3 +308,183 @@ describe('calibration from the live tab', () => {
     expect(screen.getByTestId('tuning-apply-profile')).toBeInTheDocument()
   })
 })
+
+describe('failures the card must not swallow', () => {
+  it('shows the error when a calibration sweep fails', async () => {
+    // The card holds its own useSidecarSettings instance, so its `error` is
+    // local to it — LiveView's banner reads useSidecarStream and would never
+    // show this. Without rendering it here, a failed sweep is silent: the
+    // feed stops and restarts and nothing says why.
+    const { deps } = makeDeps({
+      getCameraProfile: async () => ({ profile: PROFILE }),
+      calibrateCamera: async () => {
+        throw new Error('camera busy')
+      }
+    })
+    render(
+      <CameraTuning
+        port={9000}
+        running={true}
+        start={async () => {}}
+        stop={async () => {}}
+        debounceMs={0}
+        deps={{ ...deps, pollHealth: false, pollCameras: false }}
+      />
+    )
+    await userEvent.click(await screen.findByTestId('tuning-calibrate'))
+
+    expect(await screen.findByTestId('tuning-error')).toHaveTextContent('camera busy')
+  })
+
+  it('shows the error even while the card is collapsed', async () => {
+    // The card starts shut. An operator who never expands it still needs to
+    // learn that the sweep they launched failed.
+    const { deps } = makeDeps({
+      getCameraProfile: async () => ({ profile: PROFILE }),
+      saveSettings: async () => {
+        throw new Error('disk full')
+      }
+    })
+    render(
+      <CameraTuning
+        port={9000}
+        running={true}
+        start={async () => {}}
+        stop={async () => {}}
+        debounceMs={0}
+        deps={{ ...deps, pollHealth: false, pollCameras: false }}
+      />
+    )
+    // Dirty the card without expanding it: the sliders live in the
+    // collapsible body, so open it, change one, then shut it again.
+    await screen.findByLabelText('Brightness')
+    const toggle = screen.getByRole('button', { name: /Camera tuning/ })
+    await userEvent.click(toggle)
+    fireEvent.change(screen.getByLabelText('Brightness'), { target: { value: '180' } })
+    await screen.findByTestId('tuning-dirty')
+    await userEvent.click(toggle)
+    await userEvent.click(screen.getByTestId('tuning-save'))
+
+    const banner = await screen.findByTestId('tuning-error')
+    expect(banner).toHaveTextContent('disk full')
+    expect(banner).toHaveAttribute('role', 'alert')
+  })
+
+  it('ignores a second click during the stop and start either side of a sweep', async () => {
+    // `calibrating` covers only the sweep. The stop before it and the start
+    // after it are awaited too, and a click landing in either window used to
+    // launch a whole second overlapping sequence.
+    const order: string[] = []
+    let releaseStop: () => void = () => {}
+    const stopped = new Promise<void>((r) => {
+      releaseStop = r
+    })
+    const { deps } = makeDeps({
+      getCameraProfile: async () => ({ profile: PROFILE }),
+      calibrateCamera: async () => {
+        order.push('calibrate')
+        return PROFILE
+      }
+    })
+    render(
+      <CameraTuning
+        port={9000}
+        running={true}
+        start={async () => {
+          order.push('start')
+        }}
+        stop={async () => {
+          order.push('stop')
+          await stopped
+        }}
+        debounceMs={0}
+        deps={{ ...deps, pollHealth: false, pollCameras: false }}
+      />
+    )
+    const button = await screen.findByTestId('tuning-calibrate')
+    await userEvent.click(button)
+    // Still inside the awaited stop() — the sweep has not begun.
+    expect(order).toEqual(['stop'])
+    expect(button).toBeDisabled()
+
+    fireEvent.click(button)
+    releaseStop()
+
+    await waitFor(() => expect(order).toEqual(['stop', 'calibrate', 'start']))
+  })
+})
+
+describe('a camera that responds to nothing', () => {
+  it('says so instead of offering an empty patch to apply', async () => {
+    const { deps } = makeDeps({
+      getCameraProfile: async () => ({ profile: PROFILE }),
+      calibrateCamera: async () => ({ ...PROFILE, recommended: {} })
+    })
+    render(
+      <CameraTuning
+        port={9000}
+        running={true}
+        start={async () => {}}
+        stop={async () => {}}
+        debounceMs={0}
+        deps={{ ...deps, pollHealth: false, pollCameras: false }}
+      />
+    )
+    await userEvent.click(await screen.findByTestId('tuning-calibrate'))
+
+    expect(await screen.findByTestId('tuning-no-recommendation')).toBeInTheDocument()
+    expect(screen.queryByTestId('tuning-apply-profile')).toBeNull()
+  })
+})
+
+describe('naming the camera being tuned', () => {
+  it('reads the device name off the stored profile rather than showing an index', async () => {
+    // Calibrate needs a visible target. Enumerating devices is not available
+    // here (it opens every camera, and the sidecar refuses it during
+    // capture), but the profile the card already fetches carries the name.
+    const { deps } = makeDeps({ getCameraProfile: async () => ({ profile: PROFILE }) })
+    render(
+      <CameraTuning
+        port={9000}
+        running={true}
+        start={async () => {}}
+        stop={async () => {}}
+        debounceMs={0}
+        deps={{ ...deps, pollHealth: false, pollCameras: false }}
+      />
+    )
+    expect(await screen.findByText('StreamCam')).toBeInTheDocument()
+  })
+
+  it('falls back to the index for a camera that has never been calibrated', async () => {
+    const { deps } = makeDeps({ getCameraProfile: async () => ({ profile: null }) })
+    render(
+      <CameraTuning
+        port={9000}
+        running={true}
+        start={async () => {}}
+        stop={async () => {}}
+        debounceMs={0}
+        deps={{ ...deps, pollHealth: false, pollCameras: false }}
+      />
+    )
+    expect(await screen.findByText('Camera 0')).toBeInTheDocument()
+  })
+})
+
+describe('field hints', () => {
+  it('exposes each hint to assistive tech instead of hiding it behind hover', async () => {
+    // The hint used to be plain visible text. Moving it into a hover tooltip
+    // put it out of reach of the keyboard and, with an aria-label over the
+    // top, out of reach of a screen reader too.
+    renderCard()
+    const brightness = await screen.findByLabelText('Brightness')
+    const describedBy = brightness
+      .closest('.tuning-field')
+      ?.querySelector('[aria-describedby]')
+      ?.getAttribute('aria-describedby')
+
+    expect(describedBy).toBe('hint-camera_brightness')
+    expect(document.getElementById(describedBy!)).toHaveTextContent('amplifies noise')
+  })
+})

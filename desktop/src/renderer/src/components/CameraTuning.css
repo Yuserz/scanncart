@@ -3,6 +3,8 @@
   flex-direction: column;
   gap: 10px;
   padding: 14px 16px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .tuning-card h4 {
@@ -10,10 +12,9 @@
   display: flex;
   align-items: baseline;
   gap: 8px;
+  flex-shrink: 0;
 }
 
-/* Borderless, inherits the heading font — reads as part of the h4, not a
-   separate button, while still being a real toggle for a11y/keyboard use. */
 .tuning-toggle {
   background: none;
   border: none;
@@ -28,7 +29,6 @@
   cursor: pointer;
 }
 
-/* Muted, smaller — secondary to the "Camera tuning" label it sits beside. */
 .tuning-camera {
   font-size: 11px;
   color: var(--dim);
@@ -37,10 +37,19 @@
   letter-spacing: normal;
 }
 
-.tuning-group {
+.tuning-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.tuning-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .tuning-group h5 {
@@ -52,23 +61,128 @@
   font-weight: 600;
 }
 
+.tuning-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 12px;
+}
+
 .tuning-field {
   display: flex;
   flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  position: relative;
+}
+
+.tuning-field-label {
+  display: flex;
+  align-items: center;
   gap: 4px;
+}
+
+.tuning-field-label label {
+  font-size: 12px;
+  color: var(--text);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Reveals its hint on hover or keyboard focus. A focusable span rather than
+   a button: activating it does nothing, and announcing "button" would promise
+   an action there isn't one. */
+.field-info {
+  position: relative;
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--dim);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: help;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.field-info:hover,
+.field-info:focus-visible {
+  border-color: var(--dim);
+  color: var(--text);
+}
+
+/* Opens downward. Upward would be clipped by .tuning-body's overflow-y for
+   every field in the first row of a group — which is most of them, in a
+   two-column grid. */
+.field-info .field-tooltip {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 180px;
+  padding: 6px 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.4;
+  color: var(--text);
+  white-space: normal;
+  text-transform: none;
+  letter-spacing: normal;
+  z-index: 10;
+  pointer-events: none;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.field-info:hover .field-tooltip,
+.field-info:focus .field-tooltip,
+.field-info:focus-within .field-tooltip {
+  display: block;
 }
 
 .tuning-field input[type='range'] {
   width: 100%;
 }
 
+.tuning-field .field-hint {
+  font-size: 10px;
+  line-height: 1.35;
+  color: var(--dim);
+  margin: 0;
+}
+
 .tuning-actions {
   display: flex;
   gap: 8px;
   align-items: center;
+  flex-shrink: 0;
+}
+
+/* Sits above the collapsible body: a sweep that fails while the card is shut
+   must still be visible. */
+.tuning-error {
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--bad, #b4453a);
+  background: rgba(180, 69, 58, 0.12);
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.4;
+  flex-shrink: 0;
 }
 
 .tuning-profile {
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--dim);
 }
