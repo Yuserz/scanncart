@@ -14,6 +14,7 @@ responsible for reopening the device afterwards to get a clean state; Task
 11's `calibrate()` does exactly that.
 """
 
+import statistics
 import time
 from dataclasses import dataclass, field
 from typing import Callable
@@ -21,7 +22,7 @@ from typing import Callable
 import cv2
 import numpy as np
 
-from app.camera_quality import frame_quality
+from app.camera_quality import FOCUS_DRIFT_MAX, focus_drift, frame_quality
 
 # A control must move mean brightness by at least this much to count. Below it
 # we cannot distinguish a real effect from sensor noise.
@@ -40,6 +41,10 @@ class ControlSupport:
     exposure: bool = False
     gain: bool = False
     focus: bool = False
+    # Measured, not inferred. camera_derive used to conclude "some control
+    # worked, so autofocus is probably lockable" — a proxy it documented as
+    # such. A swept focus value is worthless if the lock does not take.
+    autofocus: bool = False
 
 
 @dataclass
@@ -62,6 +67,45 @@ def _brightness(read_frame: Callable[[], np.ndarray], samples: int = 5) -> float
         if frame is not None:
             vals.append(frame_quality(frame).brightness)
     return sum(vals) / len(vals) if vals else 0.0
+
+
+# Pin focus somewhere mid-range for the lock test. The exact distance does
+# not matter — we are watching whether the lens stays put, not whether it is
+# sharp.
+AUTOFOCUS_PROBE_FOCUS = 300
+
+
+def probe_autofocus(cap, read_frame: Callable[[], np.ndarray], samples: int = 10) -> bool:
+    """Whether the device honours CAP_PROP_AUTOFOCUS=0.
+
+    Measured, never asked: turn autofocus off, pin a focus value, then watch
+    sharpness over a still scene. A lens still hunting moves; one that
+    accepted the lock holds. `focus_drift`/`FOCUS_DRIFT_MAX` are the same
+    stability test the calibration design uses for its focus step.
+
+    A fixed-focus camera with no autofocus at all also holds still and so
+    reports True. That is harmless — the recommendation it earns is a write
+    to a property the device ignores — and the alternative would be
+    distinguishing "no autofocus" from "locked autofocus" through a getter
+    this module treats as a liar.
+    """
+    cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
+    cap.set(cv2.CAP_PROP_FOCUS, AUTOFOCUS_PROBE_FOCUS)
+    seen = [s for s in (_sharpness(read_frame) for _ in range(samples)) if s is not None]
+    if len(seen) < 3:
+        # Too few readings to call it stable. Unmeasurable is unsupported.
+        return False
+    # A degenerate signal (no gradient at all, e.g. a uniform frame from a
+    # device that ignores every write) makes focus_drift's mean <= 0.0, and
+    # focus_drift guards that by returning 0.0 — which would then read as
+    # "perfectly stable" and pass the drift check. That is a false positive,
+    # not stability: a flat frame proves nothing about whether the lens is
+    # holding position, only that nothing was measurable. probe_controls
+    # already treats an unmeasurable focus control as unsupported for the
+    # same reason; apply that rule here too.
+    if statistics.fmean(seen) <= 0.0:
+        return False
+    return focus_drift(seen) <= FOCUS_DRIFT_MAX
 
 
 def probe_controls(cap, read_frame: Callable[[], np.ndarray]) -> ControlSupport:
@@ -93,6 +137,9 @@ def probe_controls(cap, read_frame: Callable[[], np.ndarray]) -> ControlSupport:
         support.focus = False
     else:
         support.focus = abs(after_sharp - before_sharp) >= max(before_sharp, 1.0) * FOCUS_RELATIVE_THRESHOLD
+    # Last: it writes CAP_PROP_FOCUS itself, and the focus check above needs
+    # the device's own focus behaviour undisturbed by a lock.
+    support.autofocus = probe_autofocus(cap, read_frame)
     return support
 
 

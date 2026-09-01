@@ -287,6 +287,73 @@ def test_calibrate_skips_probing_gracefully_when_the_device_wont_open():
                   device_name="Fake Cam", sample_seconds=0.01)
 
 
+class _AutofocusCap:
+    """A device that either honours CAP_PROP_AUTOFOCUS=0 or ignores it.
+
+    When it honours the lock, sharpness holds still. When it ignores it, the
+    lens keeps hunting and sharpness wanders — which is exactly what
+    focus_drift measures.
+    """
+
+    def __init__(self, honours_lock: bool):
+        self.honours_lock = honours_lock
+        self.locked = False
+        self._tick = 0
+
+    def set(self, prop, value):
+        if prop == cv2.CAP_PROP_AUTOFOCUS and self.honours_lock:
+            self.locked = value == 0
+        return True
+
+    def get(self, prop):
+        return 0.0
+
+    def sharpness_now(self) -> float:
+        self._tick += 1
+        if self.locked:
+            return 80.0
+        # Hunting: stdev/mean well above FOCUS_DRIFT_MAX.
+        return 80.0 if self._tick % 2 else 20.0
+
+
+def _sharp_reader(cap):
+    """A frame whose Laplacian variance tracks cap.sharpness_now()."""
+    def read():
+        level = cap.sharpness_now()
+        frame = np.zeros((8, 8, 3), dtype=np.uint8)
+        # A checkerboard's variance scales with its amplitude, giving
+        # frame_quality a real gradient to measure.
+        frame[::2, ::2] = int(level)
+        return frame
+    return read
+
+
+def test_autofocus_counts_as_supported_when_the_lock_actually_holds():
+    cap = _AutofocusCap(honours_lock=True)
+    assert camera_caps.probe_autofocus(cap, _sharp_reader(cap)) is True
+
+
+def test_a_device_that_ignores_the_autofocus_lock_is_not_supported():
+    """The StreamCam hunts for faces. If the lock does not take, any focus
+    value we measure is one the lens will wander off within seconds."""
+    cap = _AutofocusCap(honours_lock=False)
+    assert camera_caps.probe_autofocus(cap, _sharp_reader(cap)) is False
+
+
+def test_autofocus_is_unsupported_when_frames_cannot_be_read():
+    """An unmeasurable control is an unsupported one, never a crash — the
+    same rule the focus probe already follows."""
+    cap = _AutofocusCap(honours_lock=True)
+    assert camera_caps.probe_autofocus(cap, lambda: None) is False
+
+
+def test_probe_controls_reports_autofocus_alongside_the_rest():
+    cap = _Cap({cv2.CAP_PROP_BRIGHTNESS})
+    support = probe_controls(cap, lambda: np.full((8, 8, 3), int(cap.level), dtype=np.uint8))
+
+    assert hasattr(support, "autofocus")
+
+
 def test_calibrate_threads_target_fps_into_derive_camera_settings(monkeypatch):
     """The exposure gate in derive_camera_settings needs the operator's
     configured capture rate to be relative rather than an absolute floor
