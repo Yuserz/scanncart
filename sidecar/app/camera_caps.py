@@ -23,7 +23,7 @@ from typing import Callable
 import cv2
 import numpy as np
 
-from app.camera_quality import BRIGHTNESS_TARGET, FOCUS_DRIFT_MAX, focus_drift, frame_quality
+from app.camera_quality import BRIGHTNESS_TARGET, FOCUS_DRIFT_MAX, FPS_MIN, focus_drift, frame_quality
 from app.camera_search import SearchResult, search_for_peak, search_to_target
 
 # A control must move mean brightness by at least this much to count. Below it
@@ -49,6 +49,12 @@ class ControlSupport:
     autofocus: bool = False
 
 
+# Bumped when the sweep's algorithm or thresholds change, so older profiles
+# are known-stale without re-deriving anything. 0 means the profile predates
+# level measurement entirely.
+SWEEP_VERSION = 1
+
+
 @dataclass
 class CameraProfile:
     device_key: str
@@ -60,6 +66,11 @@ class CameraProfile:
     controls: ControlSupport
     recommended: dict = field(default_factory=dict)
     measured_at: float = 0.0
+    # Evidence: what the device actually did, per control. Kept separate from
+    # `recommended`, which is policy — that split is what lets
+    # derive_camera_settings stay pure and be re-run against a stored profile.
+    measured: dict = field(default_factory=dict)
+    sweep_version: int = 0
 
 
 def _brightness(read_frame: Callable[[], np.ndarray], samples: int = 5) -> float:
@@ -400,7 +411,17 @@ def calibrate(
                 f"Could not reopen camera {index} after probing controls."
             )
 
-        cap.set(cv2.CAP_PROP_EXPOSURE, -6)
+        # The sweep runs on the freshly reopened handle: probe_controls left
+        # every control pinned to its probe value, and searching from there
+        # would confound the search with leftover probe state.
+        fps_floor = target_fps * 0.8 if target_fps is not None else FPS_MIN
+        measured = sweep_controls(cap, read_frame, controls, fps_floor=fps_floor)
+
+        # Measure the capped rate at the exposure we will actually recommend,
+        # not at a hardcoded -6. The old number described a setting nobody was
+        # going to apply.
+        chosen_exposure = measured.get("camera_exposure", {}).get("value", -6)
+        cap.set(cv2.CAP_PROP_EXPOSURE, chosen_exposure)
         fps_capped = measure_fps(read_ok, seconds=sample_seconds)
 
         profile = CameraProfile(
@@ -409,6 +430,7 @@ def calibrate(
             fps_auto_exposure=round(fps_auto, 1),
             fps_capped_exposure=round(fps_capped, 1),
             controls=controls, measured_at=time.time(),
+            measured=measured, sweep_version=SWEEP_VERSION,
         )
         profile.recommended = derive_camera_settings(profile, brightness, target_fps=target_fps)
         return profile

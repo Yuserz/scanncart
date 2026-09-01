@@ -602,3 +602,57 @@ def test_a_failed_probe_does_not_take_down_the_other_controls():
     assert "camera_brightness" in measured
     assert measured["camera_brightness"]["value"] == 64
     assert measured["camera_brightness"]["reached"] is True
+
+
+class _OpenableSweepCap:
+    """_SweepCap with the open/read/release surface calibrate() needs.
+
+    calibrate reopens between probing and sweeping, so every open shares one
+    underlying _SweepCap — the state under test has to survive the reopen.
+    """
+
+    def __init__(self, inner):
+        self.inner = inner
+
+    def isOpened(self):
+        return True
+
+    def set(self, prop, value):
+        return self.inner.set(prop, value)
+
+    def get(self, prop):
+        return 0.0
+
+    def read(self):
+        return True, _sweep_reader(self.inner)()
+
+    def release(self):
+        pass
+
+
+def test_calibrate_records_the_measured_values_and_stamps_the_sweep_version():
+    """A profile that carries no `measured` is one taken before levels were
+    searched for — the card needs to tell that apart from a deaf camera."""
+    cap = _SweepCap()
+
+    def open_device(index, backend):
+        return _OpenableSweepCap(cap)
+
+    profile = calibrate(0, 1280, 720, open_device=open_device, sample_seconds=0.01)
+
+    assert profile.sweep_version == 1
+    assert "camera_exposure" in profile.measured
+
+
+def test_the_capped_fps_is_measured_at_the_exposure_actually_chosen():
+    """It used to be measured at a hardcoded -6 regardless of what would be
+    recommended, so the number on the review card described a setting nobody
+    was going to apply."""
+    cap = _SweepCap()
+
+    def open_device(index, backend):
+        return _OpenableSweepCap(cap)
+
+    profile = calibrate(0, 1280, 720, open_device=open_device, sample_seconds=0.01)
+
+    assert cap.exposure == profile.measured["camera_exposure"]["value"]

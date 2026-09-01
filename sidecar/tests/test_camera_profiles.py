@@ -167,3 +167,36 @@ def test_a_profile_for_a_different_resolution_does_not_match(tmp_path):
 
     with TestClient(build_app(lambda: state)) as client:
         assert client.get("/api/camera/profile").json()["profile"] is None
+
+
+def test_a_profile_written_before_the_sweep_still_loads(tmp_path):
+    """load_profiles builds CameraProfile(**value) inside a bare except that
+    drops anything raising TypeError. A new field without a default would
+    silently delete every profile already on an operator's disk."""
+    path = tmp_path / "camera_profiles.json"
+    path.write_text(
+        json.dumps(
+            {
+                "StreamCam:1:1920x1080": {
+                    "device_key": "StreamCam:1:1920x1080",
+                    "backend": "msmf",
+                    "width": 1920,
+                    "height": 1080,
+                    "fps_auto_exposure": 29.8,
+                    "fps_capped_exposure": 30.8,
+                    "controls": {"brightness": False, "exposure": False,
+                                 "gain": True, "focus": False},
+                    "recommended": {},
+                    "measured_at": 1788276483.56,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = load_profiles(str(path))
+
+    assert "StreamCam:1:1920x1080" in loaded
+    assert loaded["StreamCam:1:1920x1080"].sweep_version == 0
+    assert loaded["StreamCam:1:1920x1080"].measured == {}
+    assert loaded["StreamCam:1:1920x1080"].controls.autofocus is False
