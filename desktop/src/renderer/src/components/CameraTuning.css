@@ -203,3 +203,23 @@
   font-size: 11px;
   color: var(--dim);
 }
+
+.tuning-gate {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.tuning-gate-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.tuning-phase-list {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  color: var(--dim);
+}

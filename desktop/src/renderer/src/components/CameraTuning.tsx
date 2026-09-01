@@ -129,6 +129,11 @@ export function CameraTuning({
   // second overlapping stop/calibrate/start.
   const [busy, setBusy] = useState(false)
 
+  // The gate is shown while capture is still running on purpose: the
+  // operator frames the item using the live feed. Stopping first would ask
+  // them to aim at a picture they cannot see.
+  const [gateOpen, setGateOpen] = useState(false)
+
   // The hook records the failure in `error` and rethrows, so callers that
   // sequence around it (handleCalibrate) can react. A click handler has
   // nothing to react with, and `void` on a rejecting promise is an unhandled
@@ -302,16 +307,61 @@ export function CameraTuning({
             className="btn-outline btn-small"
             disabled={calibrating || busy}
             data-testid="tuning-calibrate"
-            onClick={() => void handleCalibrate()}
+            onClick={() => setGateOpen(true)}
             title="Stops capture, measures the camera, then starts again"
           >
             {calibrating ? <Spinner /> : null} Calibrate camera
           </button>
 
-          {calibrating && (
-            <p className="field-hint" data-testid="tuning-calibrating">
-              Measuring camera — about a minute. The feed resumes when it finishes.
-            </p>
+          {gateOpen && !busy && (
+            <div className="tuning-gate" data-testid="tuning-scene-gate">
+              <p className="field-hint">
+                Place a typical item where it will be scanned, under the lighting you&apos;ll use.
+                Use the feed to frame it. The feed stops for about 90 seconds.
+              </p>
+              {!running && (
+                <p className="field-hint">
+                  Start the feed first if you want to see what you are framing.
+                </p>
+              )}
+              <div className="tuning-gate-actions">
+                <button
+                  type="button"
+                  className="btn-primary btn-small"
+                  data-testid="tuning-scene-ready"
+                  onClick={() => {
+                    setGateOpen(false)
+                    void handleCalibrate()
+                  }}
+                >
+                  Ready
+                </button>
+                <button
+                  type="button"
+                  className="btn-outline btn-small"
+                  data-testid="tuning-scene-cancel"
+                  onClick={() => setGateOpen(false)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {busy && (
+            <div className="field-hint" data-testid="tuning-phases">
+              <p>Measuring camera — about 90 seconds. The feed resumes when it finishes.</p>
+              {/* Static, not live: the phases run in one blocking sidecar
+                  call, and streaming progress would need a transport this
+                  card does not have. Naming them still beats a bare
+                  spinner. */}
+              <ol className="tuning-phase-list">
+                <li>exposure</li>
+                <li>focus</li>
+                <li>brightness</li>
+                <li>confirming framerate</li>
+              </ol>
+            </div>
           )}
 
           {profile && !calibrating && (

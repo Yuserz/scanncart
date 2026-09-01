@@ -253,6 +253,9 @@ describe('LiveView', () => {
     expect(toggle()).toBeEnabled()
 
     await userEvent.click(screen.getByTestId('tuning-calibrate'))
+    // The staged-scene gate sits in front of the sweep now — confirm through
+    // it before the stop/calibrate/start sequence (and the busy toggle) begins.
+    await userEvent.click(await screen.findByTestId('tuning-scene-ready'))
     await waitFor(() => expect(toggle()).toBeDisabled())
 
     await act(async () => {

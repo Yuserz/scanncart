@@ -278,6 +278,9 @@ describe('calibration from the live tab', () => {
     // capture runs. The operator should not have to know that.
     const order = renderWithLifecycle()
     await userEvent.click(await screen.findByTestId('tuning-calibrate'))
+    // The staged-scene gate now sits in front of the sweep — confirm through
+    // it before the stop/calibrate/start sequence begins.
+    await userEvent.click(await screen.findByTestId('tuning-scene-ready'))
 
     await waitFor(() => expect(order).toEqual(['stop', 'calibrate', 'start']))
   })
@@ -296,6 +299,7 @@ describe('calibration from the live tab', () => {
       order
     )
     await userEvent.click(await screen.findByTestId('tuning-calibrate'))
+    await userEvent.click(await screen.findByTestId('tuning-scene-ready'))
 
     await waitFor(() => expect(order).toEqual(['stop', 'calibrate', 'start']))
   })
@@ -303,6 +307,7 @@ describe('calibration from the live tab', () => {
   it('shows the measured evidence before applying anything', async () => {
     renderWithLifecycle()
     await userEvent.click(await screen.findByTestId('tuning-calibrate'))
+    await userEvent.click(await screen.findByTestId('tuning-scene-ready'))
 
     // Review-first: the operator sees the two framerates and the proposed
     // patch, and chooses.
@@ -334,6 +339,7 @@ describe('failures the card must not swallow', () => {
       />
     )
     await userEvent.click(await screen.findByTestId('tuning-calibrate'))
+    await userEvent.click(await screen.findByTestId('tuning-scene-ready'))
 
     expect(await screen.findByTestId('tuning-error')).toHaveTextContent('camera busy')
   })
@@ -405,6 +411,7 @@ describe('failures the card must not swallow', () => {
     )
     const button = await screen.findByTestId('tuning-calibrate')
     await userEvent.click(button)
+    await userEvent.click(await screen.findByTestId('tuning-scene-ready'))
     // Still inside the awaited stop() — the sweep has not begun.
     expect(order).toEqual(['stop'])
     expect(button).toBeDisabled()
@@ -433,6 +440,7 @@ describe('a camera that responds to nothing', () => {
       />
     )
     await userEvent.click(await screen.findByTestId('tuning-calibrate'))
+    await userEvent.click(await screen.findByTestId('tuning-scene-ready'))
 
     expect(await screen.findByTestId('tuning-no-recommendation')).toBeInTheDocument()
     expect(screen.queryByTestId('tuning-apply-profile')).toBeNull()
@@ -488,5 +496,107 @@ describe('field hints', () => {
 
     expect(describedBy).toBe('hint-camera_brightness')
     expect(document.getElementById(describedBy!)).toHaveTextContent('amplifies noise')
+  })
+})
+
+describe('the staged scene gate', () => {
+  it('asks for a scene before it touches capture', async () => {
+    // The operator frames the item using the live feed, so the gate has to
+    // come before the stop, not after it.
+    const order: string[] = []
+    const { deps } = makeDeps({ getCameraProfile: async () => ({ profile: PROFILE }) })
+    render(
+      <CameraTuning
+        port={9000}
+        running={true}
+        start={async () => {
+          order.push('start')
+        }}
+        stop={async () => {
+          order.push('stop')
+        }}
+        debounceMs={0}
+        deps={{ ...deps, pollHealth: false, pollCameras: false }}
+      />
+    )
+    await userEvent.click(await screen.findByTestId('tuning-calibrate'))
+
+    expect(await screen.findByTestId('tuning-scene-gate')).toBeInTheDocument()
+    expect(order).toEqual([])
+  })
+
+  it('runs the sweep once the operator confirms the scene', async () => {
+    const order: string[] = []
+    const { deps } = makeDeps({
+      getCameraProfile: async () => ({ profile: PROFILE }),
+      calibrateCamera: async () => {
+        order.push('calibrate')
+        return PROFILE
+      }
+    })
+    render(
+      <CameraTuning
+        port={9000}
+        running={true}
+        start={async () => {
+          order.push('start')
+        }}
+        stop={async () => {
+          order.push('stop')
+        }}
+        debounceMs={0}
+        deps={{ ...deps, pollHealth: false, pollCameras: false }}
+      />
+    )
+    await userEvent.click(await screen.findByTestId('tuning-calibrate'))
+    await userEvent.click(await screen.findByTestId('tuning-scene-ready'))
+
+    await waitFor(() => expect(order).toEqual(['stop', 'calibrate', 'start']))
+  })
+
+  it('leaves capture alone when the operator backs out', async () => {
+    const order: string[] = []
+    const { deps } = makeDeps({ getCameraProfile: async () => ({ profile: PROFILE }) })
+    render(
+      <CameraTuning
+        port={9000}
+        running={true}
+        start={async () => {
+          order.push('start')
+        }}
+        stop={async () => {
+          order.push('stop')
+        }}
+        debounceMs={0}
+        deps={{ ...deps, pollHealth: false, pollCameras: false }}
+      />
+    )
+    await userEvent.click(await screen.findByTestId('tuning-calibrate'))
+    await userEvent.click(await screen.findByTestId('tuning-scene-cancel'))
+
+    expect(screen.queryByTestId('tuning-scene-gate')).toBeNull()
+    expect(order).toEqual([])
+    expect(screen.getByTestId('tuning-calibrate')).toBeEnabled()
+  })
+
+  it('names the phases so a 90-second wait is not a blank spinner', async () => {
+    const { deps } = makeDeps({
+      getCameraProfile: async () => ({ profile: PROFILE }),
+      calibrateCamera: () => new Promise(() => {})
+    })
+    render(
+      <CameraTuning
+        port={9000}
+        running={true}
+        start={async () => {}}
+        stop={async () => {}}
+        debounceMs={0}
+        deps={{ ...deps, pollHealth: false, pollCameras: false }}
+      />
+    )
+    await userEvent.click(await screen.findByTestId('tuning-calibrate'))
+    await userEvent.click(await screen.findByTestId('tuning-scene-ready'))
+
+    expect(await screen.findByTestId('tuning-phases')).toHaveTextContent('focus')
   })
 })
