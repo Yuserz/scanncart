@@ -453,6 +453,11 @@ class _SweepCap:
 # plateau search_for_peak cannot resolve. Rescaling the swing above its floor
 # by 10x before truncating keeps adjacent focus steps distinguishable near the
 # peak without saturating the frame elsewhere in the range.
+# The exact multiplier isn't load-bearing: swept in 0.5 steps, gain 9.0-12.0
+# lands search_for_peak exactly on focus 400; 6.0-8.5 lands on 384, still
+# inside the test's +/-32 assertion; <=5 or >=13 flips the result to 336 and
+# fails it. 10.0 sits in the middle of that ~[6, 12] working band, not at
+# its edge.
 _FOCUS_GAIN = 10.0
 _FOCUS_GAIN_FLOOR = 60.0  # just under cap.sharp()'s minimum (~61.19), so the
 # gained amplitude never goes negative.
@@ -463,11 +468,15 @@ def _sweep_reader(cap):
         frame = np.zeros((8, 8, 3), dtype=np.uint8)
         level = cap.level()
         # +half/-half rather than a single modulated patch: the pair's mean
-        # stays pinned to `level` (cancels out) regardless of `half`'s size,
-        # so the brightness reading the exposure/brightness searches take
-        # from this same frame isn't biased by whatever focus happens to be
-        # doing. See the gain comment above for why `half` is scaled up
-        # rather than using cap.sharp() directly.
+        # stays pinned to `level` (cancels out) as long as neither
+        # level+half nor level-half clips against [0, 255]. Near the
+        # exposure floor it does clip — e.g. at exposure -9 (level=86.8)
+        # with focus untouched (half=120 constant), level-half=-33.2 clips
+        # to 0 and the measured brightness comes back ~94.5 instead of the
+        # unbiased 86.8, a ~8-unit bias upward. The exposure tests tolerate
+        # this because the biased reading is still far enough below
+        # target=130 to land on the same side of the tolerance band (and
+        # so take the same branch) as the unbiased value would.
         half = _FOCUS_GAIN * (cap.sharp() - _FOCUS_GAIN_FLOOR) / 2.0
         frame[:] = int(max(0.0, min(255.0, level)))
         # Modulate a quarter of pixels up and a different quarter down so
@@ -551,3 +560,27 @@ def test_a_control_whose_frames_never_arrive_is_omitted_rather_than_scored():
     measured = sweep_controls(cap, lambda: None, support, fps_floor=24.0)
 
     assert measured == {}
+
+
+def test_a_failed_probe_does_not_take_down_the_other_controls():
+    """sweep_controls wraps exposure, focus, and brightness in three separate
+    try/except ProbeUnavailable blocks, not one around the whole function.
+    Every other omission test above uses `lambda: None`, which fails all
+    three probes identically and would not notice if those guards were
+    collapsed into a single try/except — this fails only the focus probe by
+    going dark exclusively right after CAP_PROP_FOCUS is written, and checks
+    that exposure still comes back with a real, correct value."""
+    cap = _SweepCap()
+    support = ControlSupport(exposure=True, focus=True, autofocus=True)
+    base = _sweep_reader(cap)
+
+    def flaky_reader():
+        if cap.writes and cap.writes[-1] == cv2.CAP_PROP_FOCUS:
+            return None
+        return base()
+
+    measured = sweep_controls(cap, flaky_reader, support, fps_floor=24.0)
+
+    assert "camera_focus" not in measured
+    assert "camera_exposure" in measured
+    assert measured["camera_exposure"]["value"] == -7
