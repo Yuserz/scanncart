@@ -69,3 +69,18 @@ def test_ternary_search_does_not_re_probe_a_value_it_already_measured():
 
     search_for_peak(probe, lo=0, hi=1023, step=16)
     assert len(calls) == len(set(calls))
+
+
+def test_ternary_search_respects_its_probe_budget():
+    """The endpoints are probed before the ternary loop begins, and used to
+    bypass the budget entirely — a caller asking for one probe got two."""
+    calls = []
+
+    def probe(v):
+        calls.append(v)
+        return 100.0 - ((v - 400) / 100.0) ** 2
+
+    for budget in (0, 1, 2, 5):
+        calls.clear()
+        search_for_peak(probe, lo=0, hi=1023, step=16, max_probes=budget)
+        assert len(calls) <= budget, f"budget {budget} spent {len(calls)}"

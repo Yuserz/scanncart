@@ -112,8 +112,13 @@ def search_for_peak(
         return cache[value]
 
     lo, hi = _snap(lo, step), _snap(hi, step)
-    at(lo)
-    at(hi)
+
+    # Probe endpoints, respecting the budget. Both are essential to detect
+    # peaks at range boundaries (e.g. focus at infinity).
+    if len(cache) < max_probes:
+        at(lo)
+    if hi != lo and len(cache) < max_probes:
+        at(hi)
 
     while hi - lo > step * 2 and len(cache) + 2 <= max_probes:
         m1 = _snap(lo + (hi - lo) / 3, step)
@@ -124,6 +129,16 @@ def search_for_peak(
             lo = m1
         else:
             hi = m2
+
+    # A zero budget buys no measurement, so report nothing was found.
+    if not cache:
+        return SearchResult(
+            value=lo,
+            metric=0.0,
+            probes=0,
+            span=0.0,
+            reached=False,
+        )
 
     best_value = max(cache, key=lambda v: cache[v])
     metrics = list(cache.values())
