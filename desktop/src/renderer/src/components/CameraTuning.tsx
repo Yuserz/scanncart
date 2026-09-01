@@ -173,7 +173,7 @@ export function CameraTuning({
   // means "we never looked", not "this camera responded to nothing" — and
   // the fix for one is re-calibrating while the fix for the other is a
   // different camera.
-  const profileIsStale = storedProfile !== null && storedProfile.sweep_version === 0
+  const profileIsStale = storedProfile?.sweep_version === 0
 
   const renderField = (field: FieldMeta): JSX.Element => {
     // Writing a focus value while autofocus is on is meaningless: the device

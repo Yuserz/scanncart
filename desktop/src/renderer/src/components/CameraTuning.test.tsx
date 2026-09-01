@@ -700,4 +700,90 @@ describe('the review card', () => {
 
     expect(await screen.findByTestId('tuning-stale-profile')).toBeInTheDocument()
   })
+
+  it('renders a recommended key with no measured entry cleanly', async () => {
+    // camera_autofocus is recommended straight from controls.autofocus and is
+    // never a swept value, so profile.measured has no entry for it — this is
+    // not a hypothetical, it happens on every device whose autofocus lock
+    // takes. The row still needs to render the value without printing
+    // "undefined" for the missing metric/baseline.
+    const WITH_UNMEASURED_KEY = {
+      ...SWEPT,
+      recommended: { camera_focus: 400, camera_autofocus: false }
+    }
+    const { deps } = makeDeps({
+      getCameraProfile: async () => ({ profile: PROFILE }),
+      calibrateCamera: async () => WITH_UNMEASURED_KEY
+    })
+    render(
+      <CameraTuning
+        port={9000}
+        running={true}
+        start={async () => {}}
+        stop={async () => {}}
+        debounceMs={0}
+        deps={{ ...deps, pollHealth: false, pollCameras: false }}
+      />
+    )
+    await userEvent.click(await screen.findByTestId('tuning-calibrate'))
+    await userEvent.click(await screen.findByTestId('tuning-scene-ready'))
+
+    const evidence = await screen.findByTestId('tuning-evidence')
+    // The swept key still shows its evidence...
+    expect(evidence).toHaveTextContent('84.2')
+    expect(evidence).toHaveTextContent('31.5')
+    // ...and the unmeasured key renders its value without inventing evidence.
+    expect(evidence).toHaveTextContent('camera_autofocus: false')
+    expect(evidence).not.toHaveTextContent('undefined')
+  })
+
+  it('flags a value that fell short of its target', async () => {
+    // The moment the operator most needs to know a value did not reach its
+    // target is exactly the moment "best available" has to show up.
+    const SHORT_OF_TARGET = {
+      ...SWEPT,
+      measured: {
+        camera_focus: { value: 400, metric: 84.2, baseline: 31.5, reached: false, probes: 9 }
+      }
+    }
+    const { deps } = makeDeps({
+      getCameraProfile: async () => ({ profile: PROFILE }),
+      calibrateCamera: async () => SHORT_OF_TARGET
+    })
+    render(
+      <CameraTuning
+        port={9000}
+        running={true}
+        start={async () => {}}
+        stop={async () => {}}
+        debounceMs={0}
+        deps={{ ...deps, pollHealth: false, pollCameras: false }}
+      />
+    )
+    await userEvent.click(await screen.findByTestId('tuning-calibrate'))
+    await userEvent.click(await screen.findByTestId('tuning-scene-ready'))
+
+    expect(await screen.findByTestId('tuning-evidence')).toHaveTextContent('best available')
+  })
+
+  it('says nothing extra when the target was reached', async () => {
+    const { deps } = makeDeps({
+      getCameraProfile: async () => ({ profile: PROFILE }),
+      calibrateCamera: async () => SWEPT
+    })
+    render(
+      <CameraTuning
+        port={9000}
+        running={true}
+        start={async () => {}}
+        stop={async () => {}}
+        debounceMs={0}
+        deps={{ ...deps, pollHealth: false, pollCameras: false }}
+      />
+    )
+    await userEvent.click(await screen.findByTestId('tuning-calibrate'))
+    await userEvent.click(await screen.findByTestId('tuning-scene-ready'))
+
+    expect(await screen.findByTestId('tuning-evidence')).not.toHaveTextContent('best available')
+  })
 })
