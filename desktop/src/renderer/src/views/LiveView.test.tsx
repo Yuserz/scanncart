@@ -1,9 +1,23 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, act, fireEvent } from '@testing-library/react'
+import { render, screen, act, fireEvent, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { LiveView } from './LiveView'
 import type { StreamDeps } from '../hooks/useSidecarStream'
 import type { StreamClientOptions, FrameMessage } from '../lib/ws'
+import type { ApiClient, CameraProfileResponse } from '../lib/api'
+import { makeDeps } from '../test/fakes'
+
+const PROFILE: CameraProfileResponse = {
+  device_key: 'Fake Cam:0:1280x720',
+  backend: 'MSMF',
+  width: 1280,
+  height: 720,
+  fps_auto_exposure: 30,
+  fps_capped_exposure: 30,
+  controls: { brightness: true, exposure: true, gain: false, focus: true },
+  recommended: {},
+  measured_at: 1
+}
 
 function frameWith(dets: FrameMessage['detections']): FrameMessage {
   return {
@@ -209,5 +223,39 @@ describe('LiveView', () => {
     render(<LiveView port={8765} deps={h.deps} />)
     await screen.findByTestId('camera-tuning')
     expect(screen.getByTestId('tuning-idle')).toBeInTheDocument()
+  })
+
+  it('will not offer Start while calibration is holding the camera', async () => {
+    // The sidecar answers a start during a sweep with a 409, so the button
+    // was offering an action that could only fail. It stayed enabled through
+    // the whole stop -> calibrate -> start sequence.
+    const h = makeHarness()
+    let releaseSweep: () => void = () => {}
+    // The card builds its own client from settingsDeps — LiveView's own
+    // apiFactory drives the stream hook and never reaches it.
+    const { deps: settingsDeps } = makeDeps({
+      calibrateCamera: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            releaseSweep = () => resolve(PROFILE)
+          })
+      ) as ApiClient['calibrateCamera']
+    })
+    h.deps.settingsDeps = { ...settingsDeps, pollHealth: false, pollCameras: false }
+    const { container } = render(<LiveView port={8765} deps={h.deps} />)
+    await screen.findByTestId('camera-tuning')
+    // By position, not by label: the sequence restarts capture, so the same
+    // button reads "Stop" by the time it is handed back.
+    const toggle = (): HTMLButtonElement =>
+      container.querySelector('.live-toolbar button') as HTMLButtonElement
+    expect(toggle()).toBeEnabled()
+
+    await userEvent.click(screen.getByTestId('tuning-calibrate'))
+    await waitFor(() => expect(toggle()).toBeDisabled())
+
+    await act(async () => {
+      releaseSweep()
+    })
+    await waitFor(() => expect(toggle()).toBeEnabled())
   })
 })

@@ -28,6 +28,10 @@ export function LiveView({ port, deps }: LiveViewProps): JSX.Element {
   // Purely presentational: start/stop block on the sidecar (model load,
   // possibly a one-time weight download), so surface that wait in the UI.
   const [pending, setPending] = useState<'start' | 'stop' | null>(null)
+  // Calibration holds the camera exclusively, so the sidecar 409s any start
+  // during it. Offering the button anyway turned a known constraint into an
+  // error banner the operator had to interpret.
+  const [cameraBusy, setCameraBusy] = useState(false)
 
   const handleToggle = async (): Promise<void> => {
     const action = running ? stop : start
@@ -60,8 +64,9 @@ export function LiveView({ port, deps }: LiveViewProps): JSX.Element {
         <button
           className={running ? 'btn-stop' : 'btn-start'}
           onClick={() => void handleToggle()}
-          disabled={pending !== null}
+          disabled={pending !== null || cameraBusy}
           aria-label={running ? 'Stop' : 'Start'}
+          title={cameraBusy ? 'Calibration is using the camera' : undefined}
         >
           {pending !== null ? (
             <>
@@ -171,6 +176,7 @@ export function LiveView({ port, deps }: LiveViewProps): JSX.Element {
             running={running}
             start={start}
             stop={stop}
+            onCameraBusy={setCameraBusy}
             deps={deps?.settingsDeps}
           />
 

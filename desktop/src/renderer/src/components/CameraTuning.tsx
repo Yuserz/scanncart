@@ -14,6 +14,10 @@ export interface CameraTuningProps {
   // host does not know the device's.
   cameraName?: string
   deps?: SettingsDeps
+  // Called when the card takes the camera exclusively, and again when it
+  // gives it back. The host owns Start/Stop and would otherwise offer a
+  // button the sidecar can only refuse.
+  onCameraBusy?: (busy: boolean) => void
   // Trailing-edge debounce for slider writes; overridden to 0 in tests.
   debounceMs?: number
 }
@@ -35,6 +39,7 @@ export function CameraTuning({
   stop,
   cameraName,
   deps,
+  onCameraBusy,
   debounceMs: debounceMsProp
 }: CameraTuningProps): JSX.Element {
   // LiveView owns capture state and passes it as `running`, so this instance
@@ -136,6 +141,13 @@ export function CameraTuning({
   // sweep releases and reopens the device twice (~60-90 s on a StreamCam).
   // Driving the lifecycle here means the operator presses one button instead
   // of learning that constraint.
+  // Tell the host across the whole sequence, not just the sweep: the camera
+  // is unavailable from the moment we stop capture until we have started it
+  // again.
+  useEffect(() => {
+    onCameraBusy?.(busy)
+  }, [busy, onCameraBusy])
+
   const handleCalibrate = async (): Promise<void> => {
     if (busy) return
     setBusy(true)
