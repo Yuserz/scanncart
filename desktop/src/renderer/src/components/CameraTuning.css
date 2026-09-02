@@ -61,10 +61,14 @@
   font-weight: 600;
 }
 
+/* One column, not two. Two columns left roughly 110px per field, which the
+   label had to share with the info affordance, the value and its unit — so
+   every label truncated to "Br...", "C...", "T...". The card body already
+   scrolls, so height is the cheaper thing to spend than legibility. */
 .tuning-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px 12px;
+  grid-template-columns: 1fr;
+  gap: 8px;
 }
 
 .tuning-field {
@@ -91,8 +95,6 @@
   color: var(--text);
   font-weight: 500;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 /* Reveals its hint on hover or keyboard focus. A focusable span rather than
@@ -154,17 +156,10 @@
 
 /* Hang the panel inward from whichever card edge the column sits against, so
    180px always lands inside a ~250px rail. */
-.tuning-grid > .tuning-field:nth-child(odd) .field-tooltip {
+/* One column, so every tooltip hangs inward from the left edge. */
+.tuning-field .field-tooltip {
   left: 0;
-}
-
-.tuning-grid > .tuning-field:nth-child(even) .field-tooltip {
-  right: 0;
-}
-
-/* Single-column groups (Detection) have no second column to hang from. */
-.tuning-group > .tuning-field .field-tooltip {
-  left: 0;
+  width: 220px;
 }
 
 .tuning-field input[type='range'] {
@@ -222,4 +217,58 @@
   margin: 4px 0 0;
   padding-left: 18px;
   color: var(--dim);
+}
+
+/* Value readout. Editable so an exact stop can be typed — see the comment on
+   the input itself. Sized to the widest value any field carries (-13, 1023). */
+.tuning-value-wrap {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.tuning-value {
+  width: 44px;
+  padding: 1px 3px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.tuning-value:hover:not(:disabled) {
+  border-color: var(--border);
+}
+
+.tuning-value:focus {
+  border-color: var(--dim);
+  background: var(--bg);
+  outline: none;
+}
+
+.tuning-value:disabled {
+  color: var(--dim);
+}
+
+/* "auto" — the sidecar is leaving this control alone. */
+.tuning-value::placeholder {
+  color: var(--dim);
+  font-style: italic;
+}
+
+.tuning-unit {
+  font-size: 10px;
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+/* An unset slider is parked mid-range; dim it so its position does not read
+   as a value that is in force. */
+.tuning-field input[type='range'].is-unset {
+  opacity: 0.45;
 }

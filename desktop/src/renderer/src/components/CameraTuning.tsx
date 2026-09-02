@@ -175,7 +175,18 @@ export function CameraTuning({
   // different camera.
   const profileIsStale = storedProfile?.sweep_version === 0
 
+  // null means "leave the camera alone" — the default for all four camera
+  // controls — so it must stay distinguishable from a real number all the way
+  // to the input, never collapsing to 0.
+  const numericOf = (key: keyof SettingsPayload): number | null => {
+    const raw = settings?.[key]
+    return raw === null || raw === undefined ? null : Number(raw)
+  }
+
+  const midpoint = (field: FieldMeta): number => ((field.min ?? 0) + (field.max ?? 0)) / 2
+
   const renderField = (field: FieldMeta): JSX.Element => {
+    const numeric = numericOf(field.key)
     // Writing a focus value while autofocus is on is meaningless: the device
     // immediately hunts away from it.
     const autofocusOn = settings?.camera_autofocus === true
@@ -199,6 +210,39 @@ export function CameraTuning({
               {field.hint}
             </span>
           </span>
+          {field.type !== 'boolean' && (
+            <span className="tuning-value-wrap">
+              {/* Editable, not a readout: exposure is 14 discrete stops and
+                  focus runs 0-1023, so landing on one by dragging is luck —
+                  and one stop of exposure is a doubling of shutter time. */}
+              <input
+                type="number"
+                className="tuning-value"
+                data-testid={`value-${field.key}`}
+                aria-label={`${field.label} value`}
+                value={numeric ?? ''}
+                placeholder="auto"
+                min={field.min}
+                max={field.max}
+                step={field.step}
+                disabled={disabled}
+                onChange={(e) => {
+                  const n = e.target.valueAsNumber
+                  if (Number.isNaN(n)) return
+                  // Clamp rather than let a fat-fingered digit become a 422
+                  // from the sidecar's own ge/le validation.
+                  const lo = field.min ?? n
+                  const hi = field.max ?? n
+                  applyDebounced(field.key, Math.min(hi, Math.max(lo, n)))
+                }}
+              />
+              {field.unit && (
+                <span className="tuning-unit" data-testid={`unit-${field.key}`}>
+                  {field.unit}
+                </span>
+              )}
+            </span>
+          )}
         </div>
         {field.type === 'boolean' ? (
           <input
@@ -212,7 +256,13 @@ export function CameraTuning({
           <input
             id={`tune-${field.key}`}
             type="range"
-            value={Number(valueOf(field.key)) || 0}
+            // An unset control sits mid-range and dimmed rather than on a
+            // bound. `Number(null) || 0` used to put brightness on its
+            // minimum and exposure on its MAXIMUM — a one-second shutter —
+            // both of which read as settings that are in force when the
+            // sidecar is in fact leaving the camera alone.
+            className={numeric === null ? 'is-unset' : undefined}
+            value={numeric ?? midpoint(field)}
             min={field.min}
             max={field.max}
             step={field.step}

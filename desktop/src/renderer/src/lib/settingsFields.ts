@@ -95,6 +95,10 @@ export interface FieldMeta {
   min?: number
   max?: number
   step?: number
+  // Rendered beside the value, not inside the label. A unit baked into the
+  // label ("Preview height (px)") truncates to "Preview hei..." in the Live
+  // tab's two-column rail, and it qualifies the number rather than the name.
+  unit?: string
 }
 
 export const SETTINGS_FIELDS: FieldMeta[] = [
@@ -187,7 +191,8 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
   },
   {
     key: 'preview_height',
-    label: 'Preview height (px)',
+    label: 'Preview height',
+    unit: 'px',
     hint: 'JPEG preview resolution — purely visual, does not affect detection.',
     type: 'number',
     min: 120,
@@ -196,7 +201,8 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
   },
   {
     key: 'preview_max_fps',
-    label: 'Preview FPS',
+    label: 'Preview rate',
+    unit: 'fps',
     hint: 'Live image refresh rate. Inference blocks ~100-200 ms, so without this preview freezes between detections. 0 = detection-only.',
     type: 'number',
     min: 0,
@@ -263,7 +269,8 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
   },
   {
     key: 'track_expiry_s',
-    label: 'Track expiry (seconds)',
+    label: 'Track expiry',
+    unit: 's',
     hint: "How long a track can go undetected before it's logged as 'left'. Too low drops items during brief occlusion or frame skips; too high keeps stale items lingering.",
     type: 'number',
     min: 0.1,

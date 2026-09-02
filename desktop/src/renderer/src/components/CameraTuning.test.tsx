@@ -872,3 +872,83 @@ describe('the review card', () => {
     expect(await screen.findByTestId('tuning-evidence')).not.toHaveTextContent('best available')
   })
 })
+
+describe('reading and setting exact values', () => {
+  it('shows the current value beside each control', async () => {
+    // A bare slider tells you nothing about where you have landed, which is
+    // the whole job of a tuning control.
+    renderCard({ getSettings: async () => baseSettings({ conf_threshold: 0.45 }) })
+
+    const value = await screen.findByTestId('value-conf_threshold')
+    expect(value).toHaveValue(0.45)
+  })
+
+  it('reads "auto" for a control the sidecar is not setting', async () => {
+    // null means "leave the camera alone". Rendering it as a number — and
+    // parking the slider at the minimum — claims a setting that is not in
+    // force: exposure would read -13, the shortest possible shutter.
+    renderCard({ getSettings: async () => baseSettings({ camera_exposure: null }) })
+
+    const value = await screen.findByTestId('value-camera_exposure')
+    expect(value).toHaveValue(null)
+    expect(value).toHaveAttribute('placeholder', 'auto')
+  })
+
+  it('does not park an unset slider at either end of its range', async () => {
+    // `Number('') || 0` put every unset control on a bound: brightness at its
+    // minimum, and exposure at its MAXIMUM — 2^0 = a one-second shutter, which
+    // would read as a camera capped near 1 fps. Both are concrete claims about
+    // a setting that is not in force.
+    renderCard({
+      getSettings: async () => baseSettings({ camera_exposure: null, camera_brightness: null })
+    })
+
+    for (const label of ['Exposure', 'Brightness']) {
+      const slider = (await screen.findByLabelText(label)) as HTMLInputElement
+      expect(Number(slider.value)).not.toBe(Number(slider.min))
+      expect(Number(slider.value)).not.toBe(Number(slider.max))
+    }
+  })
+
+  it('applies a value typed into the readout', async () => {
+    // Exposure is 14 discrete stops and focus runs 0-1023; landing on one by
+    // dragging is luck, and being one stop out costs framerate.
+    const patches: unknown[] = []
+    renderCard({
+      getSettings: async () => baseSettings({ camera_exposure: -3 }),
+      updateSettings: async (patch: unknown) => {
+        patches.push(patch)
+        return baseSettings(patch as object)
+      }
+    })
+    const value = await screen.findByTestId('value-camera_exposure')
+    fireEvent.change(value, { target: { value: '-6' } })
+
+    await waitFor(() => expect(patches).toContainEqual({ camera_exposure: -6 }))
+  })
+
+  it('clamps a typed value to the field bounds', async () => {
+    // The sidecar rejects out-of-range values with a 422; clamping here means
+    // a fat-fingered digit does not become an error banner.
+    const patches: unknown[] = []
+    renderCard({
+      updateSettings: async (patch: unknown) => {
+        patches.push(patch)
+        return baseSettings(patch as object)
+      }
+    })
+    const value = await screen.findByTestId('value-camera_brightness')
+    fireEvent.change(value, { target: { value: '900' } })
+
+    await waitFor(() => expect(patches).toContainEqual({ camera_brightness: 255 }))
+  })
+
+  it('shows the unit beside the value rather than inside the label', async () => {
+    // "Preview height (px)" truncates to "Preview hei..." in a two-column
+    // rail; the unit belongs with the number it qualifies.
+    renderCard()
+    await screen.findByLabelText('Preview height')
+
+    expect(screen.getByTestId('unit-preview_height')).toHaveTextContent('px')
+  })
+})
