@@ -186,7 +186,7 @@ def test_resolve_camera_name_falls_back_when_fewer_names_than_index(tmp_path):
     assert _resolve_camera_name(state) == "Camera 1"
 
 
-def test_the_calibrate_response_carries_the_measured_evidence():
+def test_the_calibrate_response_carries_the_measured_evidence(tmp_path):
     """CameraProfileResponse(**asdict(profile)) silently drops fields the
     model does not declare, so a schema that lags the dataclass loses data
     with no error anywhere."""
@@ -198,7 +198,15 @@ def test_the_calibrate_response_carries_the_measured_evidence():
                                       "baseline": 23.0, "reached": True, "probes": 4}},
         sweep_version=1,
     )
-    state = AppState(calibrator=lambda: profile, db_path=":memory:")
+    # settings_path must point at tmp_path: _profiles_path() derives the
+    # profiles file from it, and POST /api/camera/calibrate saves. Without
+    # this the test wrote a fake profile into the real data/ directory,
+    # alongside the operator's own calibrations.
+    state = AppState(
+        settings_path=str(tmp_path / "s.json"),
+        calibrator=lambda: profile,
+        db_path=":memory:",
+    )
 
     with TestClient(build_app(lambda: state)) as client:
         body = client.post("/api/camera/calibrate").json()
