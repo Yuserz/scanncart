@@ -49,9 +49,11 @@ describe('createApiClient', () => {
   })
 
   it('rejects with a useful error on non-OK response', async () => {
+    // "Useful" is the sidecar's sentence, not the status code — see the
+    // detail-handling block below.
     mockFetchOnce({ detail: 'boom' }, false, 500)
     const api = createApiClient(8765)
-    await expect(api.health()).rejects.toThrow(/500/)
+    await expect(api.health()).rejects.toThrow(/boom/)
   })
 
   it('getLogs() GETs /api/logs and returns parsed JSON', async () => {
@@ -85,6 +87,7 @@ describe('createApiClient', () => {
       capture_height: 720,
       capture_fps: 60,
       conf_threshold: 0.5,
+      imgsz: 640,
       infer_frame_skip: 0,
       device: 'auto',
       preview_height: 720,
@@ -145,5 +148,97 @@ describe('createApiClient', () => {
     expect(url).toBe('http://127.0.0.1:8765/api/settings/preset')
     expect(init?.method).toBe('POST')
     expect(JSON.parse(init?.body as string)).toEqual({ name: 'mid_range' })
+  })
+})
+
+describe('live tuning endpoints', () => {
+  it('omits the persist flag by default so ordinary saves still write the file', async () => {
+    const calls: string[] = []
+    vi.stubGlobal('fetch', async (url: string) => {
+      calls.push(url)
+      return { ok: true, json: async () => ({}) } as Response
+    })
+
+    await createApiClient(9000).updateSettings({ conf_threshold: 0.7 })
+
+    expect(calls[0]).toBe('http://127.0.0.1:9000/api/settings')
+  })
+
+  it('asks the sidecar not to persist when tuning live', async () => {
+    const calls: string[] = []
+    vi.stubGlobal('fetch', async (url: string) => {
+      calls.push(url)
+      return { ok: true, json: async () => ({}) } as Response
+    })
+
+    await createApiClient(9000).updateSettings({ conf_threshold: 0.9 }, false)
+
+    expect(calls[0]).toBe('http://127.0.0.1:9000/api/settings?persist=false')
+  })
+
+  it('saves what is in memory', async () => {
+    const calls: [string, string][] = []
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      calls.push([url, init?.method ?? 'GET'])
+      return { ok: true, json: async () => ({}) } as Response
+    })
+
+    await createApiClient(9000).saveSettings()
+
+    expect(calls[0]).toEqual(['http://127.0.0.1:9000/api/settings/save', 'POST'])
+  })
+
+  it('reads the stored camera profile', async () => {
+    vi.stubGlobal(
+      'fetch',
+      async () =>
+        ({
+          ok: true,
+          json: async () => ({ profile: null })
+        }) as Response
+    )
+
+    await expect(createApiClient(9000).getCameraProfile()).resolves.toEqual({ profile: null })
+  })
+})
+
+describe('what a failed request tells the operator', () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it("uses the sidecar's own explanation rather than a bare status", async () => {
+    // The sidecar answers a start during calibration with a 409 whose detail
+    // says what to do about it. Throwing only the status turned that into
+    // "sidecar POST /capture/start failed: 409" in the banner.
+    mockFetchOnce(
+      { detail: 'Calibration is in progress; the camera is exclusive. Wait for it to finish.' },
+      false,
+      409
+    )
+    await expect(createApiClient(9000).start()).rejects.toThrow(
+      /Calibration is in progress; the camera is exclusive/
+    )
+  })
+
+  it('falls back to the status when there is no usable detail', async () => {
+    // FastAPI's request-validation errors put a list in `detail` — that is
+    // for us, not for the operator.
+    mockFetchOnce({ detail: [{ loc: ['body', 'camera_index'], msg: 'wrong' }] }, false, 422)
+    await expect(createApiClient(9000).start()).rejects.toThrow(/failed: 422/)
+  })
+
+  it('falls back to the status when the body is not JSON at all', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: false,
+        status: 500,
+        json: async () => {
+          throw new SyntaxError('Unexpected token < in JSON')
+        }
+      }))
+    )
+    await expect(createApiClient(9000).start()).rejects.toThrow(/failed: 500/)
   })
 })

@@ -1,9 +1,18 @@
 fastapi>=0.139
 uvicorn[standard]>=0.51
-ultralytics>=8.3
+ultralytics>=8.4
 opencv-python-headless>=5.0
 numpy>=2.5
 pydantic>=2.13
 pytest>=9.1
 httpx>=0.28
 psutil>=6.0
+
+# Only needed to run a custom Roboflow-exported model as `native` (see
+# docs/DETECTOR_BACKENDS.md §1a). The .onnx the local inference server caches
+# is a stock Ultralytics export, so YOLO() loads it directly.
+# CPU build: portable default. For NVIDIA, swap it for a CUDA-12 build of
+# onnxruntime-gpu — see README "ONNX on the GPU". Do not install both; they
+# share the `onnxruntime` import name, so having both breaks either and
+# uninstalling one deletes the shared package directory.
+onnxruntime>=1.20

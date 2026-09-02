@@ -1,0 +1,225 @@
+.tuning-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.tuning-card h4 {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.tuning-toggle {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--dim);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tuning-camera {
+  font-size: 11px;
+  color: var(--dim);
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.tuning-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tuning-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tuning-group h5 {
+  margin: 0;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--dim);
+  font-weight: 600;
+}
+
+.tuning-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 12px;
+}
+
+.tuning-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  position: relative;
+}
+
+.tuning-field-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  /* The tooltip's positioning context. Anchoring to the `?` itself and
+     centering on it put the tooltip half outside the card, where
+     .tuning-body's overflow clipped it — a two-column rail has no room to
+     centre a 180px panel on a 14px icon. */
+  position: relative;
+}
+
+.tuning-field-label label {
+  font-size: 12px;
+  color: var(--text);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Reveals its hint on hover or keyboard focus. A focusable span rather than
+   a button: activating it does nothing, and announcing "button" would promise
+   an action there isn't one. */
+.field-info {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--dim);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: help;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.field-info:hover,
+.field-info:focus-visible {
+  border-color: var(--dim);
+  color: var(--text);
+}
+
+/* Opens downward. Upward would be clipped by .tuning-body's overflow-y for
+   every field in the first row of a group — which is most of them, in a
+   two-column grid. */
+.field-info .field-tooltip {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  width: 180px;
+  padding: 6px 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.4;
+  color: var(--text);
+  white-space: normal;
+  text-transform: none;
+  letter-spacing: normal;
+  z-index: 10;
+  pointer-events: none;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.field-info:hover .field-tooltip,
+.field-info:focus .field-tooltip,
+.field-info:focus-within .field-tooltip {
+  display: block;
+}
+
+/* Hang the panel inward from whichever card edge the column sits against, so
+   180px always lands inside a ~250px rail. */
+.tuning-grid > .tuning-field:nth-child(odd) .field-tooltip {
+  left: 0;
+}
+
+.tuning-grid > .tuning-field:nth-child(even) .field-tooltip {
+  right: 0;
+}
+
+/* Single-column groups (Detection) have no second column to hang from. */
+.tuning-group > .tuning-field .field-tooltip {
+  left: 0;
+}
+
+.tuning-field input[type='range'] {
+  width: 100%;
+}
+
+.tuning-field .field-hint {
+  font-size: 10px;
+  line-height: 1.35;
+  color: var(--dim);
+  margin: 0;
+}
+
+.tuning-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* Sits above the collapsible body: a sweep that fails while the card is shut
+   must still be visible. */
+.tuning-error {
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--bad, #b4453a);
+  background: rgba(180, 69, 58, 0.12);
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.4;
+  flex-shrink: 0;
+}
+
+.tuning-profile {
+  font-size: 11px;
+  color: var(--dim);
+}
+
+.tuning-gate {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.tuning-gate-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.tuning-phase-list {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  color: var(--dim);
+}

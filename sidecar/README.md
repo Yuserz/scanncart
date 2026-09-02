@@ -1,6 +1,8 @@
-# SCANnCART Sidecar (Phase 1)
+# SCANnCART Sidecar
 
-Standalone Python service: camera capture → YOLO11 tracking → WebSocket stream.
+Standalone Python service: camera capture → detection + tracking → WebSocket stream.
+Detection runs through a swappable backend — YOLO11 weights in-process, or a
+Roboflow Workflow over HTTP. See [../docs/DETECTOR_BACKENDS.md](../docs/DETECTOR_BACKENDS.md).
 
 ## Setup
 
@@ -51,6 +53,82 @@ Verify with `python -c "import torch; print(torch.cuda.is_available(), torch.cud
 > carries — don't hard-pin the version, just the `cuXXX` tag) with
 > `cuda_available: true`.
 
+### Roboflow credentials (only for the API backends)
+
+`native` needs nothing here. The two API backends need a Roboflow key:
+
+```bash
+cp .env.example .env      # then fill in ROBOFLOW_API_KEY
+```
+
+`.env` is gitignored. The key is read from the process environment first and
+that file second, so a packaged deploy can inject it without shipping a file.
+It deliberately never touches `Settings`: settings are serialized wholesale to
+the renderer by `GET /api/settings`, which reports only
+`roboflow_api_key_present: true|false` and never the value.
+
+### Running `local_api` without Docker
+
+Roboflow documents `inference server start`, which needs Docker. The same
+server runs natively — `local_inference_server.py` builds the FastAPI app the
+Docker image serves. Full detail in
+[../docs/DETECTOR_BACKENDS.md](../docs/DETECTOR_BACKENDS.md) §7a.
+
+```bash
+uv venv --python 3.12 .venv-inference
+uv pip install --python .venv-inference/Scripts/python.exe -r requirements-inference.txt
+.venv-inference/Scripts/python.exe local_inference_server.py
+# -> Roboflow inference server (no Docker) on http://127.0.0.1:9001
+```
+
+> **A separate venv is mandatory.** `inference` pins numpy/opencv versions that
+> conflict with the ultralytics stack in `requirements.txt` — installing it
+> into `.venv` breaks the `native` backend. The two processes share nothing but
+> HTTP. Python must be **<3.13**; `inference` publishes no 3.13 wheels.
+
+Then set `detector_backend: local_api` and `track_expiry_s: 2.0` or higher, and
+use **Test connection** in the Admin Panel (`POST /api/detector/probe`) before
+starting capture. Measured ~90 ms warm on the same PC; the first call is slower
+because it downloads and loads the model.
+
+### ONNX on the GPU (the custom grocery model)
+
+The custom model is ONNX, so it runs under **onnxruntime**, not torch — a
+separate runtime from the one the CUDA section above configures. Getting it onto
+the GPU takes two things, and it is worth doing: measured 19.7 ms vs 66.3 ms on
+CPU (50.7 vs 15.1 fps).
+
+```bash
+uv pip uninstall --python .venv/Scripts/python.exe onnxruntime
+uv pip install --python .venv/Scripts/python.exe "onnxruntime-gpu==1.22.0"
+```
+
+1. **The CUDA major version must match torch's.** `onnxruntime-gpu` 1.29 wants
+   CUDA 13 (`cublasLt64_13.dll`); 1.22 wants CUDA 12. Check with
+   `python -c "import torch; print(torch.version.cuda)"` and pick the build to
+   match — a mismatch reports `CUDAExecutionProvider` as available and then
+   fails on the first frame with *"no data transfer registered"*.
+2. **onnxruntime-gpu does not ship its CUDA runtime.** It dlopen's cublas,
+   cublasLt, cudart and cudnn from the loader path. torch already ships matching
+   builds in `torch/lib`, so `inference.enable_onnx_cuda()` adds that directory
+   before the session is created. No CUDA toolkit install is needed.
+
+> Never have both `onnxruntime` and `onnxruntime-gpu` installed: they share the
+> `onnxruntime` import name, so both present breaks either, and uninstalling one
+> deletes the shared package directory. If imports start failing, delete
+> `.venv/Lib/site-packages/onnxruntime*` and reinstall exactly one.
+
+Verify:
+
+```bash
+python -c "import onnxruntime as o; print(o.get_available_providers())"
+```
+
+`ultralytics` also pip-installs dependencies at import time and will swap the
+CPU build back in on a CUDA machine, which breaks capture mid-session. `run.py`
+sets `YOLO_AUTOINSTALL=false` to stop it; keep that if you write another
+entrypoint.
+
 ### Windows Defender / antivirus (silent native-import crashes)
 
 On some Windows machines, Defender's real-time protection **intermittently
@@ -88,20 +166,36 @@ python run.py
 
 On first capture start, Ultralytics downloads `yolo11n.pt` automatically.
 
-Settings (model, device, capture resolution/fps, confidence threshold, frame
-skip, preview size, track expiry) persist to `data/settings.json`, loaded on
-startup and written back on every `PATCH /api/settings` or preset apply. A
-missing or corrupt file just falls back to hardcoded defaults — never crashes
-startup. Hardware detection (`GET /api/system-info`) requires `psutil`, now
-in `requirements.txt`.
+Settings persist to `data/settings.json`, loaded on startup and written back on
+every `PATCH /api/settings` or preset apply. A missing or corrupt file falls
+back to hardcoded defaults — never crashes startup. Hardware detection
+(`GET /api/system-info`) requires `psutil`, in `requirements.txt`.
+
+The fields are the model and device, capture resolution/fps, confidence
+threshold, inference size (`imgsz`), frame skip, preview size, track expiry,
+and the detector-backend block (`detector_backend`, the Roboflow
+workspace/workflow ids, the two API URLs, and the remote transmit size,
+timeout and retry count).
+
+`settings_store.RESTART_REQUIRED_FIELDS` is the source of truth for which of
+those need a stop/start; everything else the running pipeline re-reads live.
+Changing a restart-required field mid-capture is refused with a `409`.
 
 ## Verify manually
 
-1. Start: `curl -X POST http://127.0.0.1:8765/api/capture/start`
-2. Health: `curl http://127.0.0.1:8765/api/health`
-3. Settings: `curl http://127.0.0.1:8765/api/settings`
-4. Open `ws_test.html` (a local scratch file, not committed) in a browser to see live frames + boxes.
-5. Stop: `curl -X POST http://127.0.0.1:8765/api/capture/stop`
+1. Health: `curl http://127.0.0.1:8765/api/health`
+2. Settings: `curl http://127.0.0.1:8765/api/settings`
+3. Cameras: `curl http://127.0.0.1:8765/api/cameras` — names each index, so you
+   can tell the built-in webcam from the StreamCam. Add `?rescan=true` to
+   re-probe; the result is cached because opening every device is slow.
+4. Backend reachable? `curl -X POST http://127.0.0.1:8765/api/detector/probe`
+5. Start: `curl -X POST http://127.0.0.1:8765/api/capture/start`
+6. Open `ws_test.html` (a local scratch file, not committed) in a browser to see live frames + boxes.
+7. Stop: `curl -X POST http://127.0.0.1:8765/api/capture/stop`
+
+> Opening a camera can take a while — a Logitech StreamCam measured ~37 s
+> (~9.5 s to open plus ~18.7 s for the 1080p mode-set). That is the device, not
+> the sidecar: `/api/health` keeps answering throughout.
 
 ## Tests
 
@@ -109,4 +203,5 @@ in `requirements.txt`.
 python -m pytest -v
 ```
 
-All 25 tests run with fakes — no camera and no network required.
+The whole suite runs against fakes — no camera, no GPU, no network, and no
+Roboflow key. Don't add tests that assume any of them are present.

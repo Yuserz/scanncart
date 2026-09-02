@@ -24,8 +24,10 @@ describe('App', () => {
 
   it('shows a waiting state until the sidecar port resolves', async () => {
     const getPort = vi.fn().mockResolvedValue(null)
-    render(<App getPort={getPort} pollMs={10} />)
+    const { container } = render(<App getPort={getPort} pollMs={10} />)
     expect(screen.getByText(/Starting sidecar/i)).toBeInTheDocument()
+    expect(screen.getByText(/loading Python runtime/i)).toBeInTheDocument()
+    expect(container.querySelector('.spinner')).not.toBeNull()
   })
 
   it('mounts the Live View once a port is available', async () => {

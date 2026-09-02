@@ -1,9 +1,25 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, act } from '@testing-library/react'
+import { render, screen, act, fireEvent, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { LiveView } from './LiveView'
 import type { StreamDeps } from '../hooks/useSidecarStream'
 import type { StreamClientOptions, FrameMessage } from '../lib/ws'
+import type { ApiClient, CameraProfileResponse } from '../lib/api'
+import { makeDeps } from '../test/fakes'
+
+const PROFILE: CameraProfileResponse = {
+  device_key: 'Fake Cam:0:1280x720',
+  backend: 'MSMF',
+  width: 1280,
+  height: 720,
+  fps_auto_exposure: 30,
+  fps_capped_exposure: 30,
+  controls: { brightness: true, exposure: true, gain: false, focus: true, autofocus: true },
+  recommended: {},
+  measured_at: 1,
+  measured: {},
+  sweep_version: 1
+}
 
 function frameWith(dets: FrameMessage['detections']): FrameMessage {
   return {
@@ -35,7 +51,27 @@ const makeHarness = (): {
       updateSettings: vi.fn(),
       getSystemInfo: vi.fn(),
       getPresets: vi.fn(),
-      applyPreset: vi.fn()
+      applyPreset: vi.fn(),
+      probeDetector: vi.fn(),
+      getCameras: vi.fn(async () => ({
+        cameras: [{ index: 0, name: 'Fake Cam', width: 1280, height: 720 }],
+        probed: true,
+        detail: ''
+      })),
+      getCameraQuality: vi.fn(async () => ({
+        available: false,
+        brightness: 0,
+        contrast: 0,
+        sharpness: 0,
+        capture_fps: 0,
+        target_fps: 0,
+        verdicts: {},
+        detail: ''
+      })),
+      calibrateCamera: vi.fn(),
+      applyCameraProfile: vi.fn(),
+      saveSettings: vi.fn(),
+      getCameraProfile: vi.fn(async () => ({ profile: null }))
     }),
     streamFactory: (opts: StreamClientOptions) => {
       captured = opts
@@ -83,10 +119,148 @@ describe('LiveView', () => {
     expect(screen.getByTestId('item-log').querySelectorAll('li')).toHaveLength(1)
   })
 
+  it('sets the preview aspect ratio from the loaded frame dimensions', () => {
+    const h = makeHarness()
+    render(<LiveView port={1} deps={h.deps} />)
+    const wrapper = screen.getByTestId('preview-wrapper')
+    // no frame loaded yet: no override, CSS falls back to its 16/9 default
+    expect(wrapper.style.getPropertyValue('--preview-w')).toBe('')
+    expect(wrapper.style.getPropertyValue('--preview-h')).toBe('')
+
+    act(() => {
+      h.opts().onFrame?.(frameWith([]))
+    })
+    const img = screen.getByAltText('live preview') as HTMLImageElement
+    // jsdom reports 0x0 for natural dimensions; define the decoded size
+    Object.defineProperty(img, 'naturalWidth', { value: 640 })
+    Object.defineProperty(img, 'naturalHeight', { value: 480 })
+    fireEvent.load(img)
+
+    expect(wrapper.style.getPropertyValue('--preview-w')).toBe('640')
+    expect(wrapper.style.getPropertyValue('--preview-h')).toBe('480')
+  })
+
   it('Start button calls the REST start endpoint', async () => {
     const h = makeHarness()
     render(<LiveView port={1} deps={h.deps} />)
     await userEvent.click(screen.getByRole('button', { name: 'Start' }))
     expect(h.start).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows a loading state while start() is in flight, then clears it', async () => {
+    const h = makeHarness()
+    let resolveStart!: (v: { state: string }) => void
+    h.start.mockImplementation(() => new Promise<{ state: string }>((res) => (resolveStart = res)))
+    render(<LiveView port={1} deps={h.deps} />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Start' }))
+
+    // In flight: button disabled and spinning, placeholder explains the model load.
+    const button = screen.getByRole('button', { name: 'Start' })
+    expect(button).toBeDisabled()
+    expect(button).toHaveTextContent(/Starting…/)
+    expect(screen.getByTestId('preview-placeholder')).toHaveTextContent(/Loading model/)
+    expect(screen.getByTestId('preview-placeholder')).toHaveTextContent(/downloads its weights/)
+
+    await act(async () => {
+      resolveStart({ state: 'running' })
+    })
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeEnabled()
+    // Running but no frame yet: waiting-for-frames copy with a spinner.
+    expect(screen.getByTestId('preview-placeholder')).toHaveTextContent(/Waiting for frames/)
+    expect(screen.getByTestId('preview-placeholder').querySelector('.spinner')).not.toBeNull()
+  })
+
+  it('shows the sidecar detail when capture dies mid-session', async () => {
+    // The pipeline thread reports its own death as a status message carrying a
+    // detail. Dropping that detail left a frozen preview and no explanation.
+    const h = makeHarness()
+    render(<LiveView port={8765} deps={h.deps} />)
+    act(() => {
+      h.opts().onStatus?.({
+        type: 'status',
+        state: 'error',
+        detail: 'Capture stopped: server went away'
+      })
+    })
+
+    expect(screen.getByTestId('live-error')).toHaveTextContent('Capture stopped: server went away')
+  })
+
+  it('surfaces a failed Start instead of swallowing the rejection', async () => {
+    // The sidecar answers a missing key with 401, an unreachable server with
+    // 503 and a timeout with 504. Those used to become unhandled rejections:
+    // the spinner vanished and the button silently reset with nothing shown.
+    const h = makeHarness()
+    h.start.mockRejectedValueOnce(new Error('503: local_api server unreachable'))
+    render(<LiveView port={8765} deps={h.deps} />)
+
+    await userEvent.click(screen.getByLabelText('Start'))
+
+    expect(await screen.findByTestId('live-error')).toHaveTextContent('unreachable')
+  })
+
+  it('dismisses the error banner', async () => {
+    const h = makeHarness()
+    render(<LiveView port={8765} deps={h.deps} />)
+    act(() => {
+      h.opts().onStatus?.({ type: 'status', state: 'error', detail: 'boom' })
+    })
+
+    await userEvent.click(screen.getByLabelText('Dismiss error'))
+
+    expect(screen.queryByTestId('live-error')).not.toBeInTheDocument()
+  })
+
+  it('shows the camera tuning card in the side rail', async () => {
+    const h = makeHarness()
+    render(<LiveView port={8765} deps={h.deps} />)
+    expect(await screen.findByTestId('camera-tuning')).toBeInTheDocument()
+  })
+
+  it('gives the tuning card the same capture state the toolbar uses', async () => {
+    // One owner: LiveView drives capture through useSidecarStream, and the
+    // card is told. A second health poller would disagree mid start/stop.
+    const h = makeHarness()
+    render(<LiveView port={8765} deps={h.deps} />)
+    await screen.findByTestId('camera-tuning')
+    expect(screen.getByTestId('tuning-idle')).toBeInTheDocument()
+  })
+
+  it('will not offer Start while calibration is holding the camera', async () => {
+    // The sidecar answers a start during a sweep with a 409, so the button
+    // was offering an action that could only fail. It stayed enabled through
+    // the whole stop -> calibrate -> start sequence.
+    const h = makeHarness()
+    let releaseSweep: () => void = () => {}
+    // The card builds its own client from settingsDeps — LiveView's own
+    // apiFactory drives the stream hook and never reaches it.
+    const { deps: settingsDeps } = makeDeps({
+      calibrateCamera: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            releaseSweep = () => resolve(PROFILE)
+          })
+      ) as ApiClient['calibrateCamera']
+    })
+    h.deps.settingsDeps = { ...settingsDeps, pollHealth: false, pollCameras: false }
+    const { container } = render(<LiveView port={8765} deps={h.deps} />)
+    await screen.findByTestId('camera-tuning')
+    // By position, not by label: the sequence restarts capture, so the same
+    // button reads "Stop" by the time it is handed back.
+    const toggle = (): HTMLButtonElement =>
+      container.querySelector('.live-toolbar button') as HTMLButtonElement
+    expect(toggle()).toBeEnabled()
+
+    await userEvent.click(screen.getByTestId('tuning-calibrate'))
+    // The staged-scene gate sits in front of the sweep now — confirm through
+    // it before the stop/calibrate/start sequence (and the busy toggle) begins.
+    await userEvent.click(await screen.findByTestId('tuning-scene-ready'))
+    await waitFor(() => expect(toggle()).toBeDisabled())
+
+    await act(async () => {
+      releaseSweep()
+    })
+    await waitFor(() => expect(toggle()).toBeEnabled())
   })
 })

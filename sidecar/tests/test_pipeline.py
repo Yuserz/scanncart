@@ -72,3 +72,120 @@ def test_frame_skip_skips_inference():
     pipe.process_once()  # processed (infer called)
     pipe.process_once()  # skipped (no infer)
     assert det.calls == 1
+
+
+# --- preview decoupled from inference ------------------------------------
+
+
+class _EmptySource:
+    """Never has a frame ready."""
+    width, height, fps = 128, 96, 30.0
+
+    def latest(self):
+        return None
+
+
+def _preview_pipe(settings=None):
+    sent = []
+    det = _StubDetector()
+    pipe = Pipeline(_StubSource(), det, settings or Settings(), on_message=sent.append)
+    return pipe, sent, det
+
+
+def test_emit_preview_sends_a_frame_without_running_inference():
+    """The whole point: fill the gap between inferences so the image stays
+    smooth. Preview used to be emitted only after inference, delivering 9 fps
+    from a 60 fps camera with gaps ranging 13-431 ms."""
+    pipe, sent, det = _preview_pipe()
+
+    msg = pipe.emit_preview()
+
+    assert msg is not None and msg["type"] == "frame"
+    assert det.calls == 0
+    assert len(sent) == 1
+
+
+def test_emit_preview_reuses_the_most_recent_detections():
+    pipe, sent, _ = _preview_pipe()
+    pipe.process_once()
+    # process_once just emitted, so wind the rate-limit clock back rather than
+    # sleeping for the interval.
+    pipe._last_emit_ts = 0.0
+
+    msg = pipe.emit_preview()
+
+    # Boxes are one inference old — the trade for a smooth image.
+    assert msg is not None
+    assert [d["track_id"] for d in msg["detections"]] == [1]
+
+
+def test_emit_preview_is_rate_limited():
+    pipe, _, _ = _preview_pipe(Settings(preview_max_fps=30))
+
+    assert pipe.emit_preview() is not None
+    # A second call in the same instant is not due yet.
+    assert pipe.emit_preview() is None
+
+
+def test_preview_can_be_disabled_with_zero():
+    """Restores emit-only-on-inference, for a machine where the extra JPEG
+    encode competes with inference."""
+    pipe, sent, _ = _preview_pipe(Settings(preview_max_fps=0))
+
+    assert pipe.emit_preview() is None
+    assert sent == []
+
+
+def test_process_once_still_emits_and_resets_the_preview_clock():
+    pipe, sent, det = _preview_pipe()
+
+    assert pipe.process_once() is not None
+    assert det.calls == 1
+    # An inference just emitted, so a preview is not immediately due.
+    assert pipe.emit_preview() is None
+    assert len(sent) == 1
+
+
+def test_emit_preview_returns_none_without_a_frame():
+    sent = []
+    pipe = Pipeline(_EmptySource(), _StubDetector(), Settings(), on_message=sent.append)
+
+    assert pipe.emit_preview() is None
+    assert sent == []
+
+
+def test_stats_report_the_measured_capture_rate():
+    """Not the requested one: the UI showed 60 fps while 12 arrived."""
+    class _Source(_StubSource):
+        measured_fps = 12.5
+
+    sent = []
+    pipe = Pipeline(_Source(), _StubDetector(), Settings(capture_fps=60),
+                    on_message=sent.append)
+    msg = pipe.process_once()
+
+    assert msg["stats"]["capture_fps"] == 12.5
+
+
+def test_stats_fall_back_to_the_configured_rate_for_a_source_that_cannot_measure():
+    # FakeFrameSource and other test doubles have no measured_fps.
+    sent = []
+    pipe = Pipeline(_StubSource(), _StubDetector(), Settings(), on_message=sent.append)
+    msg = pipe.process_once()
+
+    assert msg["stats"]["capture_fps"] == _StubSource.fps
+
+
+def test_stats_report_zero_when_camera_stalls():
+    """A stalled camera has measured_fps == 0.0 (attribute present, value is zero).
+    We must report 0.0, NOT the requested rate — that is exactly the fabricated
+    number this task exists to remove."""
+    class _StallSource(_StubSource):
+        measured_fps = 0.0
+
+    sent = []
+    pipe = Pipeline(_StallSource(), _StubDetector(), Settings(capture_fps=60),
+                    on_message=sent.append)
+    msg = pipe.process_once()
+
+    assert msg["stats"]["capture_fps"] == 0.0

@@ -3,14 +3,21 @@ from app.settings import Settings, resolve_device
 
 def test_settings_defaults():
     s = Settings()
-    assert s.active_model == "yolo11n.pt"
+    # The Roboflow-exported grocery model, run in-process — see
+    # docs/DETECTOR_BACKENDS.md §1a.
+    assert s.active_model == "models/scanncart-grocery.onnx"
     assert s.capture_width == 1280
     assert s.capture_height == 720
     assert s.capture_fps == 60
     assert s.conf_threshold == 0.5
+    assert s.imgsz == 640
     assert s.infer_frame_skip == 0
     assert s.device == "auto"
     assert s.preview_height == 720
+    assert s.camera_brightness is None
+    assert s.camera_exposure is None
+    assert s.camera_autofocus is None
+    assert s.camera_focus is None
 
 
 def _fake_torch(monkeypatch, cuda_available: bool):

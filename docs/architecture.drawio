@@ -1,0 +1,174 @@
+<mxfile host="app.diagrams.net" agent="Claude Code" type="device">
+  <diagram id="scanncart-architecture" name="System Architecture">
+    <mxGraphModel dx="1422" dy="798" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1000" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="title" value="SCANnCART — System Architecture" style="text;html=1;fontSize=28;fontStyle=1;align=left;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="40" y="20" width="900" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="subtitle" value="Vision-only prototype · two processes on one PC · localhost only" style="text;html=1;fontSize=14;fontColor=#666666;align=left;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="40" y="58" width="900" height="24" as="geometry" />
+        </mxCell>
+
+        <mxCell id="pc" value="ONE PC — no server, no cloud, no network dependency" style="rounded=1;html=1;fillColor=none;strokeColor=#333333;dashed=1;verticalAlign=top;align=left;spacingLeft=16;spacingTop=6;fontSize=14;fontStyle=1;fontColor=#333333;" vertex="1" parent="1">
+          <mxGeometry x="40" y="95" width="1520" height="700" as="geometry" />
+        </mxCell>
+
+        <mxCell id="camera" value="Logitech StreamCam&lt;br&gt;&lt;i&gt;1080p · USB&lt;/i&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="70" y="180" width="180" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="sqlite" value="SQLite — scanncart.db&lt;br&gt;&lt;i&gt;sessions · detection_events&lt;/i&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="70" y="545" width="180" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="settingsfile" value="settings.json&lt;br&gt;&lt;i&gt;persisted config&lt;/i&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=12;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="70" y="665" width="180" height="75" as="geometry" />
+        </mxCell>
+
+        <mxCell id="sidecar" value="PYTHON SIDECAR  ·  FastAPI + Uvicorn" style="swimlane;html=1;startSize=40;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="290" y="140" width="420" height="620" as="geometry" />
+        </mxCell>
+        <mxCell id="capture" value="Capture thread&lt;br&gt;&lt;i&gt;OpenCV VideoCapture&lt;/i&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=13;" vertex="1" parent="sidecar">
+          <mxGeometry x="30" y="60" width="360" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="buffer" value="Latest-frame buffer (size 1)&lt;br&gt;&lt;i&gt;newest wins · no queue, no backlog&lt;/i&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=13;" vertex="1" parent="sidecar">
+          <mxGeometry x="30" y="150" width="360" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="yolo" value="YOLO11 — DETECT&lt;br&gt;&lt;i&gt;Ultralytics · tier n/s/m/l/x by preset&lt;/i&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=13;fontStyle=1;" vertex="1" parent="sidecar">
+          <mxGeometry x="30" y="240" width="360" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="botsort" value="BoT-SORT — TRACK&lt;br&gt;&lt;i&gt;stable track_id across frames&lt;/i&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=13;fontStyle=1;" vertex="1" parent="sidecar">
+          <mxGeometry x="30" y="330" width="360" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="encode" value="JPEG preview + stats&lt;br&gt;&lt;i&gt;downscaled · fps · latency&lt;/i&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=13;" vertex="1" parent="sidecar">
+          <mxGeometry x="30" y="420" width="360" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="logstore" value="Logging store&lt;br&gt;&lt;i&gt;sole SQLite writer · one row per track_id&lt;/i&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=13;" vertex="1" parent="sidecar">
+          <mxGeometry x="30" y="510" width="360" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="electron" value="ELECTRON DESKTOP  ·  React + TypeScript" style="swimlane;html=1;startSize=40;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="880" y="140" width="420" height="620" as="geometry" />
+        </mxCell>
+        <mxCell id="mainproc" value="Main process (Node)&lt;br&gt;&lt;i&gt;spawns + owns sidecar lifecycle&lt;/i&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=13;" vertex="1" parent="electron">
+          <mxGeometry x="30" y="55" width="360" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="preload" value="Preload bridge&lt;br&gt;&lt;i&gt;context-bridge · exposes the port, nothing else&lt;/i&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=13;" vertex="1" parent="electron">
+          <mxGeometry x="30" y="135" width="360" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="renderer" value="React Renderer  ·  sandboxed, no Node access" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f0e6f5;strokeColor=#9673a6;fontSize=13;fontStyle=1;" vertex="1" parent="electron">
+          <mxGeometry x="30" y="210" width="360" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="hooks" value="useSidecarStream / useSidecarSettings&lt;br&gt;&lt;i&gt;REST + WS → React state · dedupe by track_id&lt;/i&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=12;" vertex="1" parent="electron">
+          <mxGeometry x="50" y="270" width="320" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="liveview" value="Live View&lt;br&gt;&lt;i&gt;preview · box overlay · item log · start/stop&lt;/i&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=12;" vertex="1" parent="electron">
+          <mxGeometry x="50" y="350" width="320" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="admin" value="Admin Panel&lt;br&gt;&lt;i&gt;hardware info · presets · 9 settings fields&lt;/i&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=12;" vertex="1" parent="electron">
+          <mxGeometry x="50" y="430" width="320" height="58" as="geometry" />
+        </mxCell>
+
+        <mxCell id="boundary" value="" style="endArrow=none;html=1;strokeColor=#b85450;dashed=1;strokeWidth=3;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="795" y="140" as="sourcePoint" />
+            <mxPoint x="795" y="760" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="blabel" value="PROCESS BOUNDARY&lt;br&gt;localhost 127.0.0.1&lt;br&gt;&lt;i&gt;dynamic port&lt;/i&gt;" style="text;html=1;align=center;verticalAlign=middle;fontSize=12;fontStyle=1;fontColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="715" y="98" width="160" height="48" as="geometry" />
+        </mxCell>
+
+        <mxCell id="operator" value="Operator" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1420" y="380" width="55" height="95" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e1" value="USB video" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=11;" edge="1" parent="1" source="camera" target="capture">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="capture" target="buffer">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="buffer" target="yolo">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="yolo" target="botsort">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="botsort" target="encode">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="encode" target="logstore">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" value="writes" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=11;" edge="1" parent="1" source="logstore" target="sqlite">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" value="load / save" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=11;startArrow=classic;startFill=1;" edge="1" parent="1" source="settingsfile" target="sidecar">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="c1" value="1 · spawn run.py" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;strokeColor=#b85450;fontColor=#b85450;fontSize=11;" edge="1" parent="1" source="mainproc" target="sidecar">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c2" value="2 · stdout: SIDECAR_PORT=n" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;strokeColor=#b85450;fontColor=#b85450;fontSize=11;" edge="1" parent="1" source="sidecar" target="mainproc">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c3" value="3 · IPC: port" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;strokeColor=#b85450;fontColor=#b85450;fontSize=11;" edge="1" parent="1" source="mainproc" target="preload">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c4" value="4 · port" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;dashed=1;strokeColor=#b85450;fontColor=#b85450;fontSize=11;" edge="1" parent="1" source="preload" target="hooks">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="rest" value="REST  /api/*&lt;br&gt;&lt;i&gt;health · settings · capture start/stop · logs&lt;/i&gt;" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;strokeColor=#82b366;fontColor=#4a7a2a;fontSize=11;" edge="1" parent="1" source="hooks" target="sidecar">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ws" value="WebSocket  /ws/stream&lt;br&gt;&lt;i&gt;jpeg + detections + stats · ~30fps push&lt;/i&gt;" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeWidth=2;strokeColor=#6c8ebf;fontColor=#3d5f8a;fontSize=11;" edge="1" parent="1" source="encode" target="hooks">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="u1" value="start / stop&lt;br&gt;settings" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=11;" edge="1" parent="1" source="operator" target="liveview">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="u2" value="live feed&lt;br&gt;item list" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=11;" edge="1" parent="1" source="admin" target="operator">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="strip" value="STARTUP HANDSHAKE — why the port is not hardcoded" style="rounded=1;html=1;fillColor=#fff2cc;strokeColor=#d6b656;verticalAlign=top;align=left;spacingLeft=14;spacingTop=6;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="825" width="920" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="s1" value="Electron&lt;br&gt;app.whenReady()" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="60" y="870" width="180" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="s2" value="spawn&lt;br&gt;sidecar/run.py" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="280" y="870" width="180" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="s3" value="pick free port&lt;br&gt;print SIDECAR_PORT=n" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="500" y="870" width="180" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="s4" value="renderer connects&lt;br&gt;&lt;i&gt;WS auto-retry&lt;/i&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d6b656;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="720" y="870" width="180" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="sa1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#d6b656;" edge="1" parent="1" source="s1" target="s2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="sa2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#d6b656;" edge="1" parent="1" source="s2" target="s3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="sa3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#d6b656;" edge="1" parent="1" source="s3" target="s4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="legend" value="LEGEND" style="rounded=1;html=1;fillColor=#fafafa;strokeColor=#999999;verticalAlign=top;align=left;spacingLeft=14;spacingTop=6;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="990" y="825" width="570" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="legendtext" value="&lt;div style='text-align:left'&gt;──►&amp;nbsp; runtime data flow&amp;nbsp;&amp;nbsp;·&amp;nbsp;&amp;nbsp; ╌╌► control / lifecycle (spawn · handshake · IPC)&lt;br&gt;&lt;br&gt;grey = hardware&amp;nbsp; ·&amp;nbsp; blue = sidecar&amp;nbsp; ·&amp;nbsp; orange = AI core&amp;nbsp; ·&amp;nbsp; green = storage&amp;nbsp; ·&amp;nbsp; purple = UI&lt;br&gt;&lt;br&gt;&lt;i&gt;track_id from BoT-SORT is what makes the log one row per ITEM, not per FRAME.&lt;/i&gt;&lt;/div&gt;" style="text;html=1;align=left;verticalAlign=top;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1005" y="855" width="545" height="80" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

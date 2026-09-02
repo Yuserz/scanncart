@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 data/
 models/
+.env
+.venv-inference/
+.inference-runtime/

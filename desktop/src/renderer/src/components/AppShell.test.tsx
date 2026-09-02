@@ -24,9 +24,12 @@ function bodyForUrl(url: string): unknown {
       capture_height: 720,
       capture_fps: 60,
       conf_threshold: 0.5,
+      imgsz: 640,
+      resize_mode: 'auto',
       infer_frame_skip: 0,
       device: 'auto',
       preview_height: 720,
+      preview_max_fps: 30,
       track_expiry_s: 1.5,
       hot_reloadable_fields: ['infer_frame_skip'],
       restart_required_fields: ['active_model'],
@@ -46,8 +49,46 @@ function bodyForUrl(url: string): unknown {
   if (url.includes('/api/presets')) {
     return { presets: [], recommended: 'mid_range' }
   }
+  if (url.includes('/api/cameras')) {
+    return {
+      cameras: [{ index: 0, name: 'Fake Cam', width: 1280, height: 720 }],
+      probed: true,
+      detail: ''
+    }
+  }
   if (url.includes('/api/health')) {
     return { state: 'idle', active_model: 'yolo11n.pt', device: 'cpu' }
+  }
+  if (url.includes('/api/camera/quality')) {
+    return {
+      available: false,
+      brightness: 0,
+      contrast: 0,
+      sharpness: 0,
+      capture_fps: 0,
+      target_fps: 0,
+      verdicts: {},
+      detail: ''
+    }
+  }
+  if (url.includes('/api/camera/calibrate')) {
+    return {
+      device_key: 'Fake Cam:0:1280x720',
+      backend: 'msmf',
+      width: 1280,
+      height: 720,
+      fps_auto_exposure: 12.3,
+      fps_capped_exposure: 30.3,
+      controls: { brightness: true, exposure: true, gain: false, focus: false },
+      recommended: { camera_exposure: -6, camera_brightness: 180 },
+      measured_at: 1
+    }
+  }
+  if (url.includes('/api/camera/profile/apply')) {
+    return bodyForUrl('/api/settings')
+  }
+  if (url.includes('/api/camera/profile')) {
+    return { profile: null }
   }
   return {}
 }

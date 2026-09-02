@@ -1,53 +1,9 @@
+import { DEFAULT_SETTINGS } from '../lib/settingsDefaults'
 import { describe, it, expect, vi } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
-import { useSidecarSettings, type SettingsDeps } from './useSidecarSettings'
-import type { ApiClient, SettingsResponse } from '../lib/api'
-
-function baseSettings(overrides: Partial<SettingsResponse> = {}): SettingsResponse {
-  return {
-    active_model: 'yolo11n.pt',
-    camera_index: 0,
-    capture_width: 1280,
-    capture_height: 720,
-    capture_fps: 60,
-    conf_threshold: 0.5,
-    infer_frame_skip: 0,
-    device: 'auto',
-    preview_height: 720,
-    track_expiry_s: 1.5,
-    hot_reloadable_fields: ['infer_frame_skip', 'preview_height', 'track_expiry_s'],
-    restart_required_fields: ['active_model', 'device'],
-    warnings: [],
-    ...overrides
-  }
-}
-
-function makeDeps(overrides: Partial<ApiClient> = {}): { deps: SettingsDeps; api: ApiClient } {
-  const api: ApiClient = {
-    health: vi.fn(async () => ({ state: 'idle', active_model: 'yolo11n.pt', device: 'cpu' })),
-    start: vi.fn(),
-    stop: vi.fn(),
-    getLogs: vi.fn(),
-    getSettings: vi.fn(async () => baseSettings()),
-    updateSettings: vi.fn(async (patch) => baseSettings(patch)),
-    getSystemInfo: vi.fn(async () => ({
-      cpu_count: 8,
-      ram_gb: 16,
-      cuda_available: false,
-      accelerator: 'cpu' as const,
-      gpu_name: null,
-      gpu_vram_gb: null,
-      recommended_preset: 'mid_range'
-    })),
-    getPresets: vi.fn(async () => ({
-      presets: [{ name: 'mid_range', label: 'Mid', description: 'd', settings: {} }],
-      recommended: 'mid_range'
-    })),
-    applyPreset: vi.fn(async (name) => baseSettings({ active_model: `${name}.pt` })),
-    ...overrides
-  }
-  return { deps: { apiFactory: () => api, healthPollMs: 10_000, retryDelayMs: 10 }, api }
-}
+import { useSidecarSettings } from './useSidecarSettings'
+import { baseSettings, makeDeps } from '../test/fakes'
+import type { SettingsResponse } from '../lib/api'
 
 describe('useSidecarSettings', () => {
   it('loads settings, system info, and presets on mount', async () => {
@@ -108,7 +64,10 @@ describe('useSidecarSettings', () => {
     })
 
     expect(api.updateSettings).toHaveBeenCalledWith(
-      expect.objectContaining({ active_model: 'yolo11n.pt', capture_width: 1280 })
+      expect.objectContaining({
+        active_model: DEFAULT_SETTINGS.active_model,
+        capture_width: 1280
+      })
     )
   })
 
@@ -155,5 +114,240 @@ describe('useSidecarSettings', () => {
 
     expect(result.current.error).toMatch(/409/)
     expect(result.current.saving).toBe(false)
+  })
+
+  it('polls for a camera plugged in after startup', async () => {
+    // refreshCameras only ran on mount, so a camera plugged in later stayed
+    // invisible until the user pressed Rescan. The sidecar makes each poll
+    // cheap (device names only) and re-scans only when the set changed.
+    const { api } = makeDeps()
+    renderHook(() => useSidecarSettings(8765, { apiFactory: () => api, cameraPollMs: 40 }))
+
+    await waitFor(() => expect(vi.mocked(api.getCameras).mock.calls.length).toBeGreaterThan(2))
+  })
+})
+
+describe('hosting inside LiveView', () => {
+  it('does not poll health when the host already owns capture state', async () => {
+    // LiveView drives capture through useSidecarStream. A second poller here
+    // would give the same view two answers to "are we running".
+    let healthCalls = 0
+    const { deps } = makeDeps({
+      health: vi.fn(async () => {
+        healthCalls++
+        return { state: 'idle', active_model: 'm', device: 'cpu' }
+      })
+    })
+
+    renderHook(() => useSidecarSettings(9000, { ...deps, pollHealth: false }))
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50))
+    })
+
+    expect(healthCalls).toBe(0)
+  })
+
+  it('keeps reading camera quality even with health polling off', async () => {
+    // The two share one timer. The tuning card turns health off because
+    // LiveView owns capture state, but its whole readout is quality.
+    let qualityCalls = 0
+    const { deps } = makeDeps({
+      getCameraQuality: vi.fn(async () => {
+        qualityCalls++
+        return {
+          available: true,
+          brightness: 128,
+          contrast: 40,
+          sharpness: 90,
+          capture_fps: 29,
+          target_fps: 30,
+          verdicts: {},
+          detail: ''
+        }
+      })
+    })
+
+    const { result } = renderHook(() => useSidecarSettings(9000, { ...deps, pollHealth: false }))
+    await waitFor(() => expect(result.current.cameraQuality).not.toBeNull())
+
+    expect(qualityCalls).toBeGreaterThan(0)
+  })
+
+  it('does not enumerate cameras for a consumer that never reads them', async () => {
+    // Enumerating opens every device (~30 s). The card has no camera list.
+    let cameraCalls = 0
+    const { deps } = makeDeps({
+      getCameras: vi.fn(async () => {
+        cameraCalls++
+        return { cameras: [], probed: true, detail: '' }
+      })
+    })
+
+    const { result } = renderHook(() => useSidecarSettings(9000, { ...deps, pollCameras: false }))
+    await waitFor(() => expect(result.current.settings).not.toBeNull())
+
+    expect(cameraCalls).toBe(0)
+    // Nothing else clears the initial true, and a stuck spinner reads as a
+    // scan which never finishes.
+    expect(result.current.camerasLoading).toBe(false)
+  })
+
+  it('still polls health by default, for the Admin panel', async () => {
+    let healthCalls = 0
+    const { deps } = makeDeps({
+      health: vi.fn(async () => {
+        healthCalls++
+        return { state: 'idle', active_model: 'm', device: 'cpu' }
+      })
+    })
+
+    renderHook(() => useSidecarSettings(9000, deps))
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50))
+    })
+
+    expect(healthCalls).toBeGreaterThan(0)
+  })
+})
+
+describe('live apply and the saved baseline', () => {
+  it('applies without persisting', async () => {
+    const calls: [unknown, boolean | undefined][] = []
+    const { deps } = makeDeps({
+      updateSettings: vi.fn(async (patch, persist) => {
+        calls.push([patch, persist])
+        return baseSettings(patch)
+      })
+    })
+
+    const { result } = renderHook(() => useSidecarSettings(9000, deps))
+    await waitFor(() => expect(result.current.settings).not.toBeNull())
+    await act(async () => {
+      await result.current.liveUpdate({ conf_threshold: 0.9 })
+    })
+
+    expect(calls).toEqual([[{ conf_threshold: 0.9 }, false]])
+  })
+
+  it('leaves the saved baseline untouched while tuning', async () => {
+    // The regression this exists to catch: a live PATCH returns a fresh
+    // settings object, and treating that as "saved" makes every slider tick
+    // look committed, so Revert has nothing to go back to.
+    const { deps } = makeDeps({
+      updateSettings: vi.fn(async (patch) => baseSettings(patch))
+    })
+
+    const { result } = renderHook(() => useSidecarSettings(9000, deps))
+    await waitFor(() => expect(result.current.settings).not.toBeNull())
+    await act(async () => {
+      await result.current.liveUpdate({ conf_threshold: 0.9 })
+    })
+
+    expect(result.current.settings?.conf_threshold).toBe(0.9)
+    expect(result.current.savedSettings?.conf_threshold).toBe(baseSettings().conf_threshold)
+  })
+
+  it('moves the baseline on save', async () => {
+    const { deps } = makeDeps({
+      updateSettings: vi.fn(async (patch) => baseSettings(patch)),
+      saveSettings: vi.fn(async () => baseSettings({ conf_threshold: 0.9 }))
+    })
+
+    const { result } = renderHook(() => useSidecarSettings(9000, deps))
+    await waitFor(() => expect(result.current.settings).not.toBeNull())
+    await act(async () => {
+      await result.current.liveUpdate({ conf_threshold: 0.9 })
+    })
+    await act(async () => {
+      await result.current.save()
+    })
+
+    expect(result.current.savedSettings?.conf_threshold).toBe(0.9)
+  })
+
+  it('moves the baseline on an ordinary persisting update too', async () => {
+    const { deps } = makeDeps({
+      updateSettings: vi.fn(async (patch) => baseSettings(patch))
+    })
+
+    const { result } = renderHook(() => useSidecarSettings(9000, deps))
+    await waitFor(() => expect(result.current.settings).not.toBeNull())
+    await act(async () => {
+      await result.current.update({ imgsz: 960 })
+    })
+
+    expect(result.current.savedSettings?.imgsz).toBe(960)
+  })
+
+  it('discards a stale liveUpdate response that resolves out of order', async () => {
+    // The tuning card debounces per field, so two live PATCHes can be in
+    // flight together. Each response carries the whole settings object, so
+    // an older response landing after a newer one must not win.
+    const resolvers: Array<() => void> = []
+    const { deps } = makeDeps({
+      updateSettings: vi.fn(
+        (patch) =>
+          new Promise<SettingsResponse>((resolve) => {
+            resolvers.push(() => resolve(baseSettings(patch)))
+          })
+      )
+    })
+
+    const { result } = renderHook(() => useSidecarSettings(9000, deps))
+    await waitFor(() => expect(result.current.settings).not.toBeNull())
+
+    let p1: Promise<void> = Promise.resolve()
+    let p2: Promise<void> = Promise.resolve()
+    act(() => {
+      p1 = result.current.liveUpdate({ conf_threshold: 0.1 })
+      p2 = result.current.liveUpdate({ conf_threshold: 0.9 })
+    })
+    await waitFor(() => expect(resolvers.length).toBe(2))
+
+    // Resolve the newer (second) request first...
+    await act(async () => {
+      resolvers[1]()
+      await p2
+    })
+    // ...then the older (first, stale) request settles after.
+    await act(async () => {
+      resolvers[0]()
+      await p1
+    })
+
+    expect(result.current.settings?.conf_threshold).toBe(0.9)
+  })
+})
+
+describe('stored profile', () => {
+  it('loads the saved calibration on mount', async () => {
+    const profile = {
+      device_key: 'StreamCam:0:1280x720',
+      backend: 'MSMF',
+      width: 1280,
+      height: 720,
+      fps_auto_exposure: 29.9,
+      fps_capped_exposure: 30.8,
+      controls: { brightness: true, exposure: true, gain: false, focus: false, autofocus: true },
+      recommended: {},
+      measured_at: 1,
+      measured: {},
+      sweep_version: 1
+    }
+    const { deps } = makeDeps({ getCameraProfile: vi.fn(async () => ({ profile })) })
+
+    const { result } = renderHook(() => useSidecarSettings(9000, deps))
+    await waitFor(() => expect(result.current.storedProfile).not.toBeNull())
+
+    expect(result.current.storedProfile?.controls.focus).toBe(false)
+  })
+
+  it('leaves it null for an uncalibrated camera', async () => {
+    const { deps } = makeDeps({ getCameraProfile: vi.fn(async () => ({ profile: null })) })
+
+    const { result } = renderHook(() => useSidecarSettings(9000, deps))
+    await waitFor(() => expect(result.current.settings).not.toBeNull())
+
+    expect(result.current.storedProfile).toBeNull()
   })
 })

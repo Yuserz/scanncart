@@ -1,0 +1,22 @@
+# Dependencies for the Docker-free local Roboflow inference server.
+#
+# Install into a SEPARATE venv (.venv-inference), never the sidecar's own:
+# `inference` pins numpy/opencv versions that conflict with the ultralytics
+# stack in requirements.txt.
+#
+#   uv venv --python 3.12 .venv-inference
+#   uv pip install --python .venv-inference/Scripts/python.exe -r requirements-inference.txt
+#   .venv-inference/Scripts/python.exe local_inference_server.py
+#
+# Python must be <3.13 — `inference` has no 3.13 wheels.
+
+inference
+
+# The HTTP-server deps. The published `inference` wheel does not declare these
+# (they are baked into Roboflow's Docker image instead), so importing
+# inference.core.interfaces.http.http_api fails without them.
+uvicorn[standard]
+asgi-correlation-id
+fastapi-cprofile
+orjson
+python-multipart

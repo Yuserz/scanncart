@@ -36,7 +36,27 @@ const makeDeps = (
       updateSettings: vi.fn(),
       getSystemInfo: vi.fn(),
       getPresets: vi.fn(),
-      applyPreset: vi.fn()
+      applyPreset: vi.fn(),
+      probeDetector: vi.fn(),
+      getCameras: vi.fn(async () => ({
+        cameras: [{ index: 0, name: 'Fake Cam', width: 1280, height: 720 }],
+        probed: true,
+        detail: ''
+      })),
+      getCameraQuality: vi.fn(async () => ({
+        available: false,
+        brightness: 0,
+        contrast: 0,
+        sharpness: 0,
+        capture_fps: 0,
+        target_fps: 0,
+        verdicts: {},
+        detail: ''
+      })),
+      calibrateCamera: vi.fn(),
+      applyCameraProfile: vi.fn(),
+      saveSettings: vi.fn(),
+      getCameraProfile: vi.fn(async () => ({ profile: null }))
     }),
     streamFactory: (o: StreamClientOptions) => {
       opts = o

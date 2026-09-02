@@ -1,3 +1,3 @@
-from run import pick_port  # re-export
+from run import bind_port  # re-export
 
-__all__ = ["pick_port"]
+__all__ = ["bind_port"]

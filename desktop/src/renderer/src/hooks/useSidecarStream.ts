@@ -7,6 +7,7 @@ import {
   type StreamClient,
   type StreamClientOptions
 } from '../lib/ws'
+import type { SettingsDeps } from './useSidecarSettings'
 
 export interface LoggedItem {
   track_id: number
@@ -18,11 +19,18 @@ export interface LoggedItem {
 export interface StreamDeps {
   apiFactory?: (port: number) => ApiClient
   streamFactory?: (opts: StreamClientOptions) => StreamClient
+  // Passed through to CameraTuning; never used by the stream hook itself.
+  // Lives here so LiveView keeps taking exactly one `deps` prop.
+  settingsDeps?: SettingsDeps
 }
 
 export interface SidecarStream {
   frame: FrameMessage | null
   statusState: string
+  // Last error from the sidecar: a failed start/stop, or a capture that died
+  // mid-session (the pipeline reports that as a status message with a detail).
+  error: string | null
+  clearError: () => void
   connected: boolean
   items: LoggedItem[]
   start: () => Promise<void>
@@ -41,6 +49,7 @@ export function useSidecarStream(port: number, deps: StreamDeps = {}): SidecarSt
 
   const [frame, setFrame] = useState<FrameMessage | null>(null)
   const [statusState, setStatusState] = useState<string>('idle')
+  const [error, setError] = useState<string | null>(null)
   const [connected, setConnected] = useState(false)
   const [items, setItems] = useState<LoggedItem[]>([])
 
@@ -95,7 +104,13 @@ export function useSidecarStream(port: number, deps: StreamDeps = {}): SidecarSt
       if (fresh.length > 0) setItems((prev) => [...prev, ...fresh])
     }
 
-    const onStatus = (msg: StatusMessage): void => setStatus(msg.state)
+    const onStatus = (msg: StatusMessage): void => {
+      setStatus(msg.state)
+      // The sidecar sends state 'error' with a detail when the capture thread
+      // dies (e.g. the inference server went away). Dropping the detail left
+      // the user with a frozen preview and no explanation.
+      if (msg.state === 'error' && msg.detail) setError(msg.detail)
+    }
 
     const client = streamFactory({
       port,
@@ -115,17 +130,32 @@ export function useSidecarStream(port: number, deps: StreamDeps = {}): SidecarSt
     }
   }, [port, apiFactory, streamFactory, setStatus])
 
+  // start/stop swallow their rejection deliberately: the sidecar returns a
+  // real status for a missing API key (401), an unreachable server (503) or a
+  // timeout (504), and the caller renders `error`. Rethrowing here only
+  // produced an unhandled rejection and a silently reset button.
   const start = useCallback(async (): Promise<void> => {
     seenRef.current = new Set()
     setItems([])
-    const r = await apiRef.current!.start()
-    setStatus(r.state)
+    setError(null)
+    try {
+      const r = await apiRef.current!.start()
+      setStatus(r.state)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
   }, [setStatus])
 
   const stop = useCallback(async (): Promise<void> => {
-    const r = await apiRef.current!.stop()
-    setStatus(r.state)
+    try {
+      const r = await apiRef.current!.stop()
+      setStatus(r.state)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
   }, [setStatus])
 
-  return { frame, statusState, connected, items, start, stop }
+  const clearError = useCallback((): void => setError(null), [])
+
+  return { frame, statusState, connected, items, start, stop, error, clearError }
 }

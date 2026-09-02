@@ -34,19 +34,131 @@ export interface SettingsPayload {
   capture_height: number
   capture_fps: number
   conf_threshold: number
+  imgsz: number
+  resize_mode: string
   infer_frame_skip: number
   device: string
   preview_height: number
+  preview_max_fps: number
   track_expiry_s: number
+  detector_backend: string
+  roboflow_workspace: string
+  roboflow_workflow_id: string
+  local_api_url: string
+  cloud_api_url: string
+  remote_infer_size: number
+  remote_timeout_s: number
+  remote_max_retries: number
+  // Device controls. null means "leave the camera alone" — calibration owns
+  // these, they are not hand-editable in the settings form.
+  camera_brightness: number | null
+  camera_exposure: number | null
+  camera_autofocus: boolean | null
+  camera_focus: number | null
 }
 
 export interface SettingsResponse extends SettingsPayload {
   hot_reloadable_fields: string[]
   restart_required_fields: string[]
   warnings: string[]
+  // Presence only — the sidecar never sends the key itself.
+  roboflow_api_key_present: boolean
 }
 
-export type SettingsUpdate = Partial<SettingsPayload>
+// One enumerated capture device. width/height are what the device actually
+// opened at — the operator's check that `name` landed on the right index,
+// since the sidecar pairs names to indices positionally.
+export interface CameraInfo {
+  index: number
+  name: string
+  width: number
+  height: number
+}
+
+export interface CamerasResponse {
+  cameras: CameraInfo[]
+  // False means the list is cached, not a fresh scan: probing opens each
+  // device, so it is skipped while capture holds one.
+  probed: boolean
+  detail: string
+}
+
+// Result of POST /api/detector/probe: checks the selected backend is usable
+// before the user starts capture.
+export interface DetectorProbeResponse {
+  backend: string
+  reachable: boolean
+  detail: string
+  latency_ms: number | null
+  class_names: string[]
+}
+
+// Mirrors sidecar/app/schemas.py::SettingsUpdateRequest. `reset_fields` names
+// settings to set back to null; it exists because the sidecar drops nulls from
+// a patch (exclude_none), so "leave the camera alone" cannot travel as a value.
+// Only the four camera controls are resettable — see RESETTABLE_FIELDS.
+export type SettingsUpdate = Partial<SettingsPayload> & {
+  reset_fields?: (keyof SettingsPayload)[]
+}
+
+export interface CameraQualityResponse {
+  available: boolean
+  brightness: number
+  contrast: number
+  sharpness: number
+  capture_fps: number
+  target_fps: number
+  verdicts: Record<string, string>
+  detail: string
+}
+
+// Which physical device controls the camera actually accepted during
+// calibration (a StreamCam commonly lacks gain/focus control, for instance).
+// Mirrors sidecar/app/camera_caps.py::ControlSupport. `autofocus` is measured
+// by probe_autofocus, not asked of the driver.
+export interface CameraControlSupport {
+  brightness: boolean
+  exposure: boolean
+  gain: boolean
+  focus: boolean
+  autofocus: boolean
+}
+
+// One entry of CameraProfile.measured: what the sweep found for one control.
+// `baseline` is the metric before the sweep, so the card can show the
+// improvement rather than a bare number.
+export interface MeasuredControl {
+  value: number
+  metric: number
+  baseline: number
+  reached: boolean
+  probes: number
+}
+
+// Mirrors sidecar/app/schemas.py::CameraProfileResponse. Applies nothing on
+// its own — POST /api/camera/calibrate only measures; the operator reviews
+// fps_auto_exposure vs fps_capped_exposure (the evidence) before choosing to
+// apply `recommended` via POST /api/camera/profile/apply.
+export interface CameraProfileResponse {
+  device_key: string
+  backend: string
+  width: number
+  height: number
+  fps_auto_exposure: number
+  fps_capped_exposure: number
+  controls: CameraControlSupport
+  recommended: Record<string, unknown>
+  measured_at: number
+  measured: Record<string, MeasuredControl>
+  // 0 = calibrated before levels were measured, not "nothing is supported".
+  sweep_version: number
+}
+
+// Mirrors sidecar/app/schemas.py::StoredProfileResponse. `profile` is null
+// for a camera that has never been calibrated — a normal state, not an error.
+export interface StoredProfileResponse {
+  profile: CameraProfileResponse | null
+}
 
 export interface SystemInfoResponse {
   cpu_count: number
@@ -76,10 +188,27 @@ export interface ApiClient {
   stop(): Promise<StateResponse>
   getLogs(): Promise<LogsResponse>
   getSettings(): Promise<SettingsResponse>
-  updateSettings(patch: SettingsUpdate): Promise<SettingsResponse>
+  // persist=false applies the change to the running camera/detector without
+  // writing settings.json — the Live tab's tuning card drags sliders through
+  // this, then commits once via saveSettings().
+  updateSettings(patch: SettingsUpdate, persist?: boolean): Promise<SettingsResponse>
+  saveSettings(): Promise<SettingsResponse>
+  // The stored calibration for the currently configured camera, or
+  // { profile: null } if it has never been calibrated.
+  getCameraProfile(): Promise<StoredProfileResponse>
   getSystemInfo(): Promise<SystemInfoResponse>
   getPresets(): Promise<PresetsResponse>
   applyPreset(name: string): Promise<SettingsResponse>
+  probeDetector(): Promise<DetectorProbeResponse>
+  // rescan re-opens every device (slow); omit it to take the cached list.
+  getCameras(rescan?: boolean): Promise<CamerasResponse>
+  getCameraQuality(): Promise<CameraQualityResponse>
+  // Measures the camera; applies nothing. 409 while capture is running (the
+  // camera is exclusive) — the caller disables the button in that state.
+  calibrateCamera(): Promise<CameraProfileResponse>
+  // Applies the most recently calibrated profile's `recommended` patch. 404
+  // if nothing has been calibrated yet.
+  applyCameraProfile(): Promise<SettingsResponse>
 }
 
 export function createApiClient(port: number): ApiClient {
@@ -101,6 +230,19 @@ export function createApiClient(port: number): ApiClient {
           }
     const res = await fetch(`${base}${path}`, init)
     if (!res.ok) {
+      // The sidecar puts the actionable half of every refusal in `detail` —
+      // "Calibration is in progress; the camera is exclusive", "Cannot change
+      // [...] while capture is running; stop capture first". Throwing the bare
+      // status discarded exactly the sentence that tells an operator what to
+      // do, leaving them with "failed: 409". FastAPI's own validation errors
+      // put a list there instead, which is for us, not them — fall back.
+      let detail: unknown
+      try {
+        detail = (await res.json())?.detail
+      } catch {
+        // Not a JSON body; the status line is all there is.
+      }
+      if (typeof detail === 'string' && detail !== '') throw new Error(detail)
       throw new Error(`sidecar ${method} ${path} failed: ${res.status}`)
     }
     return (await res.json()) as T
@@ -112,9 +254,18 @@ export function createApiClient(port: number): ApiClient {
     stop: () => request<StateResponse>('/capture/stop', 'POST'),
     getLogs: () => request<LogsResponse>('/logs', 'GET'),
     getSettings: () => request<SettingsResponse>('/settings', 'GET'),
-    updateSettings: (patch) => request<SettingsResponse>('/settings', 'PATCH', patch),
+    updateSettings: (patch, persist = true) =>
+      request<SettingsResponse>(`/settings${persist ? '' : '?persist=false'}`, 'PATCH', patch),
+    saveSettings: () => request<SettingsResponse>('/settings/save', 'POST'),
+    getCameraProfile: () => request<StoredProfileResponse>('/camera/profile', 'GET'),
     getSystemInfo: () => request<SystemInfoResponse>('/system-info', 'GET'),
     getPresets: () => request<PresetsResponse>('/presets', 'GET'),
-    applyPreset: (name) => request<SettingsResponse>('/settings/preset', 'POST', { name })
+    applyPreset: (name) => request<SettingsResponse>('/settings/preset', 'POST', { name }),
+    probeDetector: () => request<DetectorProbeResponse>('/detector/probe', 'POST'),
+    getCameras: (rescan) =>
+      request<CamerasResponse>(`/cameras${rescan ? '?rescan=true' : ''}`, 'GET'),
+    getCameraQuality: () => request<CameraQualityResponse>('/camera/quality', 'GET'),
+    calibrateCamera: () => request<CameraProfileResponse>('/camera/calibrate', 'POST'),
+    applyCameraProfile: () => request<SettingsResponse>('/camera/profile/apply', 'POST')
   }
 }

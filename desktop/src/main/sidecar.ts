@@ -11,7 +11,11 @@ export interface SpawnedLike {
 }
 
 export interface SupervisorOptions {
-  spawnFn: (command: string, args: string[], options: { cwd?: string }) => SpawnedLike
+  spawnFn: (
+    command: string,
+    args: string[],
+    options: { cwd?: string; env?: NodeJS.ProcessEnv }
+  ) => SpawnedLike
   pythonPath: string
   scriptPath: string
   cwd?: string
@@ -38,7 +42,14 @@ export class SidecarSupervisor {
     this.portReported = false
     this.stdoutBuf = ''
     const { spawnFn, pythonPath, scriptPath, cwd } = this.opts
-    const child = spawnFn(pythonPath, [scriptPath], { cwd })
+    // Name our own pid so the sidecar can exit if we die without running
+    // before-quit (a crash, or a force-kill). It cannot infer this itself:
+    // .venv/Scripts/python.exe is a shim that re-execs the real interpreter,
+    // so the sidecar's immediate parent is that shim, not us.
+    const child = spawnFn(pythonPath, [scriptPath], {
+      cwd,
+      env: { ...process.env, SIDECAR_PARENT_PID: String(process.pid) }
+    })
     this.child = child
 
     child.stdout?.on('data', (chunk) => this.onStdout(chunk.toString()))

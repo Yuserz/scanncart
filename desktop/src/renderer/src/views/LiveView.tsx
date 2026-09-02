@@ -1,6 +1,8 @@
-import { type JSX } from 'react'
+import { useState, type CSSProperties, type JSX } from 'react'
 import { useSidecarStream, type StreamDeps } from '../hooks/useSidecarStream'
 import { boxToPercent } from '../lib/overlay'
+import { Spinner } from '../components/Spinner'
+import { CameraTuning } from '../components/CameraTuning'
 import './LiveView.css'
 
 export interface LiveViewProps {
@@ -9,13 +11,48 @@ export interface LiveViewProps {
 }
 
 export function LiveView({ port, deps }: LiveViewProps): JSX.Element {
-  const { frame, statusState, connected, items, start, stop } = useSidecarStream(port, deps)
+  const { frame, statusState, connected, items, start, stop, error, clearError } = useSidecarStream(
+    port,
+    deps
+  )
   const running = statusState === 'running'
   const stats = frame?.stats
   const trackedCount = frame?.detections.length ?? 0
+  // Real decoded frame size, read on img load — drives the wrapper's
+  // aspect-ratio and fit-to-column sizing in CSS (falls back to 16/9
+  // while idle). Same-value updates bail out, so per-frame loads are free.
+  const [frameSize, setFrameSize] = useState<{ w: number; h: number } | null>(null)
+  const previewStyle: CSSProperties | undefined = frameSize
+    ? ({ '--preview-w': `${frameSize.w}`, '--preview-h': `${frameSize.h}` } as CSSProperties)
+    : undefined
+  // Purely presentational: start/stop block on the sidecar (model load,
+  // possibly a one-time weight download), so surface that wait in the UI.
+  const [pending, setPending] = useState<'start' | 'stop' | null>(null)
+  // Calibration holds the camera exclusively, so the sidecar 409s any start
+  // during it. Offering the button anyway turned a known constraint into an
+  // error banner the operator had to interpret.
+  const [cameraBusy, setCameraBusy] = useState(false)
+
+  const handleToggle = async (): Promise<void> => {
+    const action = running ? stop : start
+    setPending(running ? 'stop' : 'start')
+    try {
+      await action()
+    } finally {
+      setPending(null)
+    }
+  }
 
   return (
     <div className="live-view">
+      {error !== null && (
+        <div className="live-error" role="alert" data-testid="live-error">
+          <span>{error}</span>
+          <button className="btn-outline btn-small" onClick={clearError} aria-label="Dismiss error">
+            Dismiss
+          </button>
+        </div>
+      )}
       <div className="live-toolbar">
         <span className={`status-dot${running ? ' running' : ''}`} aria-hidden="true" />
         <span className="state" data-testid="state">
@@ -26,24 +63,56 @@ export function LiveView({ port, deps }: LiveViewProps): JSX.Element {
         </span>
         <button
           className={running ? 'btn-stop' : 'btn-start'}
-          onClick={running ? stop : start}
+          onClick={() => void handleToggle()}
+          disabled={pending !== null || cameraBusy}
           aria-label={running ? 'Stop' : 'Start'}
+          title={cameraBusy ? 'Calibration is using the camera' : undefined}
         >
-          {running ? 'Stop' : 'Start'}
+          {pending !== null ? (
+            <>
+              <Spinner size={12} />
+              {pending === 'start' ? 'Starting…' : 'Stopping…'}
+            </>
+          ) : running ? (
+            'Stop'
+          ) : (
+            'Start'
+          )}
         </button>
       </div>
 
       <div className="live-body">
         <div className="feed-col">
-          <div className="preview-wrapper">
+          <div className="preview-wrapper" data-testid="preview-wrapper" style={previewStyle}>
             {frame ? (
               <img
                 className="preview-img"
                 alt="live preview"
                 src={`data:image/jpeg;base64,${frame.jpeg}`}
+                onLoad={(e) => {
+                  const { naturalWidth: w, naturalHeight: h } = e.currentTarget
+                  if (w > 0 && h > 0) {
+                    setFrameSize((prev) => (prev && prev.w === w && prev.h === h ? prev : { w, h }))
+                  }
+                }}
               />
             ) : (
-              <div className="preview-placeholder">Waiting for frames…</div>
+              <div className="preview-placeholder" data-testid="preview-placeholder">
+                {pending === 'start' ? (
+                  <>
+                    <Spinner size={22} />
+                    <span>Loading model…</span>
+                    <small>first use of a model downloads its weights (one time)</small>
+                  </>
+                ) : running ? (
+                  <>
+                    <Spinner size={22} />
+                    <span>Waiting for frames…</span>
+                  </>
+                ) : (
+                  'Waiting for frames…'
+                )}
+              </div>
             )}
             <div className="overlay" data-testid="overlay">
               {frame?.detections
@@ -101,6 +170,15 @@ export function LiveView({ port, deps }: LiveViewProps): JSX.Element {
               )}
             </div>
           </div>
+
+          <CameraTuning
+            port={port}
+            running={running}
+            start={start}
+            stop={stop}
+            onCameraBusy={setCameraBusy}
+            deps={deps?.settingsDeps}
+          />
 
           <div className="card log-card">
             <h4>
