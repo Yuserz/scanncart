@@ -49,6 +49,19 @@ def test_binary_search_returns_the_lo_bound_when_the_floor_already_overshoots():
     assert result.reached is False
 
 
+def test_binary_search_flat_curve_returns_lo_when_floor_overshoots():
+    """On a monotone curve, if the floor already overshoots then the floor is
+    the closest achievable. An exact tie between the two bounds (flat curve)
+    must not hand back the top of the range — for exposure that would mean
+    recommending the longest shutter time instead of the shortest for identical
+    measured brightness, costing framerate for no gain."""
+    result = search_to_target(lambda v: 500.0, lo=-13, hi=-5, target=130.0, tolerance=1.0)
+
+    assert result.value == -13
+    assert result.reached is False
+    assert result.probes == 2
+
+
 def test_binary_search_respects_its_probe_budget():
     calls = []
 

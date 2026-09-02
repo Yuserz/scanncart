@@ -107,7 +107,18 @@ def search_to_target(
 
     # `lo`: if the floor already overshoots, `lo` is the closest achievable.
     record(lo, probe(lo))
-    if metrics[-1] >= target or len(metrics) >= max_probes:
+    if metrics[-1] >= target:
+        # Floor overshoots: lo is the closest achievable value. Return it directly
+        # instead of deferring to distance comparison, which would incorrectly pick
+        # hi on a flat curve where both bounds overshoot equally.
+        return SearchResult(
+            value=lo,
+            metric=metrics[-1],
+            probes=len(metrics),
+            span=max(metrics) - min(metrics),
+            reached=abs(metrics[-1] - target) <= tolerance,
+        )
+    if len(metrics) >= max_probes:
         return finish()
 
     # The target lies strictly between the two bounds: bracket it.
