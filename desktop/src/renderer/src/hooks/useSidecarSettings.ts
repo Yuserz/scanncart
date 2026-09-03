@@ -326,7 +326,8 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
         reachable: false,
         detail: errorMessage(e),
         latency_ms: null,
-        class_names: []
+        class_names: [],
+        provider: null
       }
       setProbeResult(failed)
       return failed

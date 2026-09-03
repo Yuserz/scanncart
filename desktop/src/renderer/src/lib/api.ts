@@ -84,13 +84,17 @@ export interface CamerasResponse {
 }
 
 // Result of POST /api/detector/probe: checks the selected backend is usable
-// before the user starts capture.
+// before the user starts capture. `provider` is native-only: the onnxruntime
+// execution provider or torch device actually backing inference (e.g.
+// "CUDAExecutionProvider" vs "CPUExecutionProvider"), so a silent CPU
+// fallback is visible before capture starts.
 export interface DetectorProbeResponse {
   backend: string
   reachable: boolean
   detail: string
   latency_ms: number | null
   class_names: string[]
+  provider: string | null
 }
 
 // Mirrors sidecar/app/schemas.py::SettingsUpdateRequest. `reset_fields` names

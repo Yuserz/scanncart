@@ -98,7 +98,74 @@ class YoloDetector:
             # Must run before ultralytics builds the ONNX session.
             enable_onnx_cuda()
         self._stretch = resize_mode == "stretch"
-        self.names = self._model.names
+        # Deliberately not self._model.names: for export formats (ONNX) that
+        # property sets up a full predictor and builds the session — with the
+        # *default* device — and the first infer() then builds a second one
+        # with the real device. Two expensive session builds per detector, one
+        # pure waste. Filled from the first inference result instead, exactly
+        # like RoboflowRemoteDetector does. See the native-detection design doc
+        # (2026-09-04) §A2.
+        self.names: dict = {}
+
+    @property
+    def provider(self) -> str | None:
+        """What actually backs inference, once a session exists.
+
+        For an ONNX model this is the onnxruntime execution provider in use
+        (e.g. "CUDAExecutionProvider" or "CPUExecutionProvider") — the thing
+        that answers "am I really on the GPU?" when `device` says cuda but the
+        CPU-only onnxruntime wheel is installed. For a torch model it is the
+        resolved device ("cuda:0", "cpu"). None before the first infer() has
+        built the session.
+        """
+        backend = getattr(getattr(self._model, "predictor", None), "model", None)
+        if backend is None:
+            return None
+        session = getattr(backend, "session", None)
+        if session is not None:
+            try:
+                providers = session.get_providers()
+            except Exception:  # noqa: BLE001 - best-effort report
+                return None
+            return providers[0] if providers else None
+        device = getattr(backend, "device", None)
+        if device is not None:
+            return str(device)
+        return None
+
+    def close(self) -> None:
+        """Release the loaded model so capture stop frees VRAM deterministically.
+
+        _teardown_capture() calls close() on detectors; without this the
+        ultralytics wrapper (and its CUDA tensors) stayed alive until Python
+        GC ran — invisible on one start/stop, accumulating VRAM across many.
+        Best-effort and idempotent: never raises, CPU-only installs no-op.
+        """
+        model = self._model
+        self._model = None
+        self.names = {}
+        if model is not None:
+            try:
+                predictor = getattr(model, "predictor", None)
+                if predictor is not None:
+                    backend = getattr(predictor, "model", None)
+                    if backend is not None:
+                        # Whatever the backend held: the ORT session, the torch
+                        # module, an OpenCV net. None-ing drops the reference
+                        # so torch can release its CUDA tensors without GC.
+                        for attr in ("session", "model", "net"):
+                            setattr(backend, attr, None)
+                    predictor.model = None
+                model.predictor = None
+                model.model = None
+            except Exception:  # noqa: BLE001 - close must never raise
+                pass
+        if "cuda" in str(self._device):
+            try:
+                import torch
+                torch.cuda.empty_cache()
+            except Exception:  # noqa: BLE001 - CPU-only installs must still close
+                pass
 
     def set_conf(self, value: float) -> None:
         """Change the confidence threshold on a running detector.
@@ -132,6 +199,8 @@ class YoloDetector:
         if not results:
             return []
         r = results[0]
+        if not self.names and getattr(r, "names", None):
+            self.names = dict(r.names)
         boxes = r.boxes
         if boxes is None or len(boxes) == 0:
             return []

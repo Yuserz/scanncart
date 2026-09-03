@@ -72,7 +72,8 @@ export function makeDeps(overrides: Partial<ApiClient> = {}): {
       reachable: true,
       detail: 'ok',
       latency_ms: 10,
-      class_names: ['banana']
+      class_names: ['banana'],
+      provider: 'CPUExecutionProvider'
     })),
     getCameraQuality: vi.fn(async () => ({
       available: false,

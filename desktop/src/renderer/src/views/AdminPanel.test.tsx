@@ -125,7 +125,10 @@ describe('AdminPanel', () => {
         return baseSettings()
       })
     })
-    deps.retryDelayMs = 10
+    // Must outlast waitFor's ~50 ms polling, or the transient error panel
+    // (visible only between the failed load and the auto-retry) is skipped
+    // entirely and this flakes.
+    deps.retryDelayMs = 200
     render(<AdminPanel port={8765} deps={deps} />)
 
     await waitFor(() => expect(screen.getByTestId('admin-error')).toBeInTheDocument())

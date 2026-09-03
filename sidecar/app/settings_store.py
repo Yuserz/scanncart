@@ -4,7 +4,7 @@ import threading
 from dataclasses import fields
 from typing import Any
 
-from app.settings import Settings
+from app.settings import Settings, resolve_device
 
 DEFAULT_SETTINGS_PATH = "data/settings.json"
 
@@ -53,12 +53,19 @@ def is_custom_model(value: str) -> bool:
 def resolve_resize_mode(mode: str, active_model: str) -> str:
     """"auto" means: match how this model was trained.
 
-    A custom model under models/ is a Roboflow export, and Roboflow's default
-    preprocessing is "Stretch to". The stock YOLO weights are letterbox-trained.
+    A custom .onnx under models/ is a Roboflow export, and Roboflow's default
+    preprocessing is "Stretch to". A custom .pt is a locally trained
+    checkpoint — ultralytics cannot export ONNX -> .pt and Roboflow .pt
+    exports are Core-gated, so local training is the only way to obtain one —
+    and ultralytics' own training pipeline letterboxes. The stock YOLO weights
+    are letterbox-trained too, so the split is: custom .onnx -> stretch,
+    everything else -> letterbox.
     """
     if mode != "auto":
         return mode
-    return "stretch" if is_custom_model(active_model) else "letterbox"
+    if is_custom_model(active_model) and active_model.lower().endswith(".onnx"):
+        return "stretch"
+    return "letterbox"
 
 
 def is_allowed_model(value: object) -> bool:
@@ -224,6 +231,25 @@ def save_settings(settings: Settings, path: str = DEFAULT_SETTINGS_PATH) -> None
         os.replace(tmp_path, path)
 
 
+def _cuda_provider_available() -> bool:
+    """Whether onnxruntime can actually run on this machine's CUDA GPU.
+
+    `onnxruntime.get_available_providers()` answers what the *installed wheel*
+    was compiled with: the CPU wheel lists only CPUExecutionProvider, the GPU
+    wheel lists CUDA (and TensorRT). Import is lazy and failures mean
+    "unavailable" — the point is to catch a silent CPU fallback, never to
+    raise while checking for one.
+    """
+    try:
+        import onnxruntime
+    except ImportError:
+        return False
+    try:
+        return "CUDAExecutionProvider" in onnxruntime.get_available_providers()
+    except Exception:  # noqa: BLE001 - a broken runtime is an unavailable one
+        return False
+
+
 def compute_warnings(
     settings: Settings, state: str, api_key_present: bool | None = None
 ) -> list[str]:
@@ -266,6 +292,23 @@ def compute_warnings(
             f"{settings.local_api_url} (`inference server start`). Use Test Connection "
             "before starting capture."
         )
+    if (
+        settings.detector_backend == "native"
+        and settings.active_model.lower().endswith(".onnx")
+        and resolve_device(settings.device) == "cuda"
+        and not _cuda_provider_available()
+    ):
+        # device resolves via torch, but a .onnx runs through onnxruntime,
+        # whose provider selection is independent of torch. With the CPU wheel
+        # installed (the requirements.txt default) ultralytics logs "CUDA
+        # requested but CUDAExecutionProvider not available. Using CPU..." —
+        # a line nobody in the app ever sees. Surface it here instead.
+        warnings.append(
+            "The custom .onnx would silently run on the CPU: the sidecar ships "
+            "the CPU build of onnxruntime, and this machine asked for cuda. "
+            "Install onnxruntime-gpu from sidecar/requirements-cuda.txt to "
+            "run inference on the GPU."
+        )
     if settings.active_model in EXPERIMENTAL_MODELS:
         warnings.append(
             f"{settings.active_model} is experimental: presets and tuning guidance "
@@ -276,6 +319,17 @@ def compute_warnings(
     if state == "running":
         locked = ", ".join(sorted(RESTART_REQUIRED_FIELDS))
         warnings.append(f"Capture is running — {locked} require stopping capture first.")
+    if (
+        is_custom_model(settings.active_model)
+        and settings.active_model.lower().endswith(".pt")
+        and settings.resize_mode == "stretch"
+    ):
+        warnings.append(
+            "resize_mode=stretch with a custom .pt: a locally trained checkpoint "
+            "is letterbox-trained, so stretching shrinks objects below their "
+            "training scale. 'auto' resolves to letterbox for .pt — keep stretch "
+            "only for a Roboflow-exported model you know trained stretched."
+        )
     if settings.imgsz > 960:
         warnings.append(
             "imgsz above 960 sharply raises inference latency; small/fast-moving "

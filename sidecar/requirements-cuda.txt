@@ -1,0 +1,17 @@
+# GPU build of onnxruntime, for running the custom grocery .onnx on an NVIDIA
+# GPU through the `native` backend. The portable default in requirements.txt
+# is the CPU build; the two share the `onnxruntime` import name, so installing
+# one after the other breaks whichever was there first — never install both,
+# and never "upgrade" the CPU build to this without uninstalling it first.
+#
+# Version pairing is load-bearing: onnxruntime-gpu does not bundle its CUDA
+# runtime and dlopens cublas/cudnn from torch's lib directory (see
+# app/inference.py::enable_onnx_cuda). The minor must match the CUDA major
+# torch ships: 1.22.x wants CUDA 12 (matches torch 2.6.0+cu124 in the sidecar
+# venv — verified working 2026-09-04), while 1.29+ wants CUDA 13, which torch
+# does not ship; the session then fails at bind_input with "no data transfer
+# registered".
+#
+# Install after `make install` has created the venv:
+#   uv pip install --python .venv/Scripts/python.exe -r requirements-cuda.txt
+onnxruntime-gpu>=1.22,<1.23

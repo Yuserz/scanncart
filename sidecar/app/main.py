@@ -661,15 +661,57 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
             import os
 
             model = state.settings.active_model
-            found = os.path.exists(model)
+            if not os.path.exists(model):
+                # Keep the old cheap answer for the missing case: the probe
+                # must never trigger a download or a network hit.
+                return DetectorProbeResponse(
+                    backend=backend,
+                    reachable=True,
+                    detail=f"{model} not on disk; ultralytics will download it on first start.",
+                )
+
+            def _run_native_probe():
+                import time as _time
+
+                detector = state.detector_factory(state.settings, state.device)
+                try:
+                    frame = np.zeros((64, 64, 3), dtype=np.uint8)
+                    # Warm the session first: the first infer builds the ONNX
+                    # session / loads the weights (~7 s for ultralytics, more
+                    # for a CUDA session), which is exactly the cold hit a
+                    # pre-start probe exists to move out of capture start.
+                    detector.infer(frame)
+                    started = _time.perf_counter()
+                    detector.infer(frame)
+                    elapsed = (_time.perf_counter() - started) * 1000.0
+                    return (
+                        elapsed,
+                        sorted(str(v) for v in detector.names.values()),
+                        getattr(detector, "provider", None),
+                    )
+                finally:
+                    closer = getattr(detector, "close", None)
+                    if callable(closer):
+                        closer()
+
+            try:
+                latency_ms, class_names, provider = await run_in_threadpool(
+                    _run_native_probe
+                )
+            except Exception as exc:  # noqa: BLE001 - a load failure is a probe failure
+                return DetectorProbeResponse(
+                    backend=backend, reachable=False, detail=str(exc)
+                )
+            detail = f"{model} loaded."
+            if provider:
+                detail += f" Inference on {provider}."
             return DetectorProbeResponse(
                 backend=backend,
                 reachable=True,
-                detail=(
-                    f"{model} present."
-                    if found
-                    else f"{model} not on disk; ultralytics will download it on first start."
-                ),
+                detail=detail,
+                latency_ms=round(latency_ms, 1),
+                class_names=class_names,
+                provider=provider,
             )
 
         def _run_probe():

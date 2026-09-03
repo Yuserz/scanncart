@@ -223,12 +223,17 @@ class CameraQualityResponse(BaseModel):
 
 
 class DetectorProbeResponse(BaseModel):
-    """Result of checking the selected backend before capture starts."""
+    """Result of checking the selected backend before capture starts.
+
+    `provider` is native-only: the onnxruntime execution provider or torch
+    device actually backing inference, so an operator can see a silent CPU
+    fallback before starting capture."""
     backend: str
     reachable: bool
     detail: str = ""
     latency_ms: float | None = None
     class_names: list[str] = []
+    provider: str | None = None
 
 
 class ApplyPresetRequest(BaseModel):

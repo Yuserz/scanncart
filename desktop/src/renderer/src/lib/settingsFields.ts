@@ -47,7 +47,7 @@ export const BACKEND_LABELS: Record<string, string> = {
 
 export const BACKEND_HINTS: Record<string, string> = {
   native:
-    'Runs the model inside the sidecar. Works fully offline and is the only backend that meets the "no cloud" requirement. Needs the weights file on disk. Speed is GPU-bound, not backend-bound — a GTX 1050 Ti measured ~40 ms/frame, about the same as a local API server on the same PC.',
+    'Runs the model inside the sidecar. Works fully offline and is the only backend that meets the "no cloud" requirement. Needs the weights file on disk. Speed is GPU-bound, not backend-bound — a GTX 1050 Ti measured ~40 ms/frame, about the same as a local API server on the same PC. For the custom .onnx, the GPU path needs onnxruntime-gpu (sidecar/requirements-cuda.txt); with the CPU build installed, inference silently falls back to CPU.',
   local_api:
     'Calls a Roboflow inference server running on this same PC. Stays offline, costs nothing, and measured ~90 ms warm, but adds a second process and an HTTP hop per inference. See docs/DETECTOR_BACKENDS.md to run it without Docker.',
   cloud_api:

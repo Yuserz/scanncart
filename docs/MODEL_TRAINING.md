@@ -159,19 +159,34 @@ images of that item rather than tweaking hyperparameters.
 
 ## 7. Integrating the Trained Weights
 
-⚠️ **Custom weights will not load as-is.** `ALLOWED_MODELS` in `sidecar/app/settings_store.py` is a
-hardcoded whitelist of stock YOLO filenames, and the `active_model` validator in
-`sidecar/app/schemas.py` rejects anything else with a `422`.
+Custom weights are **first-class** — no whitelist edits needed. Any `.pt` (or `.onnx`) dropped
+into `sidecar/models/` is valid: `is_custom_model()` (`sidecar/app/settings_store.py`) accepts it,
+the `active_model` validator passes it, and the Admin Panel's Model picker offers it (the
+renderer's `ALLOWED_MODELS` mirror in `settingsFields.ts` covers `models/...` paths via the
+`CUSTOM_MODEL` convention). The `yolo11n/s/m/l/x.pt` entries in that list exist only to keep the
+stock COCO weights selectable.
 
 Checklist to wire in `best.pt`:
 
-1. Copy the trained weights to `sidecar/` with a descriptive name, e.g. `scanncart-grocery10.pt`.
-2. Add that filename to `ALLOWED_MODELS` in `sidecar/app/settings_store.py`.
-3. Mirror it in `ALLOWED_MODELS` in `desktop/src/renderer/src/lib/settingsFields.ts` — these two
-   lists are kept in sync **by hand** (see the hand-sync convention in `CLAUDE.md`).
-4. Optionally add a `MODEL_SPEC_HINTS` entry so the Admin Panel shows hardware guidance for it.
-5. Select it in the Admin Panel. `active_model` is a **restart-required** field
+1. Copy the trained weights into `sidecar/models/` with a descriptive name, e.g.
+   `scanncart-grocery10.pt`.
+2. (Optional) Add a `MODEL_SPEC_HINTS` entry in
+   `desktop/src/renderer/src/lib/settingsFields.ts` so the Admin Panel can show hardware guidance
+   for it.
+3. Select it in the Admin Panel. `active_model` is a **restart-required** field
    (`RESTART_REQUIRED_FIELDS`), so capture must be stopped before saving.
+
+Two things the old whitelist path silently decided for you:
+
+- **`resize_mode` is format-aware now.** `auto` resolves to `stretch` for a custom `.onnx` (a
+  Roboflow export, trained stretched) and to `letterbox` for a custom `.pt` (a locally trained
+  checkpoint — the output of this guide — trained letterboxed). Only force `stretch` for a `.pt`
+  if you know the export trained stretched; see `resolve_resize_mode()` in
+  `sidecar/app/settings_store.py`.
+- **GPU.** A `.pt` runs on torch directly, so `device: "auto"` resolving to `cuda` is the fast
+  path (docs measured ~25 ms/frame in-app on a GTX 1050 Ti, vs ~91 ms for the custom ONNX on
+  CPU). The CUDA requirement is on the torch install, not on onnxruntime — that only matters
+  for `.onnx` models (see `docs/DETECTOR_BACKENDS.md §1a` and `sidecar/requirements-cuda.txt`).
 
 ### Post-integration tuning
 

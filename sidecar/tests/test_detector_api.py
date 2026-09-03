@@ -105,12 +105,15 @@ def client_for(tmp_path, detector_factory=None, **over):
 
 
 class FakeDetector:
-    def __init__(self, raises=None, names=None):
+    def __init__(self, raises=None, names=None, provider=None):
         self.raises = raises
         self.names = names or {}
+        self.provider = provider
         self.closed = False
+        self.infer_calls = 0
 
     def infer(self, frame):
+        self.infer_calls += 1
         if self.raises:
             raise self.raises
         return []
@@ -119,19 +122,68 @@ class FakeDetector:
         self.closed = True
 
 
-def test_probe_native_reports_reachable(tmp_path):
-    r = client_for(tmp_path, detector_backend="native").post("/api/detector/probe").json()
-    assert r["backend"] == "native"
-    assert r["reachable"] is True
-
-
-def test_probe_native_flags_missing_weights(tmp_path):
+def test_probe_native_builds_and_measures_the_detector(tmp_path, monkeypatch):
+    """The native probe does what the remote one already did: build the
+    detector through the factory, warm the session, measure a real inference
+    and report what it found — latency, the 7 SKUs, and the provider."""
+    monkeypatch.setattr("os.path.exists", lambda _p: True)
+    fake = FakeDetector(names={3: "milo"}, provider="CUDAExecutionProvider")
     r = (
-        client_for(tmp_path, detector_backend="native", active_model="yolo11x.pt")
+        client_for(tmp_path, lambda s, d: fake, detector_backend="native")
         .post("/api/detector/probe")
         .json()
     )
-    assert "not on disk" in r["detail"] or "present" in r["detail"]
+    assert r["backend"] == "native"
+    assert r["reachable"] is True
+    assert r["latency_ms"] is not None
+    assert r["class_names"] == ["milo"]
+    assert r["provider"] == "CUDAExecutionProvider"
+    # One warmup call plus one measured call.
+    assert fake.infer_calls == 2
+    assert fake.closed is True
+
+
+def test_probe_native_missing_weights_short_circuits_without_building(tmp_path, monkeypatch):
+    """A missing file is reported as a future download, never probed — the
+    probe must not trigger a download or a network hit."""
+    monkeypatch.setattr("os.path.exists", lambda _p: False)
+    built = []
+
+    def factory(settings, device):
+        built.append(1)
+        return FakeDetector()
+
+    r = (
+        client_for(tmp_path, factory, detector_backend="native", active_model="yolo11x.pt")
+        .post("/api/detector/probe")
+        .json()
+    )
+    assert r["reachable"] is True
+    assert "not on disk" in r["detail"]
+    assert built == []
+
+
+def test_probe_native_load_failure_is_unreachable(tmp_path, monkeypatch):
+    """A model that fails to load or infer surfaces in the probe response,
+    not as a failed capture start."""
+    monkeypatch.setattr("os.path.exists", lambda _p: True)
+    fake = FakeDetector(raises=RuntimeError("corrupt weights"))
+    r = (
+        client_for(tmp_path, lambda s, d: fake, detector_backend="native")
+        .post("/api/detector/probe")
+        .json()
+    )
+    assert r["reachable"] is False
+    assert "corrupt weights" in r["detail"]
+
+
+def test_probe_native_load_failure_still_closes_the_detector(tmp_path, monkeypatch):
+    monkeypatch.setattr("os.path.exists", lambda _p: True)
+    fake = FakeDetector(raises=RuntimeError("boom"))
+    client_for(tmp_path, lambda s, d: fake, detector_backend="native").post(
+        "/api/detector/probe"
+    )
+    assert fake.closed is True
 
 
 def test_probe_remote_success_reports_latency_and_classes(tmp_path):

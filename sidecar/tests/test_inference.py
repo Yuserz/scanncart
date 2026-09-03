@@ -74,6 +74,113 @@ def test_yolo_detector_infer_converts_results():
     assert out[0].box[0] == 10.0 / 30.0
 
 
+def test_names_are_lazy_until_the_first_infer():
+    """Reading `.names` on an export format makes ultralytics set up a full
+    predictor and build the session — with the *default* device — so the
+    constructor must not touch it, or the first infer() builds a second
+    session with the real device. Design doc 2026-09-04 §A2.
+    """
+
+    class FakeModel:
+        names = {0: "apple"}
+
+        def track(self, frame, **kw):
+            return [_FakeResult()]
+
+    det = YoloDetector(
+        "models/x.onnx", device="cpu", conf=0.5, model_factory=lambda p: FakeModel()
+    )
+    assert det.names == {}
+    det.infer(np.zeros((8, 8, 3), dtype=np.uint8))
+    assert det.names == {0: "bottle"}
+
+
+class _FakeSession:
+    def get_providers(self):
+        return ["CUDAExecutionProvider", "CPUExecutionProvider"]
+
+
+class _FakeBackend:
+    session = _FakeSession()
+
+
+class _FakePredictor:
+    model = _FakeBackend()
+
+
+def test_provider_is_none_until_the_session_exists():
+    class FakeModel:
+        names = {0: "a"}
+        predictor = None
+
+        def track(self, frame, **kw):
+            self.predictor = _FakePredictor()  # built by the first call
+            return [_FakeResult()]
+
+    det = YoloDetector(
+        "models/x.onnx", device="cuda", conf=0.5, model_factory=lambda p: FakeModel()
+    )
+    assert det.provider is None
+    det.infer(np.zeros((8, 8, 3), dtype=np.uint8))
+    assert det.provider == "CUDAExecutionProvider"
+
+
+class _TorchBackend:
+    # A torch backend has no ORT session — just the resolved device.
+    device = "cuda:0"
+
+
+class _TorchPredictor:
+    model = _TorchBackend()
+
+
+def test_provider_falls_back_to_the_torch_device():
+    class FakeModel:
+        names = {0: "a"}
+        predictor = _TorchPredictor()
+
+        def track(self, frame, **kw):
+            return []
+
+    det = YoloDetector(
+        "yolo11n.pt", device="cuda", conf=0.5, model_factory=lambda p: FakeModel()
+    )
+    assert det.provider == "cuda:0"
+
+
+def test_close_nulls_the_wrapper_references_and_is_idempotent():
+    """close() is what _teardown_capture calls on detectors; without it the
+    loaded model (and its CUDA tensors) lived until Python GC ran."""
+    model = _FakeModel("yolo11n.pt")
+    det = YoloDetector(
+        "yolo11n.pt", device="cpu", conf=0.5, model_factory=lambda p: model
+    )
+    det.close()
+    assert det._model is None
+    assert det.names == {}
+    det.close()  # idempotent
+
+
+def test_close_nulls_the_backend_session():
+    """The ORT session is the VRAM owner for an ONNX model; None-ing it drops
+    the reference so the runtime can free the device memory."""
+
+    class FakeModel:
+        names = {0: "a"}
+        predictor = _FakePredictor()
+
+        def track(self, frame, **kw):
+            return []
+
+    model = FakeModel()
+    det = YoloDetector(
+        "models/x.onnx", device="cpu", conf=0.5, model_factory=lambda p: model
+    )
+    det.close()
+    assert model.predictor is None
+    assert model.model is None
+
+
 def test_yolo_detector_forwards_imgsz_to_track():
     det = YoloDetector(
         "yolo11n.pt", device="cpu", conf=0.5, imgsz=960, model_factory=_FakeModel
