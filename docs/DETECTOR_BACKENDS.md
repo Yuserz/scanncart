@@ -142,16 +142,20 @@ thread, JPEG preview encoding and the WebSocket all running.
 |------|---------:|-----------:|---------|---------|
 | `local_api` | — | ~100 ms / 9.5 fps | 7 grocery | ✅ needs a second process |
 | **custom ONNX, CPU** | 51 ms / 19.6 fps | **91 ms / 10.4 fps** | **7 grocery** | ✅ fully, one process |
+| **custom ONNX, CUDA** *(2026-09-04)* | **62 ms / ~16 fps** | ≈ isolated — inference leaves the CPU (see caveat 1) | **7 grocery** | ✅ fully, one process |
 | `native` yolo11n `.pt`, CUDA | 38 ms / 26 fps | ~25 ms / 28.8 fps | 80 COCO — *not the grocery model* | ✅ fully |
 
 **The isolated 19.6 fps does not survive the real pipeline.** Preview encoding costs ~12 ms, but
 that only accounts for part of the gap: the rest is CPU contention. ONNX inference runs on the CPU,
 and so do frame capture, JPEG encode and the WebSocket — they fight for the same cores. The
 `.pt` + CUDA path does not have this problem, which is why it is the only one that gets near its
-isolated number.
+isolated number. Moving the **custom ONNX** onto CUDA removes its inference from that fight too,
+so its in-app number should land near the 62 ms isolated one (not re-measured with a live camera
+on 2026-09-04 — the StreamCam's known frame-freeze interrupted that run; see the design doc's
+verification section).
 
-So the custom ONNX is **roughly level with `local_api` on speed**, not twice it. Its actual
-advantages are different and still decisive:
+So the custom ONNX on CPU is **roughly level with `local_api` on speed**, not twice it — on
+CUDA it pulls ahead (~62 ms vs ~100 ms). Its actual advantages are different and still decisive:
 
 * **One process.** No inference server to remember to start, no Docker-free launcher, no HTTP hop.
 * **No network stack in the hot path** — nothing to time out, retry, or 503.
@@ -161,11 +165,22 @@ The way to actually go faster is a `.pt` on CUDA (see below), not tuning this.
 
 ### Two caveats before treating this as the answer
 
-1. **ONNX on the GPU needs plumbing this machine does not have.** `onnxruntime-gpu` loads and
-   reports `CUDAExecutionProvider`, then fails at `bind_input` with "no data transfer registered"
-   — it wants its own matching CUDA/cuDNN runtime, which torch's bundled libraries do not satisfy.
-   Note `onnxruntime` and `onnxruntime-gpu` share the `onnxruntime` import name, so installing both
-   breaks either; uninstalling one deletes the shared package directory.
+1. **ONNX on the GPU is supported and pinned (2026-09-04).** `sidecar/requirements-cuda.txt`
+   pins `onnxruntime-gpu>=1.22,<1.23` — CUDA 12, the same major torch 2.6.0+cu124 ships — and
+   verified running `CUDAExecutionProvider` on the grocery ONNX (62 ms isolated vs ~300–500 ms
+   CPU). Two rules, documented in the file and the sidecar README:
+   - **Version pairing:** the onnxruntime-gpu minor must match torch's bundled CUDA. 1.29 wants
+     CUDA 13 (`cublasLt64_13.dll`), which torch does not ship → it reports the provider
+     "available" and then fails at `bind_input` with "no data transfer registered". 1.22 wants
+     CUDA 12, which torch ships.
+   - **One runtime only:** `onnxruntime` and `onnxruntime-gpu` share the `onnxruntime` import
+     name — installing both breaks either, and uninstalling one deletes the shared package
+     directory.
+   `onnxruntime-gpu` also does not bundle its CUDA/cuDNN DLLs; `enable_onnx_cuda()`
+   (`inference.py`, idempotent per process) adds torch's `lib` directory to the loader path
+   before the session builds, so no CUDA toolkit install is needed. And because the native probe
+   now reports the actual provider (§8), a silent CPU fallback is visible at Test Connection
+   time instead of hiding in an ultralytics log line.
 2. **Preprocessing differs — now handled, see `resize_mode`.** `environment.json` records
    `"resize": {"format": "Stretch to"}`: the model was trained on stretched 640x640, while
    Ultralytics letterboxes by default. That is not cosmetic. Letterboxing a 1280x720 frame
@@ -173,10 +188,13 @@ The way to actually go faster is a `.pt` on CUDA (see below), not tuning this.
    object reaches the model at roughly half its training pixel area, which matters most for the
    small SKUs (a 22 g Milo sachet).
 
-   `Settings.resize_mode` (`auto` | `letterbox` | `stretch`) fixes this. `auto` resolves to
-   `stretch` for a custom model under `models/` (Roboflow exports are stretch-trained) and
-   `letterbox` for the stock YOLO weights (which are not). In `stretch`, the detector resizes the
-   frame to `imgsz` x `imgsz` itself, so Ultralytics' letterbox pads nothing.
+   `Settings.resize_mode` (`auto` | `letterbox` | `stretch`) fixes this. `auto` is now
+   **format-aware**: `stretch` for a custom `.onnx` under `models/` (Roboflow exports are
+   stretch-trained) and `letterbox` for everything else — the stock YOLO weights, and a
+   locally-trained custom `.pt` (ultralytics trains letterboxed). In `stretch`, the detector
+   resizes the frame to `imgsz` x `imgsz` itself, so Ultralytics' letterbox pads nothing. A
+   custom `.pt` with an explicit `resize_mode: "stretch"` draws a `compute_warnings()` note —
+   it is only right for a Roboflow-exported `.pt` (Core-gated).
 
    No un-warping is needed on the way out: `normalize_detections` divides by the dimensions
    actually fed to the model, and a per-axis scale cancels out of a normalized coordinate. It is
@@ -190,7 +208,11 @@ The way to actually go faster is a `.pt` on CUDA (see below), not tuning this.
 
 `environment.json` also carries the **dataset export link**, and dataset export is free on any plan.
 Training `yolo11n` from it yields a real `.pt` that runs on torch + CUDA — the fastest option, no
-ONNX runtime, no preprocessing mismatch, and the model the PRD wants. See `MODEL_TRAINING.md`.
+ONNX runtime, no preprocessing mismatch, and the model the PRD wants. See `MODEL_TRAINING.md §7`:
+any `models/*.pt` is already selectable with no code edits in either codebase, `resize_mode:
+"auto"` resolves to `letterbox` for it (ultralytics-native training), and `device: "auto"`
+resolves to CUDA. Ultralytics **cannot** export ONNX → `.pt` (PyTorch is the source format), so
+retraining from the dataset export is the only route to these weights.
 
 
 ## 2. Non-goals
@@ -384,6 +406,8 @@ handling entirely, and the sidecar stays independently runnable via `python run.
 | `cloud_api` selected | Network dependency + per-inference cost; contradicts the PRD's offline guarantee. |
 | Remote backend, no API key | Will fail at capture start — set `ROBOFLOW_API_KEY` in `sidecar/.env`. |
 | `local_api` selected | Requires an inference server running on `local_api_url` (§7a — no Docker needed). |
+| `native` + `.onnx` + resolved `cuda`, but no CUDA EP in onnxruntime | Inference silently falls back to CPU — install `requirements-cuda.txt` (§1a caveat 1). |
+| custom `.pt` + explicit `resize_mode: "stretch"` | Only right for a Roboflow-exported `.pt`; a locally-trained `.pt` is letterbox-trained (§1a caveat 2). |
 
 `compute_warnings()` takes `api_key_present: bool | None` rather than reading the key itself, so
 settings tests never touch the filesystem; `AppState.api_key_probe` is the matching injection
@@ -512,9 +536,23 @@ working with no internet.
 Validates the selected backend **before** the user hits Start, so a misconfigured URL or missing key
 surfaces in the Admin Panel instead of as a failed capture.
 
-Returns `{ reachable, backend, latency_ms, class_names, detail }`. Powers a **"Test Connection"**
-button beside the backend picker. For `native` it checks the weights file resolves; for remote
+Returns `{ reachable, backend, latency_ms, class_names, provider, detail }` — `provider`
+(native only) names the execution provider/device actually in use, i.e. the answer to "am I really
+on the GPU?". Powers a **"Test Connection"** button beside the backend picker. For remote
 backends it posts a tiny synthetic frame.
+
+For `native` the probe is now a real build, not a filesystem check:
+
+- **Missing weights file** → short-circuits with `reachable: true` and "not on disk; ultralytics
+  will download it on first start" — the probe never triggers a download or a network hit.
+- **File present** → builds the detector through the same factory capture start uses, runs one
+  warmup inference (which builds the ONNX session — this is what kills the ~16 s cold first-frame
+  hit), then one measured inference on a 64×64 synthetic frame, and reports `latency_ms`, the
+  sorted `class_names` (the 7 SKUs) and `provider` (`CUDAExecutionProvider` / `CPUExecutionProvider`
+  for ONNX, the torch device for `.pt`). The detector is closed in a `finally`, so the probe's
+  session doesn't linger in VRAM.
+- **Load failure** (corrupt weights, missing CUDA DLLs) → `reachable: false` with the message,
+  surfaced in the Admin Panel instead of as a failed capture start.
 
 ---
 

@@ -95,12 +95,15 @@ because it downloads and loads the model.
 
 The custom model is ONNX, so it runs under **onnxruntime**, not torch — a
 separate runtime from the one the CUDA section above configures. Getting it onto
-the GPU takes two things, and it is worth doing: measured 19.7 ms vs 66.3 ms on
-CPU (50.7 vs 15.1 fps).
+the GPU is worth doing: measured 19.7 ms vs 66.3 ms on CPU (50.7 vs 15.1 fps).
+
+The GPU build is pinned in **`requirements-cuda.txt`** (version-paired to the
+torch CUDA in the venv — never install both it and the CPU build, they share
+the `onnxruntime` import name). Install it once instead of the CPU default:
 
 ```bash
 uv pip uninstall --python .venv/Scripts/python.exe onnxruntime
-uv pip install --python .venv/Scripts/python.exe "onnxruntime-gpu==1.22.0"
+uv pip install --python .venv/Scripts/python.exe -r requirements-cuda.txt
 ```
 
 1. **The CUDA major version must match torch's.** `onnxruntime-gpu` 1.29 wants

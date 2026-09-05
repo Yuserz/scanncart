@@ -361,3 +361,35 @@ def test_remote_detector_conf_is_settable_without_rebuilding():
     det = RoboflowRemoteDetector(client=None, conf=0.5)
     det.set_conf(0.8)
     assert det._conf == 0.8
+
+
+def test_enable_onnx_cuda_adds_the_torch_lib_dir_once(monkeypatch):
+    """Idempotent: a detector is built per capture start and once for the
+    probe, and os.add_dll_directory is additive — re-adding the same path
+    just piles up duplicate loader search entries."""
+    import os
+    import sys
+    import types
+
+    import app.inference as inf
+
+    added = []
+    fake_torch = types.SimpleNamespace(
+        __file__=os.path.join("venv", "torch", "__init__.py")
+    )
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setattr(inf.sys, "platform", "win32")
+    monkeypatch.setattr(inf.os.path, "isdir", lambda p: True)
+    monkeypatch.setattr(inf.os, "add_dll_directory", added.append)
+    monkeypatch.setattr(inf, "_added_torch_lib", None)
+
+    assert inf.enable_onnx_cuda() is True
+    assert inf.enable_onnx_cuda() is True
+    assert len(added) == 1  # second call is a no-op, not a re-add
+
+    # Non-Windows platforms never touch the loader path: still one entry
+    # from the win32 calls above, nothing new added.
+    monkeypatch.setattr(inf, "_added_torch_lib", None)
+    monkeypatch.setattr(inf.sys, "platform", "linux")
+    assert inf.enable_onnx_cuda() is False
+    assert len(added) == 1

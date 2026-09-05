@@ -53,6 +53,14 @@ class Detector(Protocol):
 DEFAULT_TRACKER = "bytetrack.yaml"
 
 
+#: torch's lib dir already put on the loader path, if any. os.add_dll_directory is
+#: additive — calling it again for the same path just appends a duplicate search
+#: entry — and a fresh YoloDetector is built for every capture start (plus one for
+#: the probe), so without this guard every construction piles up redundant paths.
+#: Stays None on failure so a later call retries.
+_added_torch_lib: str | None = None
+
+
 def enable_onnx_cuda() -> bool:
     """Let onnxruntime-gpu find the CUDA/cuDNN DLLs that torch already ships.
 
@@ -66,8 +74,13 @@ def enable_onnx_cuda() -> bool:
 
     Note the *version* has to line up: onnxruntime-gpu 1.29 wants CUDA 13
     (cublasLt64_13.dll) which torch does not ship, while 1.22 wants CUDA 12,
-    which it does. Returns whether the directory was added.
+    which it does. Idempotent: the directory is added at most once per process,
+    however many detectors get constructed. Returns whether the directory is
+    (or was already) on the loader path.
     """
+    global _added_torch_lib
+    if _added_torch_lib is not None:
+        return True
     if sys.platform != "win32":
         return False
     try:
@@ -76,6 +89,7 @@ def enable_onnx_cuda() -> bool:
         lib = os.path.join(os.path.dirname(torch.__file__), "lib")
         if os.path.isdir(lib):
             os.add_dll_directory(lib)
+            _added_torch_lib = lib
             return True
     except Exception:  # noqa: BLE001 - CPU inference must still work
         pass
