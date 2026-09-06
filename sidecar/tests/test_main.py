@@ -64,6 +64,64 @@ def test_start_then_stop_transitions_state():
     assert client.post("/api/capture/stop").json()["state"] == "idle"
 
 
+def test_start_fails_when_the_camera_cannot_open():
+    """CameraCapture.open() returns False (it does not raise) when the device
+    cannot be opened. Start must surface that as an actionable error and stay
+    idle — not report "running" over a feed that never delivers a frame."""
+    detector = _StubDetector()
+    detector.closed = False
+    detector.close = lambda: setattr(detector, "closed", True)
+
+    class _NoCam:
+        def open(self):
+            return False
+
+        def release(self):
+            pass
+
+    state = AppState(
+        settings=Settings(),
+        source_factory=lambda settings: _NoCam(),
+        detector_factory=lambda settings, device: detector,
+        db_path=":memory:",
+        hardware_prober=_fake_hardware,
+    )
+    client = TestClient(build_app(lambda: state))
+    r = client.post("/api/capture/start")
+    assert r.status_code == 503
+    assert "could not be opened" in r.json()["detail"]
+    assert client.get("/api/health").json()["state"] == "idle"
+    # The detector built alongside the camera must not be left loaded.
+    assert detector.closed is True
+
+
+def test_start_missing_custom_model_is_actionable(monkeypatch):
+    """Starting capture with the default grocery model when models/ is empty
+    fails with the fix (503 + where the file goes), not a 500 traceback from
+    ultralytics. Uses the real detector factory; monkeypatching exists keeps
+    it hermetic whatever the working directory."""
+    monkeypatch.setattr("os.path.exists", lambda _p: False)
+
+    class _Cam:
+        def open(self):
+            return True
+
+        def release(self):
+            pass
+
+    state = AppState(
+        settings=Settings(),
+        source_factory=lambda settings: _Cam(),
+        db_path=":memory:",
+        hardware_prober=_fake_hardware,
+    )
+    client = TestClient(build_app(lambda: state))
+    r = client.post("/api/capture/start")
+    assert r.status_code == 503
+    assert "sidecar/models/" in r.json()["detail"]
+    assert client.get("/api/health").json()["state"] == "idle"
+
+
 def test_cross_origin_requests_get_cors_headers():
     # The renderer's origin (Vite dev server port, or a packaged app's
     # file:// origin) never matches this server's http://127.0.0.1:<port>
