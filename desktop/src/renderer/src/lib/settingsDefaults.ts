@@ -15,5 +15,6 @@ export const DEFAULT_SETTINGS: SettingsPayload = {
   infer_frame_skip: 0,
   device: 'auto',
   preview_height: 720,
-  track_expiry_s: 1.5
+  track_expiry_s: 1.5,
+  track_confirm_hits: 2
 }

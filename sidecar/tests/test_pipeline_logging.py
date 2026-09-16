@@ -44,11 +44,11 @@ class ScriptedDetector:
         return self._script.pop(0) if self._script else []
 
 
-def _pipe(script, store, clock, expiry=1.5):
+def _pipe(script, store, clock, expiry=1.5, confirm=2):
     return Pipeline(
         ScriptedSource(),
         ScriptedDetector(script),
-        Settings(track_expiry_s=expiry),
+        Settings(track_expiry_s=expiry, track_confirm_hits=confirm),
         on_message=lambda m: None,
         logging_store=store,
         session_id=42,
@@ -56,14 +56,48 @@ def _pipe(script, store, clock, expiry=1.5):
     )
 
 
-def test_new_track_is_recorded_once_per_frame():
+def test_track_requires_two_consecutive_hits_by_default():
     store, clock = FakeStore(), FakeClock()
     det = [Detection(track_id=5, cls="banana", conf=0.9, box=(0.1, 0.2, 0.3, 0.4))]
-    pipe = _pipe([det, det], store, clock)
-    pipe.process_once()
-    pipe.process_once()
-    assert [r[1] for r in store.records] == [5, 5]   # recorded each frame; store dedups
+    pipe = _pipe([det, det, det], store, clock)
+    pipe.process_once()   # first sighting -> pending, not logged
+    assert store.records == []
+    pipe.process_once()   # second consecutive sighting -> confirmed
+    assert [r[1] for r in store.records] == [5]
+    pipe.process_once()   # still present -> logged each frame (store dedups)
+    assert [r[1] for r in store.records] == [5, 5]
     assert store.resolved == []                       # still present, not resolved
+
+
+def test_single_frame_phantom_is_never_logged():
+    store, clock = FakeStore(), FakeClock()
+    det = [Detection(track_id=5, cls="banana", conf=0.9, box=(0.1, 0.2, 0.3, 0.4))]
+    pipe = _pipe([det, [], []], store, clock, expiry=10.0)
+    pipe.process_once()
+    pipe.process_once()  # phantom gone before confirming
+    pipe.process_once()
+    assert store.records == []
+    assert store.resolved == []  # never logged -> never resolved either
+
+
+def test_confirm_hits_gap_resets_counter():
+    store, clock = FakeStore(), FakeClock()
+    det = [Detection(track_id=5, cls="banana", conf=0.9, box=(0.1, 0.2, 0.3, 0.4))]
+    pipe = _pipe([det, [], det, det], store, clock, expiry=10.0)
+    pipe.process_once()  # hit 1
+    pipe.process_once()  # gone -> pending cleared
+    pipe.process_once()  # re-appears -> hit 1 again (fresh)
+    assert store.records == []
+    pipe.process_once()  # hit 2 -> confirmed
+    assert [r[1] for r in store.records] == [5]
+
+
+def test_confirm_hits_of_one_logs_first_sighting():
+    store, clock = FakeStore(), FakeClock()
+    det = [Detection(track_id=5, cls="banana", conf=0.9, box=(0.1, 0.2, 0.3, 0.4))]
+    pipe = _pipe([det, det], store, clock, confirm=1)
+    pipe.process_once()
+    assert [r[1] for r in store.records] == [5]
 
 
 def test_untracked_detection_is_not_logged():
@@ -77,7 +111,7 @@ def test_untracked_detection_is_not_logged():
 def test_track_is_resolved_after_expiry():
     store, clock = FakeStore(), FakeClock()
     seen = [Detection(track_id=5, cls="banana", conf=0.9, box=(0.1, 0.2, 0.3, 0.4))]
-    pipe = _pipe([seen, [], []], store, clock, expiry=1.0)
+    pipe = _pipe([seen, [], []], store, clock, expiry=1.0, confirm=1)
     clock.t = 0.0
     pipe.process_once()          # track 5 seen at t=0
     clock.t = 0.5
@@ -91,7 +125,7 @@ def test_track_is_resolved_after_expiry():
 def test_resolve_open_tracks_flushes_remaining():
     store, clock = FakeStore(), FakeClock()
     det = [Detection(track_id=8, cls="apple", conf=0.9, box=(0, 0, 0.5, 0.5))]
-    pipe = _pipe([det], store, clock)
+    pipe = _pipe([det], store, clock, confirm=1)
     clock.t = 3.0
     pipe.process_once()
     pipe.resolve_open_tracks()
@@ -103,7 +137,7 @@ def test_track_expiry_s_is_live_reloaded_from_settings():
     # PATCH would do) — the pipeline must pick it up on the very next frame,
     # not just at construction time.
     store, clock = FakeStore(), FakeClock()
-    settings = Settings(track_expiry_s=10.0)
+    settings = Settings(track_expiry_s=10.0, track_confirm_hits=1)
     seen = [Detection(track_id=5, cls="banana", conf=0.9, box=(0.1, 0.2, 0.3, 0.4))]
     pipe = Pipeline(
         ScriptedSource(),

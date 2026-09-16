@@ -134,6 +134,7 @@ def _settings_response(state: "AppState") -> SettingsResponse:
         device=state.settings.device,
         preview_height=state.settings.preview_height,
         track_expiry_s=state.settings.track_expiry_s,
+        track_confirm_hits=state.settings.track_confirm_hits,
         hot_reloadable_fields=sorted(HOT_RELOADABLE_FIELDS),
         restart_required_fields=sorted(RESTART_REQUIRED_FIELDS),
         warnings=compute_warnings(state.settings, state.state),

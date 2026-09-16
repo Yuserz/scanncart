@@ -18,6 +18,7 @@ function baseSettings(overrides: Partial<SettingsResponse> = {}): SettingsRespon
     device: 'auto',
     preview_height: 720,
     track_expiry_s: 1.5,
+    track_confirm_hits: 2,
     hot_reloadable_fields: ['infer_frame_skip', 'preview_height', 'track_expiry_s'],
     restart_required_fields: [
       'active_model',

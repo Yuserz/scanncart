@@ -39,6 +39,7 @@ export interface SettingsPayload {
   device: string
   preview_height: number
   track_expiry_s: number
+  track_confirm_hits: number
 }
 
 export interface SettingsResponse extends SettingsPayload {

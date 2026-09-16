@@ -37,6 +37,10 @@ class Pipeline:
         self._session_id = session_id
         self._clock = clock
         self._open: dict[int, float] = {}   # track_id -> last-seen timestamp
+        # Debounce: tracks not yet confirmed. count is consecutive inferences
+        # seen; cls/conf are kept from the first sighting so the eventual log
+        # row reports the entry moment. Cleared on removal.
+        self._pending: dict[int, dict] = {}
         self._thread = None
         self.is_running = False
         self._frame_counter = 0
@@ -83,9 +87,21 @@ class Pipeline:
         if self._logging_store is None or self._session_id is None:
             return
         now = self._clock()
+        seen_now = set()
         for d in detections:
             if d.track_id is None:
                 continue
+            seen_now.add(d.track_id)
+            if d.track_id not in self._open:
+                pending = self._pending.get(d.track_id)
+                if pending is None:
+                    pending = {"count": 0, "cls": d.cls, "conf": d.conf, "ts": now}
+                    self._pending[d.track_id] = pending
+                pending["count"] += 1
+                if pending["count"] < self._settings.track_confirm_hits:
+                    continue
+                # Confirmed: promote with the FIRST sighting as entered_at.
+                del self._pending[d.track_id]
             self._logging_store.record_detection(
                 self._session_id, d.track_id, d.cls, d.conf, now
             )
@@ -94,6 +110,11 @@ class Pipeline:
             if now - last_seen > self._settings.track_expiry_s:
                 self._logging_store.resolve_left(self._session_id, track_id, last_seen)
                 del self._open[track_id]
+        # Pending tracks that vanished before confirming never get logged:
+        # resolve_left for a never-recorded track_id would corrupt the log.
+        for track_id in list(self._pending):
+            if track_id not in seen_now:
+                del self._pending[track_id]
 
     def resolve_open_tracks(self) -> None:
         if self._logging_store is None or self._session_id is None:
@@ -101,6 +122,7 @@ class Pipeline:
         for track_id, last_seen in list(self._open.items()):
             self._logging_store.resolve_left(self._session_id, track_id, last_seen)
         self._open.clear()
+        self._pending.clear()
 
     def _loop(self) -> None:
         while self.is_running:

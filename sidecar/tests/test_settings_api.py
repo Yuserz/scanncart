@@ -92,6 +92,23 @@ def test_patch_restart_required_field_while_idle_succeeds(tmp_path):
     assert state.settings.active_model == "yolo11s.pt"
 
 
+def test_patch_track_confirm_hits_while_running_is_hot_reloaded(tmp_path):
+    client, state = _make_client(tmp_path)
+    client.post("/api/capture/start")
+    r = client.patch("/api/settings", json={"track_confirm_hits": 3})
+    assert r.status_code == 200
+    assert r.json()["track_confirm_hits"] == 3
+    assert state.settings.track_confirm_hits == 3
+    client.post("/api/capture/stop")
+
+
+def test_patch_track_confirm_hits_out_of_range_is_rejected(tmp_path):
+    client, state = _make_client(tmp_path)
+    r = client.patch("/api/settings", json={"track_confirm_hits": 0})
+    assert r.status_code == 422
+    assert state.settings.track_confirm_hits == 2  # unchanged
+
+
 def test_patch_out_of_range_value_is_rejected(tmp_path):
     client, state = _make_client(tmp_path)
     r = client.patch("/api/settings", json={"conf_threshold": 5.0})

@@ -64,6 +64,7 @@ class SettingsPayload(BaseModel):
     device: str
     preview_height: int
     track_expiry_s: float
+    track_confirm_hits: int
 
 
 class SettingsResponse(SettingsPayload):
@@ -84,6 +85,7 @@ class SettingsUpdateRequest(BaseModel):
     device: str | None = None
     preview_height: int | None = Field(default=None, ge=120, le=1080)
     track_expiry_s: float | None = Field(default=None, gt=0.0, le=30.0)
+    track_confirm_hits: int | None = Field(default=None, ge=1, le=10)
 
     @field_validator("active_model")
     @classmethod

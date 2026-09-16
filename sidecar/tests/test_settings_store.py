@@ -2,6 +2,7 @@ import json
 
 from app.settings import Settings
 from app.settings_store import (
+    HOT_RELOADABLE_FIELDS,
     RESTART_REQUIRED_FIELDS,
     _valid_field,
     compute_warnings,
@@ -55,6 +56,29 @@ def test_valid_field_imgsz_rejects_non_stride_and_out_of_range():
     assert not _valid_field("imgsz", 160)  # below the 320 floor
     assert not _valid_field("imgsz", 2048)  # above the 1920 ceiling
     assert not _valid_field("imgsz", 640.0)  # must be an int
+
+
+def test_valid_field_track_confirm_hits():
+    assert _valid_field("track_confirm_hits", 1)
+    assert _valid_field("track_confirm_hits", 10)
+    assert not _valid_field("track_confirm_hits", 0)
+    assert not _valid_field("track_confirm_hits", 11)
+    assert not _valid_field("track_confirm_hits", 2.5)  # must be an int
+    assert not _valid_field("track_confirm_hits", "2")
+
+
+def test_track_confirm_hits_is_hot_reloadable():
+    assert "track_confirm_hits" in HOT_RELOADABLE_FIELDS
+
+
+def test_compute_warnings_low_conf_threshold():
+    warnings = compute_warnings(Settings(conf_threshold=0.3), "idle")
+    assert any("conf_threshold" in w for w in warnings)
+
+
+def test_compute_warnings_default_conf_threshold_no_warning():
+    warnings = compute_warnings(Settings(), "idle")
+    assert not any("conf_threshold" in w for w in warnings)
 
 
 def test_compute_warnings_high_imgsz():

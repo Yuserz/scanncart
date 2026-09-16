@@ -20,6 +20,7 @@ export const ALLOWED_MODELS = [
   'data/custom/experiment-1.pt',
   'data/custom/experiment-2.pt',
   'data/custom/experiment-3.pt',
+  'data/custom/scanncart-grocery-1.pt',
 ] as const
 export const ALLOWED_DEVICES = ['auto', 'cpu', 'cuda'] as const
 
@@ -46,7 +47,9 @@ export const MODEL_SPEC_HINTS: Record<string, string> = {
   'data/custom/experiment-2.pt':
     'Experiment slot 2 — deploy via: python scanncart/deploy_model.py --name experiment-2',
   'data/custom/experiment-3.pt':
-    'Experiment slot 3 — deploy via: python scanncart/deploy_model.py --name experiment-3'
+    'Experiment slot 3 — deploy via: python scanncart/deploy_model.py --name experiment-3',
+  'data/custom/scanncart-grocery-1.pt':
+    'Trained grocery model (Roboflow scanncart-grocery-1-yolo11n-t1) — deploy via: python scanncart/deploy_model.py --name scanncart-grocery-1'
 }
 
 export interface FieldMeta {
@@ -156,6 +159,15 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
     min: 0.1,
     max: 30,
     step: 0.5
+  },
+  {
+    key: 'track_confirm_hits',
+    label: 'Track confirm hits',
+    hint: 'How many consecutive inferences a detection must persist before it is logged/streamed. Higher filters single-frame phantom false positives, at the cost of a slightly later entry time.',
+    type: 'number',
+    min: 1,
+    max: 10,
+    step: 1
   }
 ]
 
@@ -172,6 +184,6 @@ export const SETTINGS_GROUPS: FieldGroup[] = [
   },
   {
     label: 'Detection & Tracking',
-    keys: ['conf_threshold', 'imgsz', 'infer_frame_skip', 'track_expiry_s']
+    keys: ['conf_threshold', 'imgsz', 'infer_frame_skip', 'track_expiry_s', 'track_confirm_hits']
   }
 ]

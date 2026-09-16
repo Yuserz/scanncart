@@ -14,6 +14,9 @@ class Settings:
     device: str = "auto"
     preview_height: int = 720
     track_expiry_s: float = 1.5
+    # Detections must persist this many consecutive inferences before being
+    # logged/streamed — filters single-frame phantom false positives.
+    track_confirm_hits: int = 2
 
 
 def resolve_device(pref: str) -> str:

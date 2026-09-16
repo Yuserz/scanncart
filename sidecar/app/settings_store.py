@@ -21,6 +21,7 @@ CUSTOM_MODELS = {
     "data/custom/experiment-1.pt",
     "data/custom/experiment-2.pt",
     "data/custom/experiment-3.pt",
+    "data/custom/scanncart-grocery-1.pt",
 }
 ALLOWED_MODELS = {
     "yolo11n.pt",
@@ -34,7 +35,12 @@ ALLOWED_DEVICES = {"auto", "cpu", "cuda"}
 # Fields the running Pipeline re-reads from `settings` every frame/track update,
 # so mutating them in place takes effect without stopping capture. Everything
 # else is baked into source/detector objects at /api/capture/start time.
-HOT_RELOADABLE_FIELDS = {"infer_frame_skip", "preview_height", "track_expiry_s"}
+HOT_RELOADABLE_FIELDS = {
+    "infer_frame_skip",
+    "preview_height",
+    "track_expiry_s",
+    "track_confirm_hits",
+}
 RESTART_REQUIRED_FIELDS = {
     "active_model",
     "camera_index",
@@ -76,6 +82,8 @@ def _valid_field(name: str, value: Any) -> bool:
         return isinstance(value, int) and 120 <= value <= 1080
     if name == "track_expiry_s":
         return isinstance(value, (int, float)) and 0.0 < value <= 30.0
+    if name == "track_confirm_hits":
+        return isinstance(value, int) and 1 <= value <= 10
     return False
 
 
@@ -125,6 +133,12 @@ def compute_warnings(settings: Settings, state: str) -> list[str]:
     if state == "running":
         locked = ", ".join(sorted(RESTART_REQUIRED_FIELDS))
         warnings.append(f"Capture is running — {locked} require stopping capture first.")
+    if settings.conf_threshold < 0.4:
+        warnings.append(
+            f"conf_threshold is set low ({settings.conf_threshold:.2f}); detections below ~0.4 "
+            "confidence are frequently false positives (e.g. a face firing as a similar-looking "
+            "class like 'safeguard'). Raise it unless you are deliberately debugging recall."
+        )
     if settings.imgsz > 960:
         warnings.append(
             "imgsz above 960 sharply raises inference latency; small/fast-moving "
