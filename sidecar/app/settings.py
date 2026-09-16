@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -17,6 +17,9 @@ class Settings:
     # Detections must persist this many consecutive inferences before being
     # logged/streamed — filters single-frame phantom false positives.
     track_confirm_hits: int = 2
+    # Class names to KEEP (post-inference); empty list = keep everything.
+    # lets a stock COCO model run checkout-only by listing product classes.
+    class_allowlist: list[str] = field(default_factory=list)
 
 
 def resolve_device(pref: str) -> str:

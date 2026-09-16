@@ -56,7 +56,7 @@ export interface FieldMeta {
   key: keyof SettingsPayload
   label: string
   hint: string
-  type: 'select' | 'number'
+  type: 'select' | 'number' | 'list'
   options?: readonly string[]
   min?: number
   max?: number
@@ -168,6 +168,12 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
     min: 1,
     max: 10,
     step: 1
+  },
+  {
+    key: 'class_allowlist',
+    label: 'Class allowlist',
+    hint: 'Comma-separated class names to keep (e.g. bottle, cup, banana, apple, orange). Empty detects everything. Classes not on the list never reach the overlay or item log — use it with the stock COCO model to hide person/chair noise. Applies live, no restart needed.',
+    type: 'list'
   }
 ]
 
@@ -184,6 +190,13 @@ export const SETTINGS_GROUPS: FieldGroup[] = [
   },
   {
     label: 'Detection & Tracking',
-    keys: ['conf_threshold', 'imgsz', 'infer_frame_skip', 'track_expiry_s', 'track_confirm_hits']
+    keys: [
+      'conf_threshold',
+      'imgsz',
+      'infer_frame_skip',
+      'track_expiry_s',
+      'track_confirm_hits',
+      'class_allowlist'
+    ]
   }
 ]

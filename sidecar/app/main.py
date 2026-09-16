@@ -135,6 +135,7 @@ def _settings_response(state: "AppState") -> SettingsResponse:
         preview_height=state.settings.preview_height,
         track_expiry_s=state.settings.track_expiry_s,
         track_confirm_hits=state.settings.track_confirm_hits,
+        class_allowlist=list(state.settings.class_allowlist),
         hot_reloadable_fields=sorted(HOT_RELOADABLE_FIELDS),
         restart_required_fields=sorted(RESTART_REQUIRED_FIELDS),
         warnings=compute_warnings(state.settings, state.state),
@@ -237,6 +238,20 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
             source = state.source_factory(state.settings)
             if hasattr(source, "open"):
                 source.open()
+            # A camera that opens but delivers no frames must not surface as a
+            # "running" session (state flips below only after this guard).
+            got = source.latest() if hasattr(source, "latest") else None
+            if got is None:
+                if hasattr(source, "release"):
+                    source.release()
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        "Camera opened but delivered no frames. The MSMF driver "
+                        "can wedge like this after repeated open/close cycles; "
+                        "unplug/replug the camera (or reboot) and try again."
+                    ),
+                )
             detector = state.detector_factory(state.settings, state.device)
             state.session_id = state.logging_store.start_session(
                 state.settings.active_model, state.device

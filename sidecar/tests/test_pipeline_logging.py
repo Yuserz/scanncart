@@ -100,6 +100,53 @@ def test_confirm_hits_of_one_logs_first_sighting():
     assert [r[1] for r in store.records] == [5]
 
 
+def test_class_allowlist_drops_disallowed_classes():
+    store, clock = FakeStore(), FakeClock()
+    settings = Settings(track_confirm_hits=1, class_allowlist=["banana"])
+    keep = Detection(track_id=5, cls="banana", conf=0.9, box=(0.1, 0.2, 0.3, 0.4))
+    drop = Detection(track_id=6, cls="person", conf=0.95, box=(0, 0, 0.5, 0.5))
+    pipe = Pipeline(
+        ScriptedSource(),
+        ScriptedDetector([[keep, drop], [keep, drop]]),
+        settings,
+        on_message=lambda m: None,
+        logging_store=store,
+        session_id=42,
+        clock=clock,
+    )
+    pipe.process_once()
+    pipe.process_once()
+    assert [r[2] for r in store.records] == ["banana", "banana"]
+
+
+def test_class_allowlist_is_live_reloaded():
+    store, clock = FakeStore(), FakeClock()
+    settings = Settings(track_confirm_hits=1)  # empty allowlist = keep all
+    det = Detection(track_id=5, cls="person", conf=0.9, box=(0.1, 0.2, 0.3, 0.4))
+    pipe = Pipeline(
+        ScriptedSource(),
+        ScriptedDetector([[det], [det]]),
+        settings,
+        on_message=lambda m: None,
+        logging_store=store,
+        session_id=42,
+        clock=clock,
+    )
+    pipe.process_once()
+    assert [r[2] for r in store.records] == ["person"]
+    settings.class_allowlist = ["banana"]  # mutate in place, as a live PATCH would
+    pipe.process_once()
+    assert [r[2] for r in store.records] == ["person"]  # nothing new logged
+
+
+def test_empty_class_allowlist_keeps_everything():
+    store, clock = FakeStore(), FakeClock()
+    det = Detection(track_id=5, cls="person", conf=0.9, box=(0.1, 0.2, 0.3, 0.4))
+    pipe = _pipe([[det]], store, clock, confirm=1)
+    pipe.process_once()
+    assert [r[2] for r in store.records] == ["person"]
+
+
 def test_untracked_detection_is_not_logged():
     store, clock = FakeStore(), FakeClock()
     det = [Detection(track_id=None, cls="banana", conf=0.9, box=(0.1, 0.2, 0.3, 0.4))]

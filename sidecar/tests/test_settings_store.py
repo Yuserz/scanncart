@@ -71,6 +71,24 @@ def test_track_confirm_hits_is_hot_reloadable():
     assert "track_confirm_hits" in HOT_RELOADABLE_FIELDS
 
 
+def test_valid_field_class_allowlist():
+    assert _valid_field("class_allowlist", [])
+    assert _valid_field("class_allowlist", ["bottle", "cup"])
+    assert not _valid_field("class_allowlist", "bottle")  # must be a list
+    assert not _valid_field("class_allowlist", ["bottle", ""])
+    assert not _valid_field("class_allowlist", ["bottle", 3])
+
+
+def test_class_allowlist_is_hot_reloadable():
+    assert "class_allowlist" in HOT_RELOADABLE_FIELDS
+
+
+def test_save_then_load_round_trips_class_allowlist(tmp_path):
+    path = tmp_path / "settings.json"
+    save_settings(Settings(class_allowlist=["bottle", "cup"]), str(path))
+    assert load_settings(str(path)).class_allowlist == ["bottle", "cup"]
+
+
 def test_compute_warnings_low_conf_threshold():
     warnings = compute_warnings(Settings(conf_threshold=0.3), "idle")
     assert any("conf_threshold" in w for w in warnings)

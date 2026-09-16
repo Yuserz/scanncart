@@ -65,6 +65,7 @@ class SettingsPayload(BaseModel):
     preview_height: int
     track_expiry_s: float
     track_confirm_hits: int
+    class_allowlist: list[str]
 
 
 class SettingsResponse(SettingsPayload):
@@ -86,6 +87,15 @@ class SettingsUpdateRequest(BaseModel):
     preview_height: int | None = Field(default=None, ge=120, le=1080)
     track_expiry_s: float | None = Field(default=None, gt=0.0, le=30.0)
     track_confirm_hits: int | None = Field(default=None, ge=1, le=10)
+    class_allowlist: list[str] | None = None
+
+    @field_validator("class_allowlist")
+    @classmethod
+    def _validate_class_allowlist(cls, v: list[str] | None) -> list[str] | None:
+        # Mirror _valid_field in settings_store: no empty/whitespace entries.
+        if v is not None and any(c.strip() == "" for c in v):
+            raise ValueError("class_allowlist entries must be non-empty class names")
+        return v
 
     @field_validator("active_model")
     @classmethod

@@ -30,6 +30,7 @@ function bodyForUrl(url: string): unknown {
       preview_height: 720,
       track_expiry_s: 1.5,
       track_confirm_hits: 2,
+      class_allowlist: [],
       hot_reloadable_fields: ['infer_frame_skip'],
       restart_required_fields: ['active_model'],
       warnings: []

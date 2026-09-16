@@ -40,6 +40,7 @@ HOT_RELOADABLE_FIELDS = {
     "preview_height",
     "track_expiry_s",
     "track_confirm_hits",
+    "class_allowlist",
 }
 RESTART_REQUIRED_FIELDS = {
     "active_model",
@@ -84,6 +85,10 @@ def _valid_field(name: str, value: Any) -> bool:
         return isinstance(value, (int, float)) and 0.0 < value <= 30.0
     if name == "track_confirm_hits":
         return isinstance(value, int) and 1 <= value <= 10
+    if name == "class_allowlist":
+        return isinstance(value, list) and all(
+            isinstance(c, str) and c.strip() != "" for c in value
+        )
     return False
 
 

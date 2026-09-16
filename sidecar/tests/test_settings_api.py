@@ -109,6 +109,23 @@ def test_patch_track_confirm_hits_out_of_range_is_rejected(tmp_path):
     assert state.settings.track_confirm_hits == 2  # unchanged
 
 
+def test_patch_class_allowlist_filters_detections_live(tmp_path):
+    client, state = _make_client(tmp_path)
+    client.post("/api/capture/start")
+    r = client.patch("/api/settings", json={"class_allowlist": ["banana"]})
+    assert r.status_code == 200
+    assert r.json()["class_allowlist"] == ["banana"]
+    assert state.settings.class_allowlist == ["banana"]
+    client.post("/api/capture/stop")
+
+
+def test_patch_invalid_class_allowlist_is_rejected(tmp_path):
+    client, state = _make_client(tmp_path)
+    r = client.patch("/api/settings", json={"class_allowlist": ["bottle", ""]})
+    assert r.status_code == 422
+    assert state.settings.class_allowlist == []  # unchanged
+
+
 def test_patch_out_of_range_value_is_rejected(tmp_path):
     client, state = _make_client(tmp_path)
     r = client.patch("/api/settings", json={"conf_threshold": 5.0})

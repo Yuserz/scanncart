@@ -16,5 +16,6 @@ export const DEFAULT_SETTINGS: SettingsPayload = {
   device: 'auto',
   preview_height: 720,
   track_expiry_s: 1.5,
-  track_confirm_hits: 2
+  track_confirm_hits: 2,
+  class_allowlist: []
 }

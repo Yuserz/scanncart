@@ -92,12 +92,12 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
     )
   }
 
-  const valueOf = (key: keyof SettingsPayload): string | number => {
+  const valueOf = (key: keyof SettingsPayload): string | number | string[] => {
     const draftVal = draft[key]
-    return (draftVal !== undefined ? draftVal : settings[key]) as string | number
+    return (draftVal !== undefined ? draftVal : settings[key]) as string | number | string[]
   }
 
-  const setField = (key: keyof SettingsPayload, value: string | number): void => {
+  const setField = (key: keyof SettingsPayload, value: string | number | string[]): void => {
     setDraft((prev) => ({ ...prev, [key]: value }) as SettingsUpdate)
   }
 
@@ -191,6 +191,22 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
               </option>
             ))}
           </select>
+        ) : field.type === 'list' ? (
+          <input
+            id={field.key}
+            type="text"
+            value={Array.isArray(value) ? value.join(', ') : String(value)}
+            placeholder="e.g. bottle, cup, banana"
+            onChange={(e) =>
+              setField(
+                field.key,
+                e.target.value
+                  .split(',')
+                  .map((s) => s.trim())
+                  .filter((s) => s !== '')
+              )
+            }
+          />
         ) : (
           <input
             id={field.key}
