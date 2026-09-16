@@ -68,11 +68,26 @@ cd desktop && npm run dev   # electron-vite dev with HMR, opens a window
 - **Wait on `[data-testid="nav-live"]`, not the window.** The window and
   renderer HTML load instantly; the AppShell only mounts after the sidecar
   port handshake completes.
+- **MSMF "opened but zero frames" wedge (hit Sep 2026).** The StreamCam can
+  report `isOpened()=True` while every `read()` fails (`cap_msmf.cpp: can't
+  grab frame, error -1072875772`). It starts with 1080p60 mode switches on a
+  USB 2.0 link (the StreamCam needs USB 3.0 for 1080p60) and spreads with
+  repeated open/close cycles until even DSHOW can't open the device. A bare
+  `VideoCapture(0).read()` loop is the ground truth — if it yields nothing,
+  the machine needs a **physical unplug/replug** (PnP disable/enable needs an
+  elevated shell), not a code fix. The sidecar now guards this: start waits
+  up to `AppState.frame_wait_s` (6s) for a real frame, else answers 503 with
+  recovery guidance, which LiveView shows as a red "Start failed" banner
+  (`[data-testid="start-error"]`) while the state stays idle. With default
+  1920x1080@60 settings on a USB 2.0 port, expect the banner on first Start —
+  drop capture settings to 640x480@30 in the Admin panel before driving
+  `capture` mode.
 
 ## UI handles
 
 `data-testid` attributes: `nav-live`, `nav-admin`, `state`, `conn`,
 `preview-placeholder`, `stats`, `item-log`, `det-box`, `hardware-info`,
-`save-settings`, `restore-defaults`. Start/Stop button:
+`save-settings`, `restore-defaults`, `start-error` (red banner when the
+sidecar rejects Start, e.g. dead camera). Start/Stop button:
 `button[aria-label="Start"]` / `button[aria-label="Stop"]`. Frames streaming =
 `img.preview-img` exists.
