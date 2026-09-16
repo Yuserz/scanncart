@@ -134,4 +134,40 @@ describe('useSidecarStream reconciliation', () => {
     expect(start).toHaveBeenCalledTimes(1)
     expect(result.current.items).toHaveLength(0)
   })
+
+  it('exposes the sidecar detail when start() rejects with a 503 response', async () => {
+    const { deps, start } = makeDeps({ session_id: null, events: [] })
+    start.mockImplementationOnce(async () => {
+      const body = JSON.stringify({ detail: 'Camera opened but delivered no frames.' })
+      const res = new Response(body, { status: 503 })
+      throw Object.assign(new Error('sidecar POST /capture/start failed: 503'), { response: res })
+    })
+    const { result } = renderHook(() => useSidecarStream(8765, deps))
+
+    await act(async () => {
+      await result.current.start()
+    })
+
+    expect(result.current.startError).toBe('Camera opened but delivered no frames.')
+    expect(result.current.statusState).toBe('idle')
+  })
+
+  it('clears startError on the next start attempt', async () => {
+    const { deps, start } = makeDeps({ session_id: null, events: [] })
+    start.mockImplementationOnce(async () => {
+      throw Object.assign(new Error('boom'), { response: undefined })
+    })
+    const { result } = renderHook(() => useSidecarStream(8765, deps))
+
+    await act(async () => {
+      await result.current.start()
+    })
+    expect(result.current.startError).not.toBeNull()
+
+    await act(async () => {
+      await result.current.start()
+    })
+    expect(result.current.startError).toBeNull()
+    expect(result.current.statusState).toBe('running')
+  })
 })

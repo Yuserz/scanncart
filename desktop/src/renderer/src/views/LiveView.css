@@ -20,6 +20,20 @@
   gap: 12px;
 }
 
+.start-error {
+  padding: 10px 14px;
+  border: 1px solid #f87171;
+  border-radius: 6px;
+  background: rgba(248, 113, 113, 0.08);
+  color: #fca5a5;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.start-error strong {
+  color: #f87171;
+}
+
 .status-dot {
   width: 8px;
   height: 8px;

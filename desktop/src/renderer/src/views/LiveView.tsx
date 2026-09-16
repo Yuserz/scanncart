@@ -10,7 +10,10 @@ export interface LiveViewProps {
 }
 
 export function LiveView({ port, deps }: LiveViewProps): JSX.Element {
-  const { frame, statusState, connected, items, start, stop } = useSidecarStream(port, deps)
+  const { frame, statusState, connected, items, startError, start, stop } = useSidecarStream(
+    port,
+    deps
+  )
   const running = statusState === 'running'
   const stats = frame?.stats
   const trackedCount = frame?.detections.length ?? 0
@@ -37,8 +40,13 @@ export function LiveView({ port, deps }: LiveViewProps): JSX.Element {
 
   return (
     <div className="live-view">
-      <div className="live-toolbar">
-        <span className={`status-dot${running ? ' running' : ''}`} aria-hidden="true" />
+      {startError !== null && (
+        <div className="start-error" role="alert" data-testid="start-error">
+          <strong>Start failed:</strong> {startError}
+        </div>
+      )}
+
+      <div className="live-toolbar">        <span className={`status-dot${running ? ' running' : ''}`} aria-hidden="true" />
         <span className="state" data-testid="state">
           {statusState}
         </span>

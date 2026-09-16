@@ -1,5 +1,6 @@
 import asyncio
 import queue
+import time
 from dataclasses import dataclass, field
 from typing import Callable
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -111,6 +112,10 @@ class AppState:
     # Injection seam so tests can supply a fake instead of the real probe
     # (which shells out to PowerShell and reads torch.cuda).
     hardware_prober: Callable[[], HardwareInfo] = probe_hardware
+    # How long /api/capture/start waits for the camera's first frame before
+    # declaring the source dead (MSMF's first sample can lag the open by
+    # seconds even when healthy). Seconds.
+    frame_wait_s: float = 6.0
 
     def __post_init__(self):
         if self.settings is None:
@@ -240,7 +245,16 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
                 source.open()
             # A camera that opens but delivers no frames must not surface as a
             # "running" session (state flips below only after this guard).
-            got = source.latest() if hasattr(source, "latest") else None
+            # Bounded wait: MSMF's first delivered sample can lag the open by
+            # seconds even on a healthy camera, so poll before declaring death.
+            got = None
+            if hasattr(source, "latest"):
+                deadline = time.time() + state.frame_wait_s
+                while time.time() < deadline:
+                    got = source.latest()
+                    if got is not None:
+                        break
+                    await asyncio.sleep(0.25)
             if got is None:
                 if hasattr(source, "release"):
                     source.release()

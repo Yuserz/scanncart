@@ -64,6 +64,58 @@ def test_start_then_stop_transitions_state():
     assert client.post("/api/capture/stop").json()["state"] == "idle"
 
 
+def test_start_with_camera_delivering_no_frames_returns_503():
+    class DeadSource(_StubSource):
+        def latest(self):
+            return None
+
+    state = AppState(
+        settings=Settings(),
+        source_factory=lambda settings: DeadSource(),
+        detector_factory=lambda settings, device: _StubDetector(),
+        db_path=":memory:",
+        hardware_prober=_fake_hardware,
+        frame_wait_s=0.2,
+    )
+    client = TestClient(build_app(lambda: state))
+    r = client.post("/api/capture/start")
+    assert r.status_code == 503
+    assert "no frames" in r.json()["detail"]
+    assert client.get("/api/health").json()["state"] == "idle"
+
+    # Recovery: a source that produces frames starts fine afterwards.
+    state.source_factory = lambda settings: _StubSource()
+    assert client.post("/api/capture/start").json()["state"] == "running"
+    client.post("/api/capture/stop")
+
+
+def test_start_waits_for_slow_first_frame_before_503():
+    # Healthy-but-slow source: no frame at first, delivers mid-wait. Must NOT
+    # be rejected — MSMF's first sample can lag the open by seconds.
+    class SlowSource(_StubSource):
+        def __init__(self):
+            self.calls = 0
+
+        def latest(self):
+            self.calls += 1
+            if self.calls < 3:
+                return None
+            return super().latest()
+
+    state = AppState(
+        settings=Settings(),
+        source_factory=lambda settings: SlowSource(),
+        detector_factory=lambda settings, device: _StubDetector(),
+        db_path=":memory:",
+        hardware_prober=_fake_hardware,
+    )
+    client = TestClient(build_app(lambda: state))
+    r = client.post("/api/capture/start")
+    assert r.status_code == 200
+    assert r.json()["state"] == "running"
+    client.post("/api/capture/stop")
+
+
 def test_cross_origin_requests_get_cors_headers():
     # The renderer's origin (Vite dev server port, or a packaged app's
     # file:// origin) never matches this server's http://127.0.0.1:<port>

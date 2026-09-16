@@ -21,6 +21,62 @@ class LatestFrameBuffer:
             return self._item
 
 
+# Modes tried in order by open_verified(). The first entry is the preferred
+# full-quality mode; the rest are degraded fallbacks so a capture start still
+# yields frames when the camera/driver refuses the primary mode. The settings
+# API never auto-edits capture_* settings — the user sees the exact mode that
+# produced their frames.
+FALLBACK_MODES: list[tuple[int, int, int]] = [
+    (1920, 1080, 60),
+    (1920, 1080, 30),
+    (1280, 720, 30),
+    (640, 480, 30),
+]
+
+# MSMF "opened but zero frames" wedge: the OpenCV/MSMF capture reports
+# is_opened=True but read() fails indefinitely (cap_msmf 'can't grab frame'
+# errors). It can hit ANY resolution after repeated open/close cycles, and
+# often needs a physical unplug/replug to clear. Always verify with real
+# frames; never trust isOpened() alone.
+FRAME_WARMUP_ATTEMPTS = 30
+
+
+def _warmup_read(cap) -> tuple[bool, np.ndarray | None]:
+    """Pull up to FRAME_WARMUP_ATTEMPTS frames, succeeding on the first read."""
+    for _ in range(FRAME_WARMUP_ATTEMPTS):
+        ok, frame = cap.read()
+        if ok:
+            return True, frame
+    return False, None
+
+
+def open_verified(index: int, width: int, height: int, fps: int) -> tuple[object, tuple[int, int, int] | None]:
+    """Open the camera and confirm it actually delivers frames.
+
+    Tries the requested mode first, then FALLBACK_MODES, and returns
+    (cap, mode_used) where mode_used is the (w, h, fps) that produced a real
+    frame — None if every attempt failed. Caller owns cap (including
+    release() on failure, which we handle here by releasing before returning
+    None). Sets FOURCC to MJPG for high-fps modes, the format StreamCam
+    delivers 1080p60 in.
+    """
+    modes = [(width, height, fps)] + [m for m in FALLBACK_MODES if m != (width, height, fps)]
+    for w, h, f in modes:
+        cap = _default_capture(index)
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
+        cap.set(cv2.CAP_PROP_FPS, f)
+        if not cap.isOpened():
+            cap.release()
+            continue
+        ok, _frame = _warmup_read(cap)
+        if ok:
+            return cap, (w, h, f)
+        cap.release()
+    return None, None
+
+
 def _default_capture(index):
     # Pin the Media Foundation backend on Windows: it delivers the StreamCam's
     # full 60 fps at 1080p, whereas OpenCV's DirectShow path caps around 15 fps

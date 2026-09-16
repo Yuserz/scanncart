@@ -9,6 +9,7 @@ export interface HealthResponse {
 
 export interface StateResponse {
   state: string
+  detail?: string
 }
 
 export interface LogEvent {
@@ -40,6 +41,7 @@ export interface SettingsPayload {
   preview_height: number
   track_expiry_s: number
   track_confirm_hits: number
+  class_allowlist: string[]
 }
 
 export interface SettingsResponse extends SettingsPayload {
@@ -103,7 +105,11 @@ export function createApiClient(port: number): ApiClient {
           }
     const res = await fetch(`${base}${path}`, init)
     if (!res.ok) {
-      throw new Error(`sidecar ${method} ${path} failed: ${res.status}`)
+      const err = new Error(`sidecar ${method} ${path} failed: ${res.status}`) as Error & {
+        response?: Response
+      }
+      err.response = res
+      throw err
     }
     return (await res.json()) as T
   }

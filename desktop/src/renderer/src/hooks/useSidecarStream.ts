@@ -1,5 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createApiClient, type ApiClient } from '../lib/api'
+
+// Extracts the sidecar's `detail` (FastAPI puts it under detail) from a failed
+// start(); falls back to the raw message so nothing is silently swallowed.
+async function startErrorMessage(err: unknown): Promise<string> {
+  try {
+    const res = (err as { response?: Response }).response
+    if (res instanceof Response) {
+      const body = (await res.json()) as { detail?: unknown }
+      if (typeof body.detail === 'string' && body.detail !== '') return body.detail
+    }
+  } catch {
+    // fall through to the raw message
+  }
+  return err instanceof Error ? err.message : String(err)
+}
 import {
   createStreamClient,
   type FrameMessage,
@@ -25,6 +40,8 @@ export interface SidecarStream {
   statusState: string
   connected: boolean
   items: LoggedItem[]
+  /** Set when start() fails (e.g. sidecar 503: camera delivers no frames); cleared on the next start attempt. */
+  startError: string | null
   start: () => Promise<void>
   stop: () => Promise<void>
 }
@@ -43,6 +60,7 @@ export function useSidecarStream(port: number, deps: StreamDeps = {}): SidecarSt
   const [statusState, setStatusState] = useState<string>('idle')
   const [connected, setConnected] = useState(false)
   const [items, setItems] = useState<LoggedItem[]>([])
+  const [startError, setStartError] = useState<string | null>(null)
 
   const apiRef = useRef<ApiClient | null>(null)
   const seenRef = useRef<Set<number>>(new Set())
@@ -118,8 +136,13 @@ export function useSidecarStream(port: number, deps: StreamDeps = {}): SidecarSt
   const start = useCallback(async (): Promise<void> => {
     seenRef.current = new Set()
     setItems([])
-    const r = await apiRef.current!.start()
-    setStatus(r.state)
+    setStartError(null)
+    try {
+      const r = await apiRef.current!.start()
+      setStatus(r.state)
+    } catch (err) {
+      setStartError(await startErrorMessage(err))
+    }
   }, [setStatus])
 
   const stop = useCallback(async (): Promise<void> => {
@@ -127,5 +150,5 @@ export function useSidecarStream(port: number, deps: StreamDeps = {}): SidecarSt
     setStatus(r.state)
   }, [setStatus])
 
-  return { frame, statusState, connected, items, start, stop }
+  return { frame, statusState, connected, items, startError, start, stop }
 }

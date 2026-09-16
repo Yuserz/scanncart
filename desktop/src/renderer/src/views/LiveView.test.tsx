@@ -134,4 +134,27 @@ describe('LiveView', () => {
     expect(screen.getByTestId('preview-placeholder')).toHaveTextContent(/Waiting for frames/)
     expect(screen.getByTestId('preview-placeholder').querySelector('.spinner')).not.toBeNull()
   })
+
+  it('shows the sidecar detail banner when start() fails, and clears it on retry', async () => {
+    const h = makeHarness()
+    h.start.mockRejectedValueOnce(
+      Object.assign(new Error('sidecar POST /capture/start failed: 503'), {
+        response: new Response(JSON.stringify({ detail: 'Camera opened but delivered no frames.' }), {
+          status: 503
+        })
+      })
+    )
+    render(<LiveView port={1} deps={h.deps} />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Start' }))
+
+    const banner = screen.getByTestId('start-error')
+    expect(banner).toHaveTextContent('Start failed:')
+    expect(banner).toHaveTextContent('Camera opened but delivered no frames.')
+
+    // Retry succeeds -> banner gone, state transitions to running.
+    await userEvent.click(screen.getByRole('button', { name: 'Start' }))
+    expect(screen.queryByTestId('start-error')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeEnabled()
+  })
 })
