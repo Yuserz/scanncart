@@ -32,7 +32,7 @@ def test_load_settings_overlays_valid_fields(tmp_path):
     settings = load_settings(str(path))
     assert settings.active_model == "yolo11s.pt"
     assert settings.conf_threshold == 0.7
-    assert settings.capture_width == 1280  # untouched fields keep defaults
+    assert settings.capture_width == 640  # untouched fields keep defaults
 
 
 def test_load_settings_falls_back_per_field_on_invalid_value(tmp_path):

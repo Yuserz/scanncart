@@ -10,9 +10,12 @@ class Settings:
     # See docs/DETECTOR_BACKENDS.md §1a for how the file gets to models/.
     active_model: str = "models/scanncart-grocery.onnx"
     camera_index: int = 0
-    capture_width: int = 1280
-    capture_height: int = 720
-    capture_fps: int = 60
+    # 640x480@30 opens and streams reliably over USB 2.0; the StreamCam's
+    # 1080p60 needs USB 3.0 and a failed mode switch there can wedge the MSMF
+    # driver until the camera is physically replugged (see camera.py).
+    capture_width: int = 640
+    capture_height: int = 480
+    capture_fps: int = 30
     conf_threshold: float = 0.5
     imgsz: int = 640
     # How a frame is fitted to `imgsz` before detection, and it must match how

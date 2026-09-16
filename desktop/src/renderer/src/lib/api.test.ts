@@ -83,9 +83,9 @@ describe('createApiClient', () => {
     mockFetchOnce({
       active_model: 'yolo11n.pt',
       camera_index: 0,
-      capture_width: 1280,
-      capture_height: 720,
-      capture_fps: 60,
+      capture_width: 640,
+      capture_height: 480,
+      capture_fps: 30,
       conf_threshold: 0.5,
       imgsz: 640,
       infer_frame_skip: 0,

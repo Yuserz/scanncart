@@ -66,7 +66,7 @@ describe('useSidecarSettings', () => {
     expect(api.updateSettings).toHaveBeenCalledWith(
       expect.objectContaining({
         active_model: DEFAULT_SETTINGS.active_model,
-        capture_width: 1280
+        capture_width: 640
       })
     )
   })

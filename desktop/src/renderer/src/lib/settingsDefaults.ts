@@ -7,9 +7,10 @@ import type { SettingsPayload } from './api'
 export const DEFAULT_SETTINGS: SettingsPayload = {
   active_model: 'models/scanncart-grocery.onnx',
   camera_index: 0,
-  capture_width: 1280,
-  capture_height: 720,
-  capture_fps: 60,
+  // Mirrors settings.py: USB-2.0-safe mode; 1080p60 needs USB 3.0 (see there).
+  capture_width: 640,
+  capture_height: 480,
+  capture_fps: 30,
   conf_threshold: 0.5,
   imgsz: 640,
   resize_mode: 'auto',

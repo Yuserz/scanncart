@@ -6,9 +6,9 @@ def test_settings_defaults():
     # The Roboflow-exported grocery model, run in-process — see
     # docs/DETECTOR_BACKENDS.md §1a.
     assert s.active_model == "models/scanncart-grocery.onnx"
-    assert s.capture_width == 1280
-    assert s.capture_height == 720
-    assert s.capture_fps == 60
+    assert s.capture_width == 640
+    assert s.capture_height == 480
+    assert s.capture_fps == 30
     assert s.conf_threshold == 0.5
     assert s.imgsz == 640
     assert s.infer_frame_skip == 0
