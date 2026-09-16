@@ -90,7 +90,7 @@ export interface FieldMeta {
   key: keyof SettingsPayload
   label: string
   hint: string
-  type: 'select' | 'number' | 'text' | 'boolean'
+  type: 'select' | 'number' | 'text' | 'boolean' | 'list'
   options?: readonly string[]
   min?: number
   max?: number
@@ -278,6 +278,12 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
     step: 0.5
   },
   {
+    key: 'class_allowlist',
+    label: 'Class allowlist',
+    hint: 'Comma-separated class names to keep (e.g. bottle, cup). Empty keeps every class the model reports. Dropped classes never reach the overlay or item log. Applies live, no restart needed.',
+    type: 'list'
+  },
+  {
     key: 'camera_brightness',
     label: 'Brightness',
     hint: 'Post-sensor boost — no framerate cost, but amplifies noise. Try exposure first.',
@@ -359,6 +365,6 @@ export const SETTINGS_GROUPS: FieldGroup[] = [
   {
     label: 'Stream',
     home: 'live',
-    keys: ['infer_frame_skip', 'preview_height', 'preview_max_fps', 'track_expiry_s']
+    keys: ['infer_frame_skip', 'preview_height', 'preview_max_fps', 'track_expiry_s', 'class_allowlist']
   }
 ]

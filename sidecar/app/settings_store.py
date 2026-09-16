@@ -94,6 +94,7 @@ HOT_RELOADABLE_FIELDS = {
     "preview_height",
     "preview_max_fps",
     "track_expiry_s",
+    "class_allowlist",
     # Read per inference call (YoloDetector passes it to track(); the remote
     # detector filters responses against it), so a setter is all it needs.
     "conf_threshold",
@@ -178,6 +179,10 @@ def _valid_field(name: str, value: Any) -> bool:
         return isinstance(value, int) and 120 <= value <= 1080
     if name == "track_expiry_s":
         return isinstance(value, (int, float)) and 0.0 < value <= 30.0
+    if name == "class_allowlist":
+        return isinstance(value, list) and all(
+            isinstance(c, str) and c.strip() != "" for c in value
+        )
     if name == "detector_backend":
         return isinstance(value, str) and value in ALLOWED_BACKENDS
     if name in ("roboflow_workspace", "roboflow_workflow_id"):

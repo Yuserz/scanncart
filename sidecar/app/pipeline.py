@@ -88,6 +88,12 @@ class Pipeline:
 
         t0 = time.time()
         detections = self._detector.infer(frame)
+        # Class allowlist (hot-reloaded): drop classes not on the list before
+        # tracking/logging/streaming, so overlay, item log, and DB all agree.
+        allow = self._settings.class_allowlist
+        if allow:
+            allowed = set(allow)
+            detections = [d for d in detections if d.cls in allowed]
         t1 = time.time()
 
         if self._last_infer_ts is not None:

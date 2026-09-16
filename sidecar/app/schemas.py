@@ -74,6 +74,7 @@ class SettingsPayload(BaseModel):
     preview_height: int
     preview_max_fps: int
     track_expiry_s: float
+    class_allowlist: list[str]
     detector_backend: str
     roboflow_workspace: str
     roboflow_workflow_id: str
@@ -111,6 +112,7 @@ class SettingsUpdateRequest(BaseModel):
     preview_height: int | None = Field(default=None, ge=120, le=1080)
     preview_max_fps: int | None = Field(default=None, ge=0, le=120)
     track_expiry_s: float | None = Field(default=None, gt=0.0, le=30.0)
+    class_allowlist: list[str] | None = None
     detector_backend: str | None = None
     roboflow_workspace: str | None = Field(default=None, min_length=1)
     roboflow_workflow_id: str | None = Field(default=None, min_length=1)
@@ -144,6 +146,14 @@ class SettingsUpdateRequest(BaseModel):
             unknown = set(v) - RESETTABLE_FIELDS
             if unknown:
                 raise ValueError(f"reset_fields must be a subset of {sorted(RESETTABLE_FIELDS)}")
+        return v
+
+    @field_validator("class_allowlist")
+    @classmethod
+    def _validate_class_allowlist(cls, v: list[str] | None) -> list[str] | None:
+        # Mirror _valid_field in settings_store: no empty/whitespace entries.
+        if v is not None and any(c.strip() == "" for c in v):
+            raise ValueError("class_allowlist entries must be non-empty class names")
         return v
 
     @field_validator("detector_backend")

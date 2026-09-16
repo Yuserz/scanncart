@@ -216,3 +216,18 @@ def test_apply_preset_still_sets_the_model_for_a_stock_one(tmp_path):
     client.post("/api/settings/preset", json={"name": "low_end"})
 
     assert state.settings.active_model == "yolo11n.pt"
+
+
+def test_patch_class_allowlist_hot_reloadable(tmp_path):
+    client, state = _make_client(tmp_path)
+    r = client.patch("/api/settings", json={"class_allowlist": ["bottle", "cup"]})
+    assert r.status_code == 200
+    assert r.json()["class_allowlist"] == ["bottle", "cup"]
+    assert state.settings.class_allowlist == ["bottle", "cup"]
+
+
+def test_patch_invalid_class_allowlist_is_rejected(tmp_path):
+    client, state = _make_client(tmp_path)
+    r = client.patch("/api/settings", json={"class_allowlist": ["bottle", ""]})
+    assert r.status_code == 422
+    assert state.settings.class_allowlist == []  # unchanged

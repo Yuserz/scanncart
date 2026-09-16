@@ -18,6 +18,7 @@ export const DEFAULT_SETTINGS: SettingsPayload = {
   preview_height: 720,
   preview_max_fps: 30,
   track_expiry_s: 1.5,
+  class_allowlist: [],
   detector_backend: 'native',
   roboflow_workspace: 'yusri-caloyloy',
   roboflow_workflow_id: 'scanncart-grocery-vscanncart-grocery-1-yolo11n-t1-logic',

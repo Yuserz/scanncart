@@ -41,6 +41,7 @@ export interface SettingsPayload {
   preview_height: number
   preview_max_fps: number
   track_expiry_s: number
+  class_allowlist: string[]
   detector_backend: string
   roboflow_workspace: string
   roboflow_workflow_id: string

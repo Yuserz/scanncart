@@ -17,6 +17,7 @@ export function baseSettings(overrides: Partial<SettingsResponse> = {}): Setting
     preview_height: 720,
     preview_max_fps: 30,
     track_expiry_s: 1.5,
+  class_allowlist: [],
     detector_backend: 'ultralytics',
     roboflow_workspace: '',
     roboflow_workflow_id: '',

@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -34,6 +34,9 @@ class Settings:
     # 0 to emit only on inference as before.
     preview_max_fps: int = 30
     track_expiry_s: float = 1.5
+    # Class names to KEEP (post-inference); empty list = keep everything.
+    # Narrows detection to checkout-relevant classes; hot-reloadable.
+    class_allowlist: list[str] = field(default_factory=list)
 
     # Device controls. None means "leave the camera alone", so behaviour is
     # unchanged until calibration proposes values. The StreamCam's automatic

@@ -332,6 +332,7 @@ def _settings_response(state: "AppState") -> SettingsResponse:
         preview_height=state.settings.preview_height,
         preview_max_fps=state.settings.preview_max_fps,
         track_expiry_s=state.settings.track_expiry_s,
+        class_allowlist=list(state.settings.class_allowlist),
         detector_backend=state.settings.detector_backend,
         roboflow_workspace=state.settings.roboflow_workspace,
         roboflow_workflow_id=state.settings.roboflow_workflow_id,

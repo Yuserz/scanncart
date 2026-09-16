@@ -123,3 +123,41 @@ def test_track_expiry_s_is_live_reloaded_from_settings():
     clock.t = 2.0
     pipe.process_once()          # 2.0s gap > new 1.0s expiry → resolved
     assert store.resolved == [(42, 5, 0.0)]
+
+
+def test_class_allowlist_drops_disallowed_classes():
+    store, clock = FakeStore(), FakeClock()
+    keep = Detection(track_id=5, cls="banana", conf=0.9, box=(0.1, 0.2, 0.3, 0.4))
+    drop = Detection(track_id=6, cls="person", conf=0.95, box=(0, 0, 0.5, 0.5))
+    pipe = Pipeline(
+        ScriptedSource(),
+        ScriptedDetector([[keep, drop], [keep, drop]]),
+        Settings(class_allowlist=["banana"]),
+        on_message=lambda m: None,
+        logging_store=store,
+        session_id=42,
+        clock=clock,
+    )
+    pipe.process_once()
+    pipe.process_once()
+    assert [r[2] for r in store.records] == ["banana", "banana"]
+
+
+def test_class_allowlist_is_live_reloaded():
+    store, clock = FakeStore(), FakeClock()
+    settings = Settings()  # empty allowlist = keep all
+    det = Detection(track_id=5, cls="person", conf=0.9, box=(0.1, 0.2, 0.3, 0.4))
+    pipe = Pipeline(
+        ScriptedSource(),
+        ScriptedDetector([[det], [det]]),
+        settings,
+        on_message=lambda m: None,
+        logging_store=store,
+        session_id=42,
+        clock=clock,
+    )
+    pipe.process_once()
+    assert [r[2] for r in store.records] == ["person"]
+    settings.class_allowlist = ["banana"]  # mutate in place, as a live PATCH would
+    pipe.process_once()
+    assert [r[2] for r in store.records] == ["person"]  # nothing new logged

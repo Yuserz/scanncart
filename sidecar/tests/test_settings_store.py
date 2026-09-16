@@ -4,6 +4,7 @@ import pytest
 
 from app.settings import Settings
 from app.settings_store import (
+    HOT_RELOADABLE_FIELDS,
     RESTART_REQUIRED_FIELDS,
     _valid_field,
     compute_warnings,
@@ -241,3 +242,21 @@ def test_stock_weights_never_warn_about_stretch():
         Settings(active_model="yolo11n.pt", resize_mode="stretch"), "idle"
     )
     assert not any("letterbox-trained" in w for w in warnings)
+
+
+def test_valid_field_class_allowlist():
+    assert _valid_field("class_allowlist", [])
+    assert _valid_field("class_allowlist", ["bottle", "cup"])
+    assert not _valid_field("class_allowlist", "bottle")  # must be a list
+    assert not _valid_field("class_allowlist", ["bottle", ""])
+    assert not _valid_field("class_allowlist", ["bottle", 3])
+
+
+def test_class_allowlist_is_hot_reloadable():
+    assert "class_allowlist" in HOT_RELOADABLE_FIELDS
+
+
+def test_save_then_load_round_trips_class_allowlist(tmp_path):
+    path = tmp_path / "settings.json"
+    save_settings(Settings(class_allowlist=["bottle", "cup"]), str(path))
+    assert load_settings(str(path)).class_allowlist == ["bottle", "cup"]
