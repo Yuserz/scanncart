@@ -30,13 +30,24 @@ not the dev server.
 ## Run (agent path)
 
 ```bash
-node .claude/skills/run-desktop/driver.mjs smoke     # launch, screenshot Live view + Admin panel
-node .claude/skills/run-desktop/driver.mjs capture   # Start -> real YOLO frames -> stats/item log -> Stop
+node .claude/skills/run-desktop/driver.mjs smoke      # launch, screenshot Live view + Admin panel
+node .claude/skills/run-desktop/driver.mjs capture    # Start -> real YOLO frames -> stats/item log -> Stop
+node .claude/skills/run-desktop/driver.mjs allowlist  # class allowlist field -> sidecar round-trip
 ```
 
 - `smoke` verifies launch + sidecar REST (hardware info printed).
 - `capture` runs real camera + YOLO inference (GPU). Needs a webcam attached;
   first use of a model downloads its weights. Takes ~1 min.
+- `allowlist` drives the Admin class-allowlist field the way a user does —
+  types `bottle, cup`, clicks Save — then asserts the sidecar received
+  `["bottle","cup"]`, treats the field as hot-reloadable, and that the field is
+  **not** drawn on the Live tuning card (a list field grouped on the live side
+  renders as a range input bound to a string array). It PATCHes the original
+  value back in a `finally`, so it is safe to rerun. This is the wiring check to
+  run after touching `settingsFields.ts`, `AdminPanel.tsx`, or the settings
+  schema — the unit tests cannot see a field that renders in the wrong view.
+- Modes that assert print `PASS`/`FAIL` per check and **exit non-zero** when any
+  fail, so they can gate a change.
 - Screenshots → `.claude/skills/run-desktop/shots/` (override `SCREENSHOT_DIR`).
   **Read the screenshots** — text output alone doesn't prove the UI rendered.
 
@@ -54,7 +65,10 @@ cd desktop && npm run dev   # electron-vite dev with HMR, opens a window
   python + `run.py`). Launching the JS file directly breaks sidecar spawning.
 - **`import 'playwright-core'` fails outside `desktop/`** — the driver uses
   `createRequire(desktop/package.json)` to resolve it. Keep that if you copy
-  the pattern.
+  the pattern, and keep any copy of `driver.mjs` in this skill directory: it
+  derives the repo root from its own path, so a copy sitting one level down
+  (e.g. in `shots/`) resolves `desktop/` to the wrong directory and dies on the
+  import with a bare MODULE_NOT_FOUND.
 - **A dead sidecar hangs the app forever.** `main/index.ts` has no sidecar
   auto-restart; if the Python process dies before printing `SIDECAR_PORT=`,
   the renderer polls for a port indefinitely and `[data-testid="nav-live"]`
@@ -76,3 +90,8 @@ cd desktop && npm run dev   # electron-vite dev with HMR, opens a window
 `save-settings`, `restore-defaults`. Start/Stop button:
 `button[aria-label="Start"]` / `button[aria-label="Stop"]`. Frames streaming =
 `img.preview-img` exists.
+
+Setting inputs use the bare setting key as their `id` (`#class_allowlist`,
+`#capture_fps`), while the Live tuning card prefixes the same key with `tune-`
+(`#tune-camera_exposure`) — that prefix is how the `allowlist` mode tells the
+Admin field apart from a mis-placed tuning control.
