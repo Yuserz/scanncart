@@ -1,5 +1,8 @@
 .superpowers/
-graphify-out/cache/
+
+# Generated code graph (graph.json/html, GRAPH_REPORT.md). Local artifact —
+# regenerate with `graphify update .`.
+graphify-out/
 .claude/settings.json
 .claude/skills/run-desktop/shots/
 
