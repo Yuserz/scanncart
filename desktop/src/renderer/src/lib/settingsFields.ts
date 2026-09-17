@@ -354,7 +354,9 @@ export const SETTINGS_GROUPS: FieldGroup[] = [
   {
     label: 'Detection & Tracking',
     home: 'admin',
-    keys: ['imgsz', 'resize_mode']
+    // class_allowlist is a catalog filter an operator sets once, and the
+    // tuning card renders numeric sliders only — it lives here, not under Live.
+    keys: ['imgsz', 'resize_mode', 'class_allowlist']
   },
   {
     label: 'Image',
@@ -365,6 +367,6 @@ export const SETTINGS_GROUPS: FieldGroup[] = [
   {
     label: 'Stream',
     home: 'live',
-    keys: ['infer_frame_skip', 'preview_height', 'preview_max_fps', 'track_expiry_s', 'class_allowlist']
+    keys: ['infer_frame_skip', 'preview_height', 'preview_max_fps', 'track_expiry_s']
   }
 ]

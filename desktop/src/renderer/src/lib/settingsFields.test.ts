@@ -40,6 +40,24 @@ describe('field placement', () => {
     }
   })
 
+  it('puts only slider-renderable fields on live', () => {
+    // The tuning card draws a range input or a checkbox and nothing else, so a
+    // text/list/select field placed on live renders as a slider bound to a
+    // non-numeric value. class_allowlist shipped that way once.
+    const renderable = ['number', 'boolean']
+    for (const group of SETTINGS_GROUPS.filter((g) => g.home === 'live')) {
+      for (const key of group.keys) {
+        const field = SETTINGS_FIELDS.find((f) => f.key === key)
+        expect(renderable, `${key} sits in the live group "${group.label}"`).toContain(field?.type)
+      }
+    }
+  })
+
+  it('keeps the class allowlist in admin', () => {
+    const liveKeys = SETTINGS_GROUPS.filter((g) => g.home === 'live').flatMap((g) => g.keys)
+    expect(liveKeys).not.toContain('class_allowlist')
+  })
+
   it('warns about the exposure framerate trap in the hint', () => {
     const exposure = SETTINGS_FIELDS.find((f) => f.key === 'camera_exposure')
     expect(exposure?.hint).toMatch(/fps|framerate/i)

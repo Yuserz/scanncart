@@ -64,6 +64,32 @@ describe('AdminPanel', () => {
     expect(screen.getByLabelText(/Model/i)).toHaveValue('yolo11n.pt')
   })
 
+  it('renders the class allowlist as a text field in Admin and saves a parsed array', async () => {
+    // This one lives in Admin only: the tuning card renders numeric sliders,
+    // so a field placed on the live side gets a range input bound to a string
+    // array instead of an editable list.
+    const { deps, api } = makeDeps('idle')
+    const user = userEvent.setup()
+    const { container } = render(<AdminPanel port={8765} deps={deps} />)
+
+    await waitFor(() => expect(screen.getByTestId('capture-state')).toHaveTextContent('idle'))
+
+    const input = container.querySelector<HTMLInputElement>('#class_allowlist')
+    expect(input).toHaveAttribute('type', 'text')
+
+    await user.type(input!, 'bottle, cup')
+    // The text survives verbatim — only the draft holds the parsed array, so
+    // the comma is not eaten before the next name starts.
+    expect(input).toHaveValue('bottle, cup')
+
+    await user.click(screen.getByTestId('save-settings'))
+    await waitFor(() =>
+      expect(api.updateSettings).toHaveBeenCalledWith(
+        expect.objectContaining({ class_allowlist: ['bottle', 'cup'] })
+      )
+    )
+  })
+
   it('editing a restart-required field while running blocks Save with a warning', async () => {
     const { deps } = makeDeps('running')
     const user = userEvent.setup()

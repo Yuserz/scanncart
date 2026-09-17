@@ -22,6 +22,15 @@ import {
 import { Spinner } from '../components/Spinner'
 import './AdminPanel.css'
 
+// "bottle, cup" → ["bottle", "cup"]. Blank entries are dropped so a trailing
+// comma never puts an empty class name on the wire.
+function parseList(text: string): string[] {
+  return text
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s !== '')
+}
+
 export interface AdminPanelProps {
   port: number
   deps?: SettingsDeps
@@ -75,10 +84,16 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
   // useEffect, per React's guidance on resetting state when a prop changes.
   const [settingsAtLastReset, setSettingsAtLastReset] = useState<SettingsResponse | null>(null)
   const [draft, setDraft] = useState<SettingsUpdate>({})
+  // Raw text behind the comma-separated (list) fields. The draft holds the
+  // parsed array, but the input has to show exactly what was typed: parsing on
+  // every keystroke eats the comma as soon as it is typed, so "bottle, cup"
+  // collapsed to "bottlecupp".
+  const [listText, setListText] = useState<Record<string, string>>({})
   const [justSaved, setJustSaved] = useState(false)
   if (settings !== settingsAtLastReset) {
     setSettingsAtLastReset(settings)
     setDraft({})
+    setListText({})
   }
 
   const running = captureState === 'running'
@@ -289,17 +304,14 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
           <input
             id={field.key}
             type="text"
-            value={Array.isArray(value) ? value.join(', ') : String(value)}
-            placeholder="e.g. bottle, cup"
-            onChange={(e) =>
-              setField(
-                field.key,
-                e.target.value
-                  .split(',')
-                  .map((s) => s.trim())
-                  .filter((s) => s !== '')
-              )
+            value={
+              listText[field.key] ?? (Array.isArray(value) ? value.join(', ') : String(value))
             }
+            placeholder="e.g. bottle, cup"
+            onChange={(e) => {
+              setListText((prev) => ({ ...prev, [field.key]: e.target.value }))
+              setField(field.key, parseList(e.target.value))
+            }}
           />
         ) : field.type === 'select' ? (
           <select
