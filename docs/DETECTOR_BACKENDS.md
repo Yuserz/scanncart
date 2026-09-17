@@ -166,13 +166,13 @@ The way to actually go faster is a `.pt` on CUDA (see below), not tuning this.
 ### Two caveats before treating this as the answer
 
 1. **ONNX on the GPU is supported and pinned (2026-09-04).** `sidecar/requirements-cuda.txt`
-   pins `onnxruntime-gpu>=1.22,<1.23` — CUDA 12, the same major torch 2.6.0+cu124 ships — and
+   pins `onnxruntime-gpu>=1.22,<1.23` — CUDA 12, the same major this venv's torch 2.11.0+cu128 ships — and
    verified running `CUDAExecutionProvider` on the grocery ONNX (62 ms isolated vs ~300–500 ms
    CPU). Two rules, documented in the file and the sidecar README:
-   - **Version pairing:** the onnxruntime-gpu minor must match torch's bundled CUDA. 1.29 wants
-     CUDA 13 (`cublasLt64_13.dll`), which torch does not ship → it reports the provider
-     "available" and then fails at `bind_input` with "no data transfer registered". 1.22 wants
-     CUDA 12, which torch ships.
+   - **Version pairing:** the onnxruntime-gpu build must match torch's bundled CUDA. Per
+     onnxruntime's CUDA EP table, 1.27+ ships CUDA 13 wheels (`cublasLt64_13.dll`), which torch
+     does not ship → it reports the provider "available" and then fails at `bind_input` with
+     "no data transfer registered". 1.21–1.26 are CUDA 12.8 / cuDNN 9 builds, which torch ships.
    - **One runtime only:** `onnxruntime` and `onnxruntime-gpu` share the `onnxruntime` import
      name — installing both breaks either, and uninstalling one deletes the shared package
      directory.

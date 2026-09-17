@@ -96,9 +96,12 @@ cd desktop && npm run dev   # electron-vite dev with HMR, opens a window
   switching to DirectShow: `_default_capture` pins MSMF on purpose (60 fps at
   1080p versus ~15 fps on DSHOW) and only falls back when MSMF can't open at
   all. In the app the symptom is Start reporting success and the state sitting
-  on `running` for ~3 s before an `error` status lands with a "stopped
-  delivering frames" detail, which LiveView renders in the dismissible
-  `[data-testid="live-error"]` banner. Shipped defaults are 640x480@30, which
+  on `running` for ~3 s before an `error` status lands, which LiveView renders
+  in the dismissible `[data-testid="live-error"]` banner and then tears capture
+  back down to idle with Start re-enabled — no hang, no fake `running`.
+  Observed verbatim on a wedged device: *"Capture stopped: Camera 0 stopped
+  delivering frames for 3s (35 attempts) — it may have been unplugged,
+  suspended, or taken by another program."* Shipped defaults are 640x480@30, which
   this camera streams fine, so the way to walk into it is applying the
   **`high_end` preset (1920x1080@60)** — check capture settings in Admin before
   driving `capture` mode, and after a replug re-check the Camera dropdown

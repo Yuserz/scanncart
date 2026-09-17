@@ -6,11 +6,27 @@
 #
 # Version pairing is load-bearing: onnxruntime-gpu does not bundle its CUDA
 # runtime and dlopens cublas/cudnn from torch's lib directory (see
-# app/inference.py::enable_onnx_cuda). The minor must match the CUDA major
-# torch ships: 1.22.x wants CUDA 12 (matches torch 2.6.0+cu124 in the sidecar
-# venv — verified working 2026-09-04), while 1.29+ wants CUDA 13, which torch
-# does not ship; the session then fails at bind_input with "no data transfer
-# registered".
+# app/inference.py::enable_onnx_cuda). The build must match the CUDA major torch
+# ships. Per the official CUDA EP table
+# (onnxruntime.ai/docs/execution-providers/CUDA-ExecutionProvider.html):
+#
+#   onnxruntime-gpu    CUDA    cuDNN
+#   1.21.x - 1.26.x    12.8    9.x    <- the default build before 1.27
+#   1.27.x - 1.29.x    13.0    9.x    <- 1.27+ publishes CUDA 13 wheels
+#
+# The CUDA 12.8 / cuDNN 9 line is the one that matches torch: this venv ships
+# torch 2.11.0+cu128 (torch.version.cuda == "12.8", cuDNN 9.19.0, and
+# cublas64_12.dll / cudart64_12.dll / cudnn64_9.dll in torch/lib), so any of
+# 1.21-1.26 can bind to those DLLs. A 1.27+ wheel instead reports the provider
+# "available" and then fails at bind_input with "no data transfer registered",
+# because it wants cublasLt64_13.dll, which torch does not ship. Re-check the
+# major before moving this pin:
+#   python -c "import torch; print(torch.version.cuda)"
+#
+# `<1.23` is deliberately narrower than the CUDA-12 range above: 1.22.0 is the
+# build actually verified on the grocery ONNX (CUDAExecutionProvider, ~62 ms vs
+# ~300-500 ms CPU). Widening to `<1.27` is compatible per that table but has
+# not been re-measured on this machine — do that before relaxing it.
 #
 # Install after `make install` has created the venv:
 #   uv pip install --python .venv/Scripts/python.exe -r requirements-cuda.txt

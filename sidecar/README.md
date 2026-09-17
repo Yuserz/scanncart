@@ -106,8 +106,9 @@ uv pip uninstall --python .venv/Scripts/python.exe onnxruntime
 uv pip install --python .venv/Scripts/python.exe -r requirements-cuda.txt
 ```
 
-1. **The CUDA major version must match torch's.** `onnxruntime-gpu` 1.29 wants
-   CUDA 13 (`cublasLt64_13.dll`); 1.22 wants CUDA 12. Check with
+1. **The CUDA major version must match torch's.** `onnxruntime-gpu` 1.27 and
+   later are built for CUDA 13 (`cublasLt64_13.dll`); 1.21–1.26 are built for
+   CUDA 12.8. Check with
    `python -c "import torch; print(torch.version.cuda)"` and pick the build to
    match — a mismatch reports `CUDAExecutionProvider` as available and then
    fails on the first frame with *"no data transfer registered"*.
