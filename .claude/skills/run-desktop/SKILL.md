@@ -82,12 +82,34 @@ cd desktop && npm run dev   # electron-vite dev with HMR, opens a window
 - **Wait on `[data-testid="nav-live"]`, not the window.** The window and
   renderer HTML load instantly; the AppShell only mounts after the sidecar
   port handshake completes.
+- **MSMF "device opened, zero frames" wedge (hit Sep 2026).** The StreamCam can
+  report `isOpened()=True` while *every* `read()` fails — stderr fills with
+  `cap_msmf.cpp: can't grab frame` / `-1072875772` (`0xC00D3704`). `open()`
+  succeeding is not evidence of a working camera, and the device never recovers
+  on its own. It follows a 1080p60 mode request (the StreamCam needs USB 3.0 for
+  1080p60, and this host never delivered a frame in that mode — the port itself
+  was never confirmed) and spreads across repeated open/close cycles until even
+  DSHOW can't open the device. Ground truth is a bare
+  `cv2.VideoCapture(0).read()` loop in isolation: if that yields no frame, the
+  fix is a **physical unplug/replug** — ideally into a USB 3.0 port — because a
+  software PnP disable/enable needs an elevated shell. Do not "fix" it by
+  switching to DirectShow: `_default_capture` pins MSMF on purpose (60 fps at
+  1080p versus ~15 fps on DSHOW) and only falls back when MSMF can't open at
+  all. In the app the symptom is Start reporting success and the state sitting
+  on `running` for ~3 s before an `error` status lands with a "stopped
+  delivering frames" detail, which LiveView renders in the dismissible
+  `[data-testid="live-error"]` banner. Shipped defaults are 640x480@30, which
+  this camera streams fine, so the way to walk into it is applying the
+  **`high_end` preset (1920x1080@60)** — check capture settings in Admin before
+  driving `capture` mode, and after a replug re-check the Camera dropdown
+  (`Detecting cameras…` / Rescan), since the index can shift.
 
 ## UI handles
 
 `data-testid` attributes: `nav-live`, `nav-admin`, `state`, `conn`,
 `preview-placeholder`, `stats`, `item-log`, `det-box`, `hardware-info`,
-`save-settings`, `restore-defaults`. Start/Stop button:
+`save-settings`, `restore-defaults`, `live-error` (dismissible banner for a
+capture that died, e.g. a stalled camera). Start/Stop button:
 `button[aria-label="Start"]` / `button[aria-label="Stop"]`. Frames streaming =
 `img.preview-img` exists.
 
