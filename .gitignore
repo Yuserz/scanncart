@@ -10,3 +10,7 @@ graphify-out/cache/
 
 # Sidecar runtime logs from a manually launched `python run.py`.
 sidecar/*.log
+
+# Local training dataset (SKU image crops, ~5 GB) plus its credentials file.
+# Lives in a scratch dir at the repo root, not part of the app tree.
+/scanncart/
