@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import AppState, build_app
@@ -58,6 +59,107 @@ def test_get_settings_returns_current_values_and_field_classification(tmp_path):
     assert "infer_frame_skip" in body["hot_reloadable_fields"]
     assert "active_model" in body["restart_required_fields"]
     assert isinstance(body["warnings"], list)
+
+
+def test_the_settings_route_honours_a_recorded_resize_requirement(tmp_path, monkeypatch):
+    """The record reaches the warning check too, or the app would flag the configuration it
+    just told the operator to use. `requirement_for` is patched rather than written to
+    `sidecar/models/`, so this stays off the real directory the app ships with."""
+    import app.main as main
+
+    monkeypatch.setattr(main, "requirement_for", lambda name: "stretch")
+    client, _ = _make_client(
+        tmp_path,
+        settings=Settings(active_model="models/scanncart-grocery-v2.pt", resize_mode="stretch"),
+    )
+    warnings = client.get("/api/settings").json()["warnings"]
+    assert not any("letterbox-trained" in w for w in warnings)
+
+
+def test_the_settings_route_reports_the_geometry_the_detector_will_use(tmp_path, monkeypatch):
+    """`resize_mode: auto` is the default and the documented answer, so the setting alone does not
+    say what geometry runs. The response carries the resolved mode — literally the value
+    `_default_detector_factory` passes to the detector — because the Live view's readout has no way
+    to derive it: `auto` depends on the weights' record, and on the file format for weights nobody
+    recorded anything about."""
+    import app.main as main
+
+    monkeypatch.setattr(main, "requirement_for", lambda name: "stretch")
+    client, _ = _make_client(
+        tmp_path,
+        settings=Settings(active_model="models/scanncart-grocery-v2.pt", resize_mode="auto"),
+    )
+    assert client.get("/api/settings").json()["resize_mode_resolved"] == "stretch"
+
+
+def test_the_reported_geometry_is_the_unrecorded_heuristic_when_nothing_was_recorded(tmp_path):
+    # The other half of the same field: for weights with no record, `auto` is still the format
+    # heuristic, and the readout has to print what that actually falls back to rather than nothing.
+    client, _ = _make_client(tmp_path, settings=Settings(active_model="yolo11n.pt"))
+    assert client.get("/api/settings").json()["resize_mode_resolved"] == "letterbox"
+
+
+def test_an_explicit_mode_is_reported_as_itself(tmp_path, monkeypatch):
+    # The panel's warning is about a mismatch, so the readout must not quietly report what the
+    # operator "should" have chosen: an explicit letterbox over a record saying stretch is reported
+    # as letterbox, which is the geometry that will actually run.
+    import app.main as main
+
+    monkeypatch.setattr(main, "requirement_for", lambda name: "stretch")
+    client, _ = _make_client(
+        tmp_path,
+        settings=Settings(active_model="models/scanncart-grocery-v2.pt", resize_mode="letterbox"),
+    )
+    assert client.get("/api/settings").json()["resize_mode_resolved"] == "letterbox"
+
+
+def test_an_unrecorded_weight_comes_back_with_the_geometry_to_record(tmp_path):
+    """The panel's button needs three things and gets all three here: which weight, which mode to
+    write, and the prose to render beside it. The mode is `auto`'s answer for these weights, so
+    recording it cannot change what the detector does — it converts the fallback into a fact.
+
+    Both sentences are on the response because both views render the entry, and a view without the
+    button still has to say what to do about it."""
+    client, _ = _make_client(
+        tmp_path,
+        settings=Settings(active_model="models/hand-copied.pt", resize_mode="auto"),
+    )
+    entry = client.get("/api/settings").json()["unrecorded_resize_mode"]
+    assert entry["model"] == "models/hand-copied.pt"
+    assert entry["resize_mode"] == "letterbox"
+    assert "no record of the geometry" in entry["warning"]
+    assert "--install" in entry["remedy"]
+    # And it is not *also* in the flat warning list, or the panel would render the same situation
+    # twice — once with the remedy beside it and once without.
+    assert not any(
+        "no record of the geometry" in w for w in client.get("/api/settings").json()["warnings"]
+    )
+
+
+def test_a_recorded_weight_comes_back_with_nothing_to_record(tmp_path, monkeypatch):
+    """The entry's absence is the whole trigger for the button, so it has to clear the moment the
+    requirement exists — otherwise the panel offers to record a fact it already has."""
+    import app.main as main
+
+    monkeypatch.setattr(main, "requirement_for", lambda name: "letterbox")
+    client, _ = _make_client(
+        tmp_path,
+        settings=Settings(active_model="models/hand-copied.pt", resize_mode="auto"),
+    )
+    assert client.get("/api/settings").json()["unrecorded_resize_mode"] is None
+
+
+@pytest.mark.parametrize("backend", ["local_api", "cloud_api"])
+def test_a_remote_backend_reports_no_local_geometry(tmp_path, backend):
+    """Only the native branch resizes with these weights. A remote backend hands the frame to a
+    workflow that holds its own model and resizes server-side, so `active_model` and `resize_mode`
+    are out of the inference path — and reporting a geometry there would be a claim about a resize
+    that never happens. `None` is what the Live view reads as "no local weights to describe"."""
+    client, _ = _make_client(
+        tmp_path,
+        settings=Settings(active_model="models/scanncart-grocery-v2.pt", detector_backend=backend),
+    )
+    assert client.get("/api/settings").json()["resize_mode_resolved"] is None
 
 
 def test_patch_hot_reloadable_field_while_idle(tmp_path):

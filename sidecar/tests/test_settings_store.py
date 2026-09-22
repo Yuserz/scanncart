@@ -9,6 +9,7 @@ from app.settings_store import (
     _valid_field,
     compute_warnings,
     load_settings,
+    resize_guess,
     resolve_resize_mode,
     save_settings,
 )
@@ -163,6 +164,39 @@ def test_explicit_modes_win_over_auto():
     assert resolve_resize_mode("stretch", "yolo11n.pt") == "stretch"
 
 
+def test_a_recorded_requirement_beats_the_format_heuristic():
+    """The whole reason the record exists. A `.pt` trained on a Roboflow `Stretch to` version
+    needs stretch, and the heuristic - which knows only that local training letterboxes -
+    answers the opposite. Without this, leaving `resize_mode` on its default presents every
+    object at 0.56x the canvas the model trained on: no error, only weaker `far` detections.
+    """
+    assert resolve_resize_mode("auto", "models/scanncart-grocery-v2.pt", "stretch") == "stretch"
+    # And the reverse, so the record is consulted rather than stretch being special-cased.
+    assert resolve_resize_mode("auto", "models/legacy.onnx", "letterbox") == "letterbox"
+
+
+def test_an_explicit_mode_still_beats_a_recorded_requirement():
+    """Order of authority: the operator is allowed to override, and the panel is what tells
+    them they are contradicting the weights. Silently ignoring the setting would be worse
+    than a wrong one - there would be no way to run a model knowingly off-spec."""
+    assert resolve_resize_mode("letterbox", "models/x.pt", "stretch") == "letterbox"
+
+
+def test_without_a_record_the_heuristic_still_answers():
+    """`None` is the normal case for a hand-copied weight and for every stock model, so this
+    path stays load-bearing."""
+    assert resolve_resize_mode("auto", "models/scanncart-grocery-v2.pt") == "letterbox"
+    assert resolve_resize_mode("auto", "models/scanncart-grocery.onnx", None) == "stretch"
+
+
+def test_a_nonsense_requirement_is_ignored_rather_than_returned():
+    """`read_record` already drops a mode the settings PATCH would reject, but a value that
+    reached here another way must not become the mode frames are fitted to."""
+    assert resolve_resize_mode("auto", "models/x.pt", "crop") == "letterbox"
+    # `auto` is not an answer, it is the question.
+    assert resolve_resize_mode("auto", "models/x.pt", "auto") == "letterbox"
+
+
 # --- native onnx CPU-fallback warning ------------------------------------
 
 
@@ -221,11 +255,39 @@ def test_custom_pt_with_explicit_stretch_warns():
     assert any("letterbox-trained" in w for w in warnings)
 
 
-def test_custom_pt_with_auto_does_not_warn():
+def test_custom_pt_with_auto_does_not_trigger_the_stretch_warning():
+    """`auto` never forces a stretch, so there is nothing for this warning to be about - it is
+    `resize_guess` below, a structured entry rather than a line in this list, that covers the
+    `auto` case."""
+    settings = Settings(active_model="models/scanncart-grocery.pt", resize_mode="auto")
+    assert not any("letterbox-trained" in w for w in compute_warnings(settings, "idle"))
+    assert resize_guess(settings) is not None
+
+
+def test_a_recorded_stretch_requirement_silences_the_letterbox_warning():
+    """Otherwise the feature contradicts itself: `--install` writes `stretch` beside the
+    weights, the operator configures exactly that, and the app answers by calling it a
+    mistake and telling them to undo the one thing that makes the model usable."""
+    settings = Settings(active_model="models/scanncart-grocery-v2.pt", resize_mode="stretch")
+    warnings = compute_warnings(settings, "idle", None, "stretch")
+    assert not any("letterbox-trained" in w for w in warnings)
+    # And through `auto` too - the default path, which is the one that must be right.
     warnings = compute_warnings(
-        Settings(active_model="models/scanncart-grocery.pt", resize_mode="auto"), "idle"
+        Settings(active_model="models/scanncart-grocery-v2.pt", resize_mode="auto"),
+        "idle",
+        None,
+        "stretch",
     )
     assert not any("letterbox-trained" in w for w in warnings)
+
+
+def test_a_recorded_letterbox_requirement_still_warns_on_a_forced_stretch():
+    """The record is consulted, not merely trusted to silence: it says letterbox, so stretch
+    is still the operator overriding the weights."""
+    warnings = compute_warnings(
+        Settings(active_model="models/x.pt", resize_mode="stretch"), "idle", None, "letterbox"
+    )
+    assert any("letterbox-trained" in w for w in warnings)
 
 
 def test_custom_onnx_with_stretch_does_not_warn():
@@ -242,6 +304,112 @@ def test_stock_weights_never_warn_about_stretch():
         Settings(active_model="yolo11n.pt", resize_mode="stretch"), "idle"
     )
     assert not any("letterbox-trained" in w for w in warnings)
+
+
+# --- unrecorded .pt: the assumed geometry, and the remedy beside it -------
+#
+# `auto` + an unrecorded custom `.pt` lands on letterbox because that is the usual case, not
+# because anything knows it here. Nothing could flag it as *wrong* — no setting fixes a missing
+# record — so the panel's comparison stays silent, and the guess would be reported nowhere.
+#
+# It is reported by `resize_guess`, which is not a warning string: the entry carries the mode a
+# one-click record would write, because this is the one resize case the app itself can settle.
+
+
+def test_unrecorded_custom_pt_on_auto_reports_the_assumed_geometry():
+    guess = resize_guess(
+        Settings(active_model="models/scanncart-grocery.pt", resize_mode="auto")
+    )
+    assert guess is not None
+    assert guess.mode == "letterbox"
+
+
+def test_the_guess_names_what_it_assumes_and_the_command_that_removes_it():
+    """The sentences travel with the mode because both views render them beside a control that
+    writes that mode. Both remedies are named: the tool's (`--install`, which records the fact
+    from the training run) and the operator's."""
+    guess = resize_guess(
+        Settings(active_model="models/scanncart-grocery.pt", resize_mode="auto")
+    )
+    assert "assumes letterbox" in guess.warning
+    assert "has no record of the geometry" in guess.warning
+    assert "--install" in guess.remedy
+
+
+def test_the_diagnosis_and_the_remedy_are_different_sentences():
+    """Two views render this entry and only one of them has the button, so the prose is split
+    where the views diverge: the diagnosis is true wherever it is read, and the remedy has to be
+    usable in a view that cannot perform it.
+
+    The assertion that matters is the negative one. Prose addressed to "below" is prose that only
+    works in the view with the button under it — the Live view, which is where the weak `far`
+    detections are actually being watched, would be pointing at a control it does not have.
+    """
+    guess = resize_guess(
+        Settings(active_model="models/scanncart-grocery.pt", resize_mode="auto")
+    )
+    assert guess.remedy not in guess.warning
+    assert "Record it below" not in guess.warning
+    assert "below" not in guess.warning
+    assert "below" not in guess.remedy
+    # And the remedy names where the other route is, since the view that reads it may not have a
+    # button at all.
+    assert "Admin Panel" in guess.remedy
+
+
+def test_compute_warnings_does_not_repeat_the_guess():
+    """One situation, one place on screen. The panel renders `resize_guess` with a remedy, so a
+    copy in the flat list would be the same warning twice - and the copy without a fix is the one
+    an operator would read first."""
+    settings = Settings(active_model="models/scanncart-grocery.pt", resize_mode="auto")
+    assert resize_guess(settings) is not None
+    assert not any("no record of the geometry" in w for w in compute_warnings(settings, "idle"))
+
+
+def test_a_recorded_requirement_silences_the_assumed_geometry_warning():
+    """A record means there is no assumption to report, whichever mode it names."""
+    for required in ("letterbox", "stretch"):
+        guess = resize_guess(
+            Settings(active_model="models/scanncart-grocery-v2.pt", resize_mode="auto"),
+            required,
+        )
+        assert guess is None, required
+
+
+def test_an_explicit_letterbox_is_a_decision_not_an_assumption():
+    guess = resize_guess(
+        Settings(active_model="models/scanncart-grocery.pt", resize_mode="letterbox")
+    )
+    assert guess is None
+
+
+def test_a_remote_backend_never_reports_an_assumed_geometry():
+    """The field decides nothing for a workflow holding its own model, so an entry naming it
+    would send the operator to change a setting that is not in the inference path."""
+    for backend in ("local_api", "cloud_api"):
+        guess = resize_guess(
+            Settings(
+                detector_backend=backend,
+                active_model="models/scanncart-grocery.pt",
+                resize_mode="auto",
+            )
+        )
+        assert guess is None, backend
+
+
+def test_stock_weights_do_not_report_an_assumed_geometry():
+    """Letterbox is not a guess for `yolo11n.pt` — it is what the weights were trained with,
+    and there is no record to be missing."""
+    assert resize_guess(Settings(active_model="yolo11n.pt", resize_mode="auto")) is None
+
+
+def test_a_custom_onnx_does_not_report_an_assumed_geometry():
+    """The `.onnx` heuristic lands on stretch, so this letterbox entry is not about it; a
+    Roboflow export is a known shape rather than an unrecorded checkpoint."""
+    assert (
+        resize_guess(Settings(active_model="models/scanncart-grocery.onnx", resize_mode="auto"))
+        is None
+    )
 
 
 def test_valid_field_class_allowlist():

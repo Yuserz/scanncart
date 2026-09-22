@@ -8,6 +8,8 @@ FastAPI app with injected fakes.
 import numpy as np
 from fastapi.testclient import TestClient
 
+from tests import next_frame
+
 from app.hardware import HardwareInfo
 from app.main import AppState, build_app
 from app.schemas import Detection
@@ -135,9 +137,8 @@ class TestCaptureE2E:
         assert r.json()["state"] == "running"
 
         with client.websocket_connect("/ws/stream") as ws:
-            msg = ws.receive_json()
+            msg = next_frame(ws)
 
-        assert msg["type"] == "frame"
         assert msg["seq"] >= 1
         # JPEG payload is non-empty base64
         assert isinstance(msg["jpeg"], str)
@@ -171,7 +172,7 @@ class TestCaptureE2E:
 
         client.post("/api/capture/start")
         with client.websocket_connect("/ws/stream") as ws:
-            ws.receive_json()  # consume the frame
+            next_frame(ws)  # pull one frame, so the detection is logged
         client.post("/api/capture/stop")
 
         logs = client.get("/api/logs").json()
@@ -192,8 +193,11 @@ class TestCaptureE2E:
 
         client.post("/api/capture/start")
         with client.websocket_connect("/ws/stream") as ws:
-            ws.receive_json()
-            ws.receive_json()
+            # Two frames, because the point is that the same track's confidence is *tracked*
+            # across them. Counting messages instead of frames would now consume the handshake
+            # status as one of the two and measure a single frame.
+            next_frame(ws)
+            next_frame(ws)
         client.post("/api/capture/stop")
 
         logs = client.get("/api/logs").json()
@@ -206,8 +210,8 @@ class TestCaptureE2E:
 
         client.post("/api/capture/start")
         with client.websocket_connect("/ws/stream") as ws:
-            ws.receive_json()
-            ws.receive_json()
+            next_frame(ws)
+            next_frame(ws)
         client.post("/api/capture/stop")
 
         logs = client.get("/api/logs").json()
@@ -224,7 +228,7 @@ class TestCaptureE2E:
 
         client.post("/api/capture/start")
         with client.websocket_connect("/ws/stream") as ws:
-            ws.receive_json()
+            next_frame(ws)
         client.post("/api/capture/stop")
 
         logs = client.get("/api/logs").json()
@@ -244,8 +248,7 @@ class TestCaptureE2E:
         with client.websocket_connect("/ws/stream") as ws:
             # Receive frames — pipeline only delivers ones that pass inference
             for _ in range(2):
-                msg = ws.receive_json()
-                assert msg["type"] == "frame"
+                next_frame(ws)
         client.post("/api/capture/stop")
 
         # Assert the ratio, not an absolute call count. The pipeline keeps
@@ -268,7 +271,7 @@ class TestCaptureE2E:
 
         client.post("/api/capture/start")
         with client.websocket_connect("/ws/stream") as ws:
-            ws.receive_json()
+            next_frame(ws)
         client.post("/api/capture/stop")
 
         logs = client.get("/api/logs").json()

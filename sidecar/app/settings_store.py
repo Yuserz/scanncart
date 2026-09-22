@@ -1,7 +1,7 @@
 import json
 import os
 import threading
-from dataclasses import fields
+from dataclasses import dataclass, fields
 from typing import Any
 
 from app.settings import Settings, resolve_device
@@ -50,19 +50,45 @@ def is_custom_model(value: str) -> bool:
     )
 
 
-def resolve_resize_mode(mode: str, active_model: str) -> str:
-    """"auto" means: match how this model was trained.
+def resolve_resize_mode(
+    mode: str, active_model: str, required: str | None = None
+) -> str:
+    """"auto" means: match how this model was trained. Returns a real mode, always.
 
-    A custom .onnx under models/ is a Roboflow export, and Roboflow's default
-    preprocessing is "Stretch to". A custom .pt is a locally trained
-    checkpoint — ultralytics cannot export ONNX -> .pt and Roboflow .pt
-    exports are Core-gated, so local training is the only way to obtain one —
-    and ultralytics' own training pipeline letterboxes. The stock YOLO weights
-    are letterbox-trained too, so the split is: custom .onnx -> stretch,
-    everything else -> letterbox.
+    Three inputs, in this order of authority:
+
+    1. An explicit mode wins outright: `letterbox`/`stretch` are the operator
+       saying so, and a setting that silently ignored what it was set to would
+       be worse than a wrong one.
+    2. A **recorded requirement** — `models/<stem>.json`, written beside the
+       weights by `tools/train_v2.py --install` — beats the format heuristic
+       below. It is the only input that is a fact about *these* weights: a `.pt`
+       trained on a Roboflow `Stretch to` version needs stretch, and neither the
+       file nor its name says so. The lookup is `app.models.requirement_for` and
+       it is passed in rather than done here, because this module is pure and
+       never touches the filesystem (its own tests depend on that).
+    3. The format heuristic, for weights nobody recorded anything about: a
+       custom .onnx under models/ is a Roboflow export, and Roboflow's default
+       preprocessing is "Stretch to". A custom .pt is a locally trained
+       checkpoint — ultralytics cannot export ONNX -> .pt and Roboflow .pt
+       exports are Core-gated, so local training is the only way to obtain one —
+       and ultralytics' own training pipeline letterboxes, as do the stock YOLO
+       weights. So: custom .onnx -> stretch, everything else -> letterbox.
+
+    `required` outside `ALLOWED_RESIZE_MODES` is ignored rather than returned:
+    `models.read_record` already drops values the settings PATCH would reject,
+    but this must not be able to put a nonsense mode on the wire either way.
+
+    No input means the returned mode is an **assumption**, not a fact — which is
+    the one thing this function cannot say for itself, since it is pure and has
+    no warning channel. `resize_guess` therefore reports the third case
+    (unrecorded custom `.pt`, `auto`, and so letterbox) rather than letting a
+    guess that reached the detector be invisible; see it below.
     """
     if mode != "auto":
         return mode
+    if required in ALLOWED_RESIZE_MODES and required != "auto":
+        return required
     if is_custom_model(active_model) and active_model.lower().endswith(".onnx"):
         return "stretch"
     return "letterbox"
@@ -255,12 +281,107 @@ def _cuda_provider_available() -> bool:
         return False
 
 
+@dataclass(frozen=True)
+class ResizeGuess:
+    """The geometry `auto` falls back to for weights nothing was recorded about.
+
+    The prose travels with `mode` rather than being assembled by whoever renders it: the
+    sentences have to name the same mode the remedy writes, and one entry carrying both is what
+    makes that impossible to get wrong. It also means the fix (`POST /api/models/record`, whose
+    button the Admin Panel renders beside the sentence) cannot be described in prose that has
+    drifted from what the button does.
+
+    It is two sentences rather than one because *two views* show this case, and only one of them
+    can perform the fix: the Admin Panel has the button, the Live view has a running capture and
+    no route to the models file. `warning` is the diagnosis — true wherever it is read — and
+    `remedy` is how to stop assuming, written so that neither view has to rewrite it. A single
+    string could only be honest in one of them: prose that says "record it below" puts a control
+    on screen that is not there in the Live view, and the Live view is exactly where the
+    consequences of the assumption (weak `far` detections) are being watched.
+    """
+
+    mode: str
+    warning: str
+    remedy: str
+
+
+def resize_guess(
+    settings: Settings, resize_requirement: str | None = None
+) -> ResizeGuess | None:
+    """The assumption behind `auto`, when there is one to report — or None.
+
+    This is the third case of `resolve_resize_mode` looked at from the outside: `auto` landed on
+    letterbox for a `.pt` because that is what a locally trained checkpoint usually is, which is
+    a rule about *typical* weights applied to weights nobody recorded anything about. Nothing
+    could flag it as a **mismatch** — a mismatch needs a record to contradict — so the panel's
+    comparison is deliberately silent here, and without this the guess reached the detector
+    unremarked.
+
+    It is a function rather than a branch of `compute_warnings` because the response carries it
+    as a *structured* entry: the panel has to attach a remedy to the sentence, and a remedy is
+    not something a string can carry. So the case left the flat warning list to gain an answer,
+    and the gates live here so the sentence and the entry that offers to fix it cannot disagree
+    about when they apply:
+
+    * **native only** — a remote backend sends the frame to a workflow holding its own model, so
+      this field decides nothing there and the remedy would be offered for a setting that is not
+      in the inference path.
+    * **`auto` only** — an explicit `letterbox` is a *decision*; reporting a decision as an
+      assumption is how a warning gets ignored.
+    * **no requirement recorded** — with a record there is no guess to name. This is also the
+      side that clears it.
+    * **a custom `.pt`** — `yolo11n.pt` is not guessed at (it is known), and the `.onnx`
+      heuristic lands on stretch, so the letterbox claim is not about it.
+
+    The resolved mode is *checked* rather than inferred from those, so if the heuristic ever
+    answers something else for a `.pt` this goes quiet instead of contradicting the geometry the
+    detector was actually built with.
+    """
+    if (
+        settings.detector_backend != "native"
+        or settings.resize_mode != "auto"
+        or resize_requirement is not None
+        or not is_custom_model(settings.active_model)
+        or not settings.active_model.lower().endswith(".pt")
+    ):
+        return None
+    mode = resolve_resize_mode("auto", settings.active_model, resize_requirement)
+    if mode != "letterbox":
+        return None
+    return ResizeGuess(
+        mode=mode,
+        warning=(
+            f"{settings.active_model} has no record of the geometry it was trained with, so "
+            f"resize_mode=auto assumes {mode}. That is what a locally trained checkpoint "
+            "usually expects, but it is an assumption rather than a fact about these "
+            "weights: if they were trained on a stretched dataset they are being presented "
+            "at the wrong scale, which costs detections and is worst on small/far objects."
+        ),
+        remedy=(
+            f"Record it if you know these weights are {mode}-trained — `train_v2.py --install` "
+            "records it from the training run, and the Admin Panel records the same fact from "
+            "what you know. Setting resize_mode yourself overrides the record instead of "
+            "supplying one."
+        ),
+    )
+
+
 def compute_warnings(
-    settings: Settings, state: str, api_key_present: bool | None = None
+    settings: Settings,
+    state: str,
+    api_key_present: bool | None = None,
+    resize_requirement: str | None = None,
 ) -> list[str]:
     """Soft warnings surfaced in SettingsResponse. `api_key_present` is passed
     in rather than read here so tests stay off the filesystem; None means
-    "look it up"."""
+    "look it up".    `resize_requirement` is the mode recorded beside the selected
+    weights (or None) for the same reason: the lookup is a filesystem read in
+    `app.models.requirement_for`, and this function's tests stay off disk. Both
+    resize warnings consult it, from opposite sides: it silences the stretch
+    warning, and its *absence* is what `resize_guess` reports — as a structured
+    entry of its own, not a string in this list, because the panel puts a remedy
+    beside that one. Nothing here may repeat it, or the panel would render the
+    same situation twice, once with a fix and once without."""
     warnings: list[str] = []
     if settings.detector_backend in REMOTE_BACKENDS:
         if api_key_present is None:
@@ -324,17 +445,31 @@ def compute_warnings(
     if state == "running":
         locked = ", ".join(sorted(RESTART_REQUIRED_FIELDS))
         warnings.append(f"Capture is running — {locked} require stopping capture first.")
+    # The heuristic this warns from is a rule about *typical* `.pt` weights, so a recorded
+    # requirement has to be able to overrule it — otherwise the tool that installs the
+    # weights with "stretch" beside them would produce a config the app calls a mistake, and
+    # an operator would be told to undo the one thing that made the model usable. Wording
+    # keeps the narrower claim, so it stays true for the unrecorded case it still covers.
     if (
         is_custom_model(settings.active_model)
         and settings.active_model.lower().endswith(".pt")
-        and settings.resize_mode == "stretch"
+        and resolve_resize_mode(
+            settings.resize_mode, settings.active_model, resize_requirement
+        )
+        == "stretch"
+        and resize_requirement != "stretch"
     ):
         warnings.append(
-            "resize_mode=stretch with a custom .pt: a locally trained checkpoint "
-            "is letterbox-trained, so stretching shrinks objects below their "
-            "training scale. 'auto' resolves to letterbox for .pt — keep stretch "
-            "only for a Roboflow-exported model you know trained stretched."
+            "resize_mode=stretch with a custom .pt, and nothing recorded beside these "
+            "weights requires it: a locally trained checkpoint is letterbox-trained, so "
+            "stretching shrinks objects below their training scale. 'auto' resolves to "
+            "letterbox for .pt — keep stretch only for a model whose record says so, or "
+            "a Roboflow-exported one you know trained stretched."
         )
+    # The unrecorded-`.pt` case is deliberately *not* here: it is `resize_guess`, which the
+    # settings response carries as a structured entry because it is the one resize warning with a
+    # remedy the app can perform, and a remedy cannot travel in a sentence. Reporting it in both
+    # places would put two copies of the same situation on screen, one of them offering no answer.
     if settings.imgsz > 960:
         warnings.append(
             "imgsz above 960 sharply raises inference latency; small/fast-moving "

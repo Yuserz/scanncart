@@ -33,6 +33,61 @@ class _StubSource:
         return _frame()
 
 
+class _DetectorThatLearnsItsClasses:
+    """The realistic native shape: `names` is empty until the first inference fills it.
+
+    Not a contrivance - `YoloDetector` starts that way deliberately, because reading the names off
+    the model at construction builds a second ONNX session (on the default device) that the first
+    `infer()` then discards.
+    """
+
+    def __init__(self, names: dict | None = None):
+        self.names: dict = {}
+        self._after_infer = names or {}
+
+    def infer(self, frame):
+        self.names = self._after_infer
+        return [Detection(track_id=1, cls="banana", conf=0.9, box=(0.1, 0.2, 0.3, 0.4))]
+
+
+def test_the_class_list_is_reported_once_the_detector_knows_it():
+    """The runtime half of the roster guard: the app has to be able to say what the model it is
+    actually running predicts. It cannot be asked at start - the names do not exist yet - so the
+    report happens on the first inference that has them, and rides a callback into the WS status.
+    """
+    seen: list[list[str]] = []
+    detector = _DetectorThatLearnsItsClasses({0: "milo", 1: "milo close", 2: "milo mid"})
+    pipe = Pipeline(
+        _StubSource(), detector, Settings(), on_message=lambda _m: None,
+        on_class_list=seen.append,
+    )
+
+    pipe.process_once()
+    assert seen == [["milo", "milo close", "milo mid"]]
+
+    # Once, not per frame: the vocabulary cannot change mid-run, so a second report would only be
+    # the same sentence arriving 30 times a second.
+    pipe.process_once()
+    assert len(seen) == 1
+
+
+def test_nothing_is_reported_while_the_detector_does_not_know_its_classes():
+    """The cry-wolf case, and the reason the report waits rather than being asked for at start.
+    Reporting an empty name list would say "this model predicts none of the 8 roster classes" on
+    every healthy capture - a warning that fires always is a warning nobody reads.
+    """
+    seen: list[list[str]] = []
+    pipe = Pipeline(
+        _StubSource(), _DetectorThatLearnsItsClasses(), Settings(),
+        on_message=lambda _m: None, on_class_list=seen.append,
+    )
+
+    for _ in range(3):
+        pipe.process_once()
+
+    assert seen == []
+
+
 def test_encode_preview_jpeg_returns_base64():
     s = encode_preview_jpeg(_frame(720, 1280), target_height=360)
     assert isinstance(s, str)

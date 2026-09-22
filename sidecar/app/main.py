@@ -12,7 +12,9 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from app.settings import Settings, resolve_device
 from app.settings_store import (
+    ALLOWED_MODELS,
     is_custom_model,
+    resize_guess,
     resolve_resize_mode,
     HOT_RELOADABLE_FIELDS,
     RESTART_REQUIRED_FIELDS,
@@ -30,6 +32,7 @@ from app.credentials import has_api_key, load_api_key
 from app.hardware import HardwareInfo, probe_hardware
 from app.presets import PRESETS, recommend_preset
 from app.pipeline import Pipeline
+from app.roster import class_list_problems
 from app.roboflow import (
     RoboflowAuthError,
     RoboflowError,
@@ -38,16 +41,21 @@ from app.roboflow import (
     WorkflowClient,
 )
 from app.tracking import IouTracker
+from app.dataset_status import load_dataset_status
+from app.models import MODELS_DIR, installed_models, record_requirement, requirement_for
 from app.schemas import (
     ApplyPresetRequest,
     CameraInfo,
     CameraProfileResponse,
     CameraQualityResponse,
     CamerasResponse,
+    DatasetStatusResponse,
     HealthResponse,
+    ModelsResponse,
     LogEvent,
     LogsResponse,
     PresetInfo,
+    RecordResizeModeRequest,
     DetectorProbeResponse,
     PresetsResponse,
     SettingsResponse,
@@ -55,6 +63,7 @@ from app.schemas import (
     StatusMessage,
     StoredProfileResponse,
     SystemInfoResponse,
+    UnrecordedResizeMode,
 )
 from app.camera import CameraCapture
 from app.camera_caps import CameraProfile, calibrate, device_key_for
@@ -106,10 +115,18 @@ def backend_url(settings: Settings) -> str:
 
 def _default_detector_factory(settings: Settings, device: str):
     if settings.detector_backend == "native":
+        # `requirement_for` is the record read (`models/<stem>.json`), which is what makes
+        # `resize_mode: auto` correct for a locally trained model rather than merely
+        # detectable as wrong. Read once here, at capture start, since resize_mode is
+        # restart-required — the detector holds the resolved mode for its lifetime.
         return YoloDetector(
             settings.active_model, device=device,
             conf=settings.conf_threshold, imgsz=settings.imgsz,
-            resize_mode=resolve_resize_mode(settings.resize_mode, settings.active_model),
+            resize_mode=resolve_resize_mode(
+                settings.resize_mode,
+                settings.active_model,
+                requirement_for(settings.active_model),
+            ),
         )
     api_key = load_api_key()
     if api_key is None and settings.detector_backend == "cloud_api":
@@ -203,6 +220,24 @@ class AppState:
     source: object | None = None
     detector: object | None = None
     state: str = "idle"
+    # Why the last capture ended without being asked to, or None. Recorded when the pipeline
+    # reports it and cleared when a new capture starts, because it exists for clients that were not
+    # there: by the time one connects, `state` is `idle` again (teardown runs on the way
+    # out) and nothing else on the wire distinguishes a capture that died from one that was never
+    # started. See the handshake in the `stream` route.
+    last_error: str | None = None
+    # What is wrong with the *running* model's class list (`app/roster.py`), or empty. Stored for
+    # the same reason `last_error` is: the client that started the capture gets this in its own
+    # start response, but a renderer that connects *while* one runs - a reload, a second window -
+    # has no other way to learn it, and this is a fact about the process rather than about the
+    # request. Cleared with the rest of the runtime in `_teardown_capture`: nothing is loaded then,
+    # so a stale warning would describe a model that is no longer there.
+    class_warnings: list[str] = field(default_factory=list)
+    # The running model's own class names, the input to that judgement and a readout in its own
+    # right (`StatusMessage.class_names`). Stored and cleared with `class_warnings`, and for the
+    # same reason - a reloaded renderer has to be able to show which model it is watching, and the
+    # count is part of what the Live view's stats strip reports.
+    class_names: list[str] = field(default_factory=list)
     device: str = ""
     db_path: str = "data/scanncart.db"
     logging_store: LoggingStore | None = None
@@ -299,6 +334,8 @@ def _teardown_capture(state: "AppState", join_thread: bool = True) -> None:
         state.detector = None
         state.session_id = None
         state.state = "idle"
+        state.class_warnings = []
+        state.class_names = []
 
     if pipeline is not None:
         if join_thread:
@@ -316,8 +353,28 @@ def _teardown_capture(state: "AppState", join_thread: bool = True) -> None:
         state.logging_store.end_session(session_id)
 
 
+def _models_response() -> ModelsResponse:
+    """The selectable weights, as both `/api/models` and `POST /api/models/record` report them.
+
+    One builder rather than two: the record's entire answer *is* this list, and a second
+    construction of it could only drift from the one the panel reads on load.
+    """
+    return ModelsResponse(
+        stock=sorted(ALLOWED_MODELS), installed=installed_models(), directory=str(MODELS_DIR)
+    )
+
+
 def _settings_response(state: "AppState") -> SettingsResponse:
     api_key_present = state.api_key_probe()
+    # One lookup, two consumers: the warning check and the resolved-geometry readout below have to
+    # agree about what these weights require, and a second `requirement_for` could only ever be a
+    # second read of the same file.
+    requirement = requirement_for(state.settings.active_model)
+    # The third consumer of the same requirement, and the reason it is a *structured* entry: this
+    # case has a remedy the panel can perform (`POST /api/models/record`), so it carries the model
+    # to write for, the mode to write, and the sentence explaining why. `compute_warnings` no
+    # longer reports it — one situation, one place on screen, and the place that can answer it.
+    guess = resize_guess(state.settings, requirement)
     return SettingsResponse(
         active_model=state.settings.active_model,
         camera_index=state.settings.camera_index,
@@ -327,6 +384,18 @@ def _settings_response(state: "AppState") -> SettingsResponse:
         conf_threshold=state.settings.conf_threshold,
         imgsz=state.settings.imgsz,
         resize_mode=state.settings.resize_mode,
+        # Native only, because only the native branch resizes the frame with these weights: a
+        # remote backend sends it to a workflow that holds its own model. Resolved from the same
+        # requirement this function already read, so the readout and the warning cannot disagree
+        # about what these weights need — and it is the same call `_default_detector_factory`
+        # makes, so what the Live view prints is the geometry the detector was built with.
+        resize_mode_resolved=(
+            resolve_resize_mode(
+                state.settings.resize_mode, state.settings.active_model, requirement
+            )
+            if state.settings.detector_backend == "native"
+            else None
+        ),
         infer_frame_skip=state.settings.infer_frame_skip,
         device=state.settings.device,
         preview_height=state.settings.preview_height,
@@ -347,7 +416,17 @@ def _settings_response(state: "AppState") -> SettingsResponse:
         camera_focus=state.settings.camera_focus,
         hot_reloadable_fields=sorted(HOT_RELOADABLE_FIELDS),
         restart_required_fields=sorted(RESTART_REQUIRED_FIELDS),
-        warnings=compute_warnings(state.settings, state.state, api_key_present),
+        warnings=compute_warnings(state.settings, state.state, api_key_present, requirement),
+        unrecorded_resize_mode=(
+            UnrecordedResizeMode(
+                model=state.settings.active_model,
+                resize_mode=guess.mode,
+                warning=guess.warning,
+                remedy=guess.remedy,
+            )
+            if guess is not None
+            else None
+        ),
         roboflow_api_key_present=api_key_present,
     )
 
@@ -712,6 +791,9 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
                 detail=detail,
                 latency_ms=round(latency_ms, 1),
                 class_names=class_names,
+                # Judged here rather than in the renderer: the names came off the loaded model in
+                # this process, so this is the only place they are known at all.
+                class_warnings=class_list_problems(class_names),
                 provider=provider,
             )
 
@@ -720,18 +802,37 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
 
             detector = state.detector_factory(state.settings, state.device)
             try:
-                frame = np.zeros((64, 64, 3), dtype=np.uint8)
+                # Shaped like a real capture, not a 64x64 square: the geometry is half of what this
+                # probe is for, and a square frame cannot show an aspect mismatch at all. The
+                # detector downscales it by the same rule capture uses, so the size reported below
+                # is the size a live frame would actually be sent at.
+                frame = np.zeros(
+                    (state.settings.capture_height, state.settings.capture_width, 3),
+                    dtype=np.uint8,
+                )
                 started = _time.perf_counter()
                 detector.infer(frame)
                 elapsed = (_time.perf_counter() - started) * 1000.0
-                return elapsed, sorted(str(v) for v in detector.names.values())
+                # A record of the round trip that just happened. Only the remote detectors keep
+                # one — the native path's geometry is a settings fact (`resize_mode_resolved`)
+                # rather than something a call has to discover — so a detector without it leaves
+                # both fields null, which is the honest answer for a backend that never transmits.
+                geometry = getattr(detector, "last_geometry", None)
+                return (
+                    elapsed,
+                    sorted(str(v) for v in detector.names.values()),
+                    geometry.sent if geometry else None,
+                    geometry.reported if geometry else None,
+                )
             finally:
                 closer = getattr(detector, "close", None)
                 if callable(closer):
                     closer()
 
         try:
-            latency_ms, class_names = await run_in_threadpool(_run_probe)
+            latency_ms, class_names, sent_size, reported_size = await run_in_threadpool(
+                _run_probe
+            )
         except RoboflowError as exc:
             return DetectorProbeResponse(
                 backend=backend, reachable=False, detail=str(exc)
@@ -742,6 +843,12 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
             detail=f"Reached {backend_url(state.settings)}",
             latency_ms=round(latency_ms, 1),
             class_names=class_names,
+            # Same check as the native branch, on the classes the workflow actually reports - a
+            # remote workflow's model is the one that can be swapped without touching this app,
+            # so this is the branch where the roster is least under our control.
+            class_warnings=class_list_problems(class_names),
+            sent_size=sent_size,
+            reported_size=reported_size,
         )
 
     @app.post("/api/capture/start")
@@ -811,14 +918,42 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
 
             def _on_pipeline_error(exc: Exception) -> None:
                 # Called on the pipeline thread, so teardown must not join it.
+                detail = f"Capture stopped: {exc}"
+                # Kept as well as broadcast, and kept *here* rather than in teardown: this status
+                # explains the death to whoever is connected at the time, and only a stored copy
+                # can explain it to a client that connects afterwards - the state alone cannot,
+                # since teardown leaves `idle` behind either way.
+                state.last_error = detail
+                state.ws_manager.submit(
+                    StatusMessage(type="status", state="error", detail=detail).model_dump()
+                )
+                _teardown_capture(state, join_thread=False)
+
+            def _on_class_list(names: list[str]) -> None:
+                """Called from the pipeline thread the first time the model's classes are knowable.
+
+                Reported rather than merely stored, because the point is that a 24-class weight
+                cannot run *unnoticed*: a client already watching gets a status message, and the
+                handshake covers whoever connects later.
+
+                Broadcast **unconditionally** now, which reverses an earlier rule ("a clean list is
+                not news"). It was not news while the warning banner was the only consumer - an
+                empty `class_warnings` said as much - but the names are also a readout: the Live
+                view's stats strip shows how many classes the running model has, and the count of a
+                *clean* list is exactly the number an operator wants to see beside `24`. Silence
+                here would leave the chip absent on every healthy capture. Once per capture, so
+                the cost is one small message.
+                """
+                state.class_names = list(names)
+                state.class_warnings = class_list_problems(names)
                 state.ws_manager.submit(
                     StatusMessage(
                         type="status",
-                        state="error",
-                        detail=f"Capture stopped: {exc}",
+                        state="running",
+                        class_names=list(state.class_names),
+                        class_warnings=list(state.class_warnings),
                     ).model_dump()
                 )
-                _teardown_capture(state, join_thread=False)
 
             state.pipeline = Pipeline(
                 source, detector, state.settings,
@@ -826,7 +961,19 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
                 logging_store=state.logging_store,
                 session_id=state.session_id,
                 on_error=_on_pipeline_error,
+                on_class_list=_on_class_list,
             )
+            # A capture that is starting now supersedes the last one's obituary: the stored reason
+            # describes something that is no longer the case, and leaving it would put the previous
+            # failure's explanation over a working capture the moment anyone reloads.
+            #
+            # Cleared *before* the thread starts rather than after. The error handler runs on that
+            # thread, so a detector that fails on its first frame can record its own reason before
+            # the next two lines run — and clearing afterwards would erase the explanation for the
+            # capture that just died. A start that never gets this far (a bad API key, an
+            # unopenable device) raises in `_acquire` above and deliberately leaves the stored
+            # reason alone, since that failure is reported in its own response.
+            state.last_error = None
             state.pipeline.start()
             state.state = "running"
         return {"state": state.state}
@@ -842,6 +989,56 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
             state.pipeline.signal_stop()
         await run_in_threadpool(_teardown_capture, state)
         return {"state": state.state}
+
+    @app.get("/api/models", response_model=ModelsResponse)
+    async def models():
+        # Answers "what weights could I select, and what do they need?". It reads the
+        # models/ directory rather than asking the detector, because the question is about
+        # what exists, not what loads - probing each candidate would import torch per file.
+        # Off the event loop like the snapshot read, so a slow disk cannot stall the health
+        # poll. The per-model records it picks up are the reason the Admin Panel can flag a
+        # resize_mode mismatch instead of leaving it to be remembered.
+        return await run_in_threadpool(_models_response)
+
+    @app.post("/api/models/record", response_model=ModelsResponse)
+    async def record_model_requirement(body: RecordResizeModeRequest):
+        """Write the geometry these weights were trained with into the record beside them.
+
+        The Admin Panel's one-click remedy for SettingsResponse.unrecorded_resize_mode: the
+        operator attests to a fact only they hold (what these weights were trained on), and
+        `auto` stops guessing for them. The other writer of these files is
+        `tools/train_v2.py --install`, which knows the requirement from the training run; this
+        route exists for the weights that path never installed.
+
+        Allowed while capture runs, unlike the restart-required settings: what it writes is by
+        construction the mode `auto` had already resolved to (`unrecorded_resize_mode` is only
+        produced for that case), so the geometry the running detector was built with is
+        unchanged and the readout cannot start disagreeing with the detector. Refusing here would
+        remove the button at the one moment an operator is looking at the warning.
+
+        The answer is the refreshed weights list, because that list is where the change shows -
+        these weights gain a requirement and their `auto_resolves_to` becomes it. Returning the
+        list rather than an acknowledgement means the panel reads the result instead of
+        predicting it.
+        """
+        try:
+            await run_in_threadpool(record_requirement, body.model, body.resize_mode)
+        except FileNotFoundError:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"No weights at {body.model} to record a requirement beside; nothing was "
+                    "written. Pick a model that is on disk."
+                ),
+            )
+        return await run_in_threadpool(_models_response)
+
+    @app.get("/api/dataset/status", response_model=DatasetStatusResponse)
+    async def dataset_status():
+        # Reads one small local JSON file - no network, no credentials, no AppState.
+        # Still off the event loop, so a slow disk cannot stall the /api/health poll
+        # the renderer runs on a timer.
+        return DatasetStatusResponse(**asdict(await run_in_threadpool(load_dataset_status)))
 
     @app.get("/api/logs", response_model=LogsResponse)
     async def logs():
@@ -864,10 +1061,42 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
     @app.websocket("/ws/stream")
     async def stream(ws: WebSocket):
         await state.ws_manager.connect(ws)
+        # Tell the client what it is looking at before it has to ask. Until this existed the only
+        # status messages any client received were its own start/stop responses and pipeline
+        # errors, so a renderer connecting to an *already running* capture - a reload, a second
+        # window - sat on its default "idle": a toolbar offering Start over streaming frames, and
+        # the renderer's /api/logs recovery, which is gated on "running", never firing. Read from
+        # the same field /api/health reports, at handshake time.
+        #
+        # Built before the `try` so a bug constructing it raises here rather than being swallowed
+        # as a dead client.
+        # The stored reason the last capture ended, when there is one. This is the only field that
+        # can tell a client joining *after* a capture died what happened to it: `state` is `idle`
+        # there - that is what the sidecar is - so without the detail a reloaded renderer sat in
+        # front of a frozen preview with no explanation. Empty in every ordinary case (never
+        # started, still running, stopped by hand), which is the client's cue that there is nothing
+        # to explain.
+        # `class_names`/`class_warnings` ride along for the same reason the detail does: a client
+        # joining a capture already in progress cannot observe the moment the class list became
+        # known, and "the model you are running predicts 24 classes" is exactly the kind of thing a
+        # reloaded renderer must not have to guess from the labels going past. The names travel with
+        # the verdict, not instead of it, so the chip in the stats strip is populated on a reload
+        # for a *clean* model too - where no warning is ever broadcast and the count is the point.
+        snapshot = StatusMessage(
+            type="status",
+            state=state.state,
+            detail=state.last_error or "",
+            class_names=list(state.class_names),
+            class_warnings=list(state.class_warnings),
+        ).model_dump()
         try:
+            await ws.send_json(snapshot)
             while True:
                 await ws.receive_text()
-        except WebSocketDisconnect:
+        except Exception:  # noqa: BLE001
+            # `_drain`'s rule, for `_drain`'s reason: any failure on a socket in this route means
+            # the client is gone - Starlette answers RuntimeError once it is closed, uvicorn can
+            # raise its own disconnect type - and which one it was is not worth a traceback.
             state.ws_manager.disconnect(ws)
 
     return app

@@ -4,6 +4,8 @@ from app.main import build_app, AppState
 from app.schemas import Detection
 from app.settings import Settings
 
+from tests import next_frame
+
 
 class _StubSource:
     width, height, fps = 128, 96, 30.0
@@ -49,7 +51,7 @@ def test_logs_report_current_session_events_after_a_run():
     client.post("/api/capture/start")
     # Pull a frame so the pipeline records at least one detection.
     with client.websocket_connect("/ws/stream") as ws:
-        ws.receive_json()
+        next_frame(ws)
     client.post("/api/capture/stop")
 
     body = client.get("/api/logs").json()

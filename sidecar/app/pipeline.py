@@ -29,6 +29,7 @@ class Pipeline:
         session_id=None,
         clock: Callable[[], float] = time.time,
         on_error: Callable[[Exception], None] | None = None,
+        on_class_list: Callable[[list[str]], None] | None = None,
     ):
         self._source = source
         self._detector = detector
@@ -38,6 +39,8 @@ class Pipeline:
         self._session_id = session_id
         self._clock = clock
         self._on_error = on_error
+        self._on_class_list = on_class_list
+        self._class_list_reported = False
         self._open: dict[int, float] = {}   # track_id -> last-seen timestamp
         self._thread = None
         self.is_running = False
@@ -88,6 +91,7 @@ class Pipeline:
 
         t0 = time.time()
         detections = self._detector.infer(frame)
+        self._report_class_list()
         # Class allowlist (hot-reloaded): drop classes not on the list before
         # tracking/logging/streaming, so overlay, item log, and DB all agree.
         allow = self._settings.class_allowlist
@@ -154,6 +158,28 @@ class Pipeline:
         ).model_dump()
         self._on_message(msg)
         return msg
+
+    def _report_class_list(self) -> None:
+        """Hand the detector's class names up once, the first time they are knowable.
+
+        They are knowable only *after* an inference: `YoloDetector` starts with `names = {}` on
+        purpose, because reading them off the model at construction builds a second ONNX session
+        (with the default device) that the first `infer()` then throws away — so a check at capture
+        start would see nothing, and "nothing" is exactly what the app must not report as "this
+        model predicts no roster classes". A remote detector fills `names` from its first response,
+        which the same rule covers.
+
+        Once per pipeline, because the answer cannot change mid-run: both detectors build their
+        vocabulary from the loaded model and only ever `setdefault` into it.
+        """
+        if self._class_list_reported:
+            return
+        names = sorted(str(v) for v in getattr(self._detector, "names", {}).values())
+        if not names:
+            return
+        self._class_list_reported = True
+        if self._on_class_list is not None:
+            self._on_class_list(names)
 
     def _log_detections(self, detections: list[Detection]) -> None:
         if self._logging_store is None or self._session_id is None:
