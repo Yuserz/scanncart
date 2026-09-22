@@ -3171,10 +3171,55 @@ def test_parse_labels_reads_a_polygon_as_its_bounding_box():
     assert audit_recall.area(found.box) == pytest.approx(0.4 * 0.4)
 
 
-def test_parse_labels_reads_a_plain_box_too():
-    """Both forms train correctly, so both must measure correctly - a mixed export is normal."""
-    (found,) = audit_recall.parse_labels("0 0.30 0.40 0.40 0.40")
-    assert found == _instance(0, (0.3, 0.4, 0.4, 0.4))
+def test_parse_labels_reads_a_plain_box_centre_and_size():
+    """A 5-field line is `cx cy w h`, not four corner coordinates.
+
+    This test previously asserted the *wrong* answer - it read the line as corners, which is how
+    the tool shipped understating every class whose labels were in box format, and then agreed
+    with itself afterwards. The values below are a real line from the v1 export, and the expected
+    box is what ultralytics itself derives from it (its own labels cache reports `bbox_format:
+    xywh` with exactly these numbers).
+    """
+    (found,) = audit_recall.parse_labels("1 0.5078125 0.578125 0.984375 0.84375")
+    assert found.cls == 1
+    assert found.box == pytest.approx((0.015625, 0.15625, 1.0, 1.0))
+
+
+def test_a_box_is_centred_on_its_cx_cy_whatever_its_size():
+    """The property that separates the two readings, over cases that break a corner-based one.
+
+    Reading `cx cy w h` as corners keeps the box inside the frame and roughly object-sized for
+    large `cx`, which is why it survives a glance; it fails hardest where `w < cx`, collapsing to
+    zero width. Centring is the check that holds for every value.
+    """
+    for cx, cy, w, h in ((0.3, 0.4, 0.4, 0.4), (0.9, 0.2, 0.05, 0.7), (0.5, 0.5, 1.0, 1.0)):
+        (found,) = audit_recall.parse_labels(f"0 {cx} {cy} {w} {h}")
+        x1, y1, x2, y2 = found.box
+        assert (x1 + x2) / 2 == pytest.approx(cx)
+        assert (y1 + y2) / 2 == pytest.approx(cy)
+        assert x2 - x1 == pytest.approx(w)
+        assert y2 - y1 == pytest.approx(h)
+        # And the size is the size: a zero area would be the corner reading on a small object.
+        assert audit_recall.area(found.box) == pytest.approx(w * h)
+
+
+def test_the_two_label_forms_are_told_apart_by_field_count():
+    """A mixed export is normal, so the decision has to be per line and not per file.
+
+    Both lines below describe the same square; the polygon spells out its four corners, the box
+    gives its centre and size. One file may hold both - 32 of v1's test-split lines are boxes and
+    the rest are polygons - so a per-file guess would get one of them wrong.
+    """
+    parsed = audit_recall.parse_labels(
+        "0 0.1 0.2 0.5 0.2 0.5 0.6 0.1 0.6\n"  # four corners
+        "0 0.3 0.4 0.4 0.4"  # centre plus size
+    )
+    assert len(parsed) == 2
+    assert all(i.cls == 0 for i in parsed)
+    # Same square, reached two ways - and only the counts say which maths to use.
+    # `approx` because the box branch is `cx - w/2`, which lands on 0.09999999999999998.
+    for inst in parsed:
+        assert inst.box == pytest.approx((0.1, 0.2, 0.5, 0.6))
 
 
 def test_parse_labels_skips_a_malformed_line_rather_than_inventing_an_instance():

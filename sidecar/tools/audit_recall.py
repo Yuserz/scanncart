@@ -163,13 +163,26 @@ class Match:
 
 
 def parse_labels(text: str) -> list[Instance]:
-    """Every instance in one YOLO label file, polygons converted to their bounding box.
+    """Every instance in one YOLO label file, as a normalized xyxy box.
 
-    Both forms the exports contain, and the conversion is not optional: for `cls x1 y1 x2 y2
-    ...` the remaining fields are alternating x/y polygon vertices, so `min`/`max` over the two
-    strided halves is the box, while reading them as `w`/`h` invents a box out of two
-    coordinates. Lines with fewer than five fields are skipped rather than defaulted - a
-    malformed line is not an instance, and guessing one would inflate the denominator.
+    **Two forms, and the field count is what tells them apart**:
+
+        cls cx cy w h                  exactly 5 - a box, centre plus size (YOLO's own format)
+        cls x1 y1 x2 y2 x3 y3 ...      7 or more, even - a polygon, reduced to its bounding box
+
+    They need different maths and neither is optional. A box needs `cx ± w/2`, `cy ± h/2`; a
+    polygon needs `min`/`max` over the two strided halves of its vertices. Applying the polygon
+    rule to a box is *not* a near miss: `min(cx, w)` on a centred object yields a small box in
+    the wrong place - a real instance at `1 0.508 0.578 0.984 0.844` comes out as x 0.508-0.984
+    instead of 0.016-1.0, and when `w < cx` it degenerates to zero width entirely. That misreading
+    is invisible in code review (both branches "look like" box maths), makes a class with
+    box-format labels look far worse than it is, and produced a spurious report of 484 zero-area
+    labels on a dataset that was fine. Exactly one of the two forms is right, and the count says
+    which - 5 is a box, 6 cannot be either (a polygon needs at least three points), and no export
+    here contains a 6-field line.
+
+    Lines with fewer than five fields, or unparseable numbers, are skipped rather than defaulted:
+    a malformed line is not an instance, and guessing one would inflate the denominator.
     """
     out: list[Instance] = []
     for line in text.splitlines():
@@ -180,6 +193,10 @@ def parse_labels(text: str) -> list[Instance]:
             cls = int(float(parts[0]))
             coords = [float(v) for v in parts[1:]]
         except ValueError:
+            continue
+        if len(coords) == 4:
+            cx, cy, w, h = coords
+            out.append(Instance(cls, (cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2)))
             continue
         xs, ys = coords[0::2], coords[1::2]
         if not xs or not ys:

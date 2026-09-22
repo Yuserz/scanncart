@@ -381,7 +381,7 @@ is the normal case rather than the edge one.
 #### When the miss is the second object
 
 `--val` answers *which class is short*. It cannot answer *which object was missed*, and on a
-crowded frame those are different defects pointing at opposite fixes: a class at 0.74 reads as
+crowded frame those are different defects pointing at opposite fixes: a class at 0.75 reads as
 "shoot more of this item", while the same number read per instance can say "this item is never
 missed when it is alone, and only the second one in a frame is lost" — which is a capture-plan
 finding, not a coverage one.
@@ -394,13 +394,13 @@ the best-F1 threshold, then splits the result by how many objects each frame's l
 sidecar/.venv/Scripts/python.exe sidecar/tools/audit_recall.py --generation v1
 
 class                                             inst  found  recall   med hit  med miss
-555 sardines 155grams                               97     72   0.742    0.4164    0.0756  <-- below 0.85
+555 sardines 155grams                               97     73   0.753    0.4151    0.0754  <-- below 0.85
 century_tuna_flakes_in_oil_155_grams                50     50   1.000    0.6482    0.0000
-TOTAL                                              401    337   0.840
+TOTAL                                              401    368   0.918
 
 crowding: instances found / labelled, and frames that came back complete
-single  1 object      235/265    88.7%   frames 235/265   88.7%
-multi   2+ objects    102/136    75.0%   frames 35/62    56.5%
+single  1 object      265/265   100.0%   frames 265/265  100.0%
+multi   2+ objects    103/136    75.7%   frames 36/62    58.1%
 ```
 
 Five readings, and the last two are the ones that decide what to do:
@@ -417,17 +417,32 @@ Five readings, and the last two are the ones that decide what to do:
   (`--val`'s per-distance grid). Crowding comes free from any export's labels, so this works on v1,
   which predates the tagging entirely.
 - **`--conf-sweep` turns a miss into a slider.** A miss ranked below `conf` is not a model gap, and
-  `conf_threshold` is hot-reloadable — on v1 the crowded bucket reads 75.0% at the shipped 0.5 and
-  88.2% at 0.1, while the single bucket sits at 88.7% throughout. That is the whole gap turning out
-  to be a threshold rather than a capability, which `--val` cannot show at any setting.
+  `conf_threshold` is hot-reloadable — on v1 the crowded bucket reads 75.7% at the shipped 0.5 and
+  89.0% at 0.1, while the single bucket sits at 100.0% throughout. That is most of the gap turning
+  out to be a threshold rather than a capability, which `--val` cannot show at any setting.
 - **`--iou-sweep` tells a suppressed box from an unseen one.** Two tins side by side overlap, and
   ultralytics' NMS default (0.7) merges boxes overlapping more than that — so a *detected* second
   tin can be discarded inside the model. A large recovery at 0.9 means that share of the crowded
-  recall is an inference setting; on v1 there is none (334/337/337), so the misses are real.
+  recall is an inference setting; on v1 there is none (365/368/368), so the misses are real.
+- **On v1 the whole miss is crowding, and nothing else.** Every one of the 265 single-object frames
+  in the test split had its instance found; the recall the floor is computed over (0.918) is the
+  crowded bucket pulling it down. One class is still under the floor — `555 sardines 155grams` at
+  0.753, the tin most easily confused with the one beside it.
 
 It reads the generation's dataset and class list from `generations.py`, so it cannot be pointed at
 one generation's images while judging the other's names, and it reports any predicted class that is
 not on that list — the same 24-output mistake the runtime catches, caught at the measuring step.
+
+One thing it has to get right that is easy to get wrong, and did: **a label line is one of two
+forms, told apart by field count.** `cls cx cy w h` is a box (centre plus size, five fields);
+`cls x1 y1 x2 y2 ...` is a polygon (seven or more, reduced to its bounding box). They need
+different maths, and applying the polygon rule to a box is not a near miss — it places a real
+instance in the wrong part of the frame, and collapses to zero area wherever the width is smaller
+than the centre. Nothing in the output announces it: it simply reads as a class the model cannot
+find. On v1 that misreading understated three classes (Bear Brand 0.600 for a true 1.000, silver
+swan 0.851 for 0.959) and made the overall number 0.840 where it is 0.918. Ultralytics converts
+both forms itself, so **`--val` is the reference to check this against** — if the two disagree on
+a class by more than a threshold's worth, the parser is the suspect, not the model.
 
 ---
 
