@@ -196,6 +196,12 @@ The way to actually go faster is a `.pt` on CUDA (see below), not tuning this.
    custom `.pt` with an explicit `resize_mode: "stretch"` draws a `compute_warnings()` note —
    it is only right for a Roboflow-exported `.pt` (Core-gated).
 
+   For the **remote** backends there is no equivalent setting to get wrong on this side: the
+   workflow holds the model, so it holds the preprocessing, and the app only decides how large a
+   frame to transmit (`remote_infer_size`, aspect kept — a uniform scale commutes with whatever
+   the model then does, so it changes detail rather than geometry). What the app *can* do is
+   report the pair at Test Connection time — see §8.
+
    No un-warping is needed on the way out: `normalize_detections` divides by the dimensions
    actually fed to the model, and a per-axis scale cancels out of a normalized coordinate. It is
    also slightly *faster* — one resize instead of the letterbox path (87.6 -> 72.4 ms).
@@ -209,9 +215,15 @@ The way to actually go faster is a `.pt` on CUDA (see below), not tuning this.
 `environment.json` also carries the **dataset export link**, and dataset export is free on any plan.
 Training `yolo11n` from it yields a real `.pt` that runs on torch + CUDA — the fastest option, no
 ONNX runtime, no preprocessing mismatch, and the model the PRD wants. See `MODEL_TRAINING.md §7`:
-any `models/*.pt` is already selectable with no code edits in either codebase, `resize_mode:
-"auto"` resolves to `letterbox` for it (ultralytics-native training), and `device: "auto"`
-resolves to CUDA. Ultralytics **cannot** export ONNX → `.pt` (PyTorch is the source format), so
+any `models/*.pt` is already selectable with no code edits in either codebase, and `device: "auto"`
+resolves to CUDA. `resize_mode: "auto"` uses the geometry recorded beside the weights — the record
+`train_v2.py --install` writes, or the one the app's `Record it now` button writes for a
+weight with no run behind it (Admin's, or the Live view's own copy while a capture runs) — falling back to `letterbox` for a `.pt` nobody recorded anything
+about, since that is how ultralytics-native training fits its frames. That fallback is an
+assumption rather than a fact, so it is reported as one (`SettingsResponse.unrecorded_resize_mode`,
+rendered in both views, the Admin Panel's and the Live view's copy each carrying the same
+record-it-now button — writing it cannot disturb a running detector, since the mode written is the
+one `auto` already resolved to) instead of reaching the detector unremarked. Ultralytics **cannot** export ONNX → `.pt` (PyTorch is the source format), so
 retraining from the dataset export is the only route to these weights.
 
 
@@ -536,10 +548,35 @@ working with no internet.
 Validates the selected backend **before** the user hits Start, so a misconfigured URL or missing key
 surfaces in the Admin Panel instead of as a failed capture.
 
-Returns `{ reachable, backend, latency_ms, class_names, provider, detail }` — `provider`
-(native only) names the execution provider/device actually in use, i.e. the answer to "am I really
-on the GPU?". Powers a **"Test Connection"** button beside the backend picker. For remote
-backends it posts a tiny synthetic frame.
+Returns `{ reachable, backend, latency_ms, class_names, provider, sent_size, reported_size, detail }`
+— `provider` (native only) names the execution provider/device actually in use, i.e. the answer to
+"am I really on the GPU?". Powers a **"Test Connection"** button beside the backend picker.
+
+### The remote probe reports the geometry (`sent_size` / `reported_size`)
+
+Remote weights have no `resize_mode` and no record — the model lives inside the workflow, so there
+is no file on this machine to read a requirement from. The one geometry fact a round trip *can*
+produce is the pair below, and it is the remote analogue of `resize_mode_resolved`:
+
+| Field | Meaning |
+|---|---|
+| `sent_size` | the size the probe transmitted. Not the capture size: the probe builds a frame **shaped like the capture** (`capture_width` × `capture_height`) and sends it through the detector's own downscale, so this equals what a live frame would be sent at. A 64×64 square probe could not show an aspect mismatch at all, which is the point of asking. |
+| `reported_size` | the workflow's `image: {width, height}` block — the frame its coordinates are relative to (Phase 0: `predictions.image`). `null` means the response carried **no** size block, so the detector fell back to assuming the coordinates match what it sent. |
+
+Three states, and the third is not a synonym for "they agreed":
+
+- **equal** → the workflow passes the frame through at the size sent. Neutral. It does *not* prove
+  the geometry is right: whatever the model's own preprocessing does inside the workflow is
+  invisible from here, and that is exactly where a `Stretch to`-trained version meets a letterbox.
+- **different** → the workflow re-frames the image before the model sees it, so `remote_infer_size`
+  is not the geometry these weights run at. This is the case worth catching, and the panel flags it.
+  A changed **aspect ratio** (cross-multiplied, not divided) means stretch-or-pad rather than a
+  uniform rescale, and the wording says both possibilities rather than guessing between them.
+- **absent** → unverified. The coordinates were *assumed* to be relative to what was sent; a workflow
+  that re-frames silently puts boxes in the wrong place, and nothing here can rule that out.
+
+Both fields are `null` for `native`, whose geometry is already on `SettingsResponse` — a probe
+inventing a pair for it would answer a question nobody asked in this response.
 
 For `native` the probe is now a real build, not a filesystem check:
 

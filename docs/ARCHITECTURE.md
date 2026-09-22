@@ -173,7 +173,8 @@ track that stops being seen for a short expiry window is marked as "left".
 ```
   UI ──────► sidecar     REST  (control plane, request/response)
       health · settings get/patch · system-info · presets ·
-      capture start/stop · logs
+      capture start/stop · logs · dataset status (a local file read, no network;
+      labeling progress + the Tier A capture gap + the capture-session split spread)
 
   UI ◄────── sidecar     WebSocket  (data plane, push)
       frame messages   : jpeg + detections + fps/latency stats
@@ -240,6 +241,11 @@ from the logs endpoint rather than losing session state.
 | Track-id deduping (BoT-SORT) | Item log is a list of *items*, not a list of *frames*. |
 | SQLite, single writer | Zero-config local store; one connection under a lock keeps two threads safe. |
 | Dependency injection everywhere | Whole pipeline is testable against fakes — no camera, GPU, or network in tests. |
+| Label progress read from a snapshot file | The tooling that talks to Roboflow stays dev-only, so the runtime keeps its "no network dependency" promise and never handles a dataset API key. |
+| The capture plan travels in that snapshot too | The Tier A gap is written by the tool that owns the plan (`clean_v2.TIER_A_CELLS`, the same table `scaffold` builds folders from) rather than retyped into the sidecar, so the panel cannot point at cells the folder skeleton does not create. |
+| Capture gap and labeling progress are separate sections | A cell with zero images is waiting for the *camera*, not for a box. Shown as one "0% labeled" number, an unshot cell reads as a labeling backlog — the reading that wastes a capture session. |
+| The snapshot carries the capture-session spread | Which split each session's frames went to decides whether an accuracy number may be called an *unseen-session* estimate or only held-out frames. The session is read from the image tags (the hard negatives are absent from the roster manifest), and the split count is *derived* by the sidecar from the three counts the panel renders, so the flag cannot disagree with the numbers beside it. |
+| The session is flagged only when it sits in both train and test | A session spread across train and valid is the ordinary remainder split: it costs model *selection* some independence, which is a much smaller problem than a test set drawn from the training session. Flagging both would make the warning fire on a state that does not spoil the number. |
 
 ---
 
