@@ -128,6 +128,30 @@ Shoot it as its own session, not as an afterthought to solo work:
 
 Every object that belongs to the 8-class roster gets a box. That is what makes a scene count.
 
+### Why this tier is load-bearing, measured rather than assumed
+
+`audit_recall.py` splits a trained weight's per-instance recall by how many objects each frame's
+labels carry, and on the v1 model the split is the whole story:
+
+```
+single  1 object      265/265   100.0%   (every single-object frame found)
+multi   2+ objects    103/136    75.7%
+```
+
+**Not one single-object instance in v1's 327-frame test split was missed** — the recall the 0.85
+floor is computed over (0.918) is entirely the crowded bucket pulling it down, and v1 was shot as
+per-class solo captures. So every point of recall that solo shots could buy is already bought, and
+C1 is the only bucket left that moves the number. Two consequences for how to shoot it:
+
+- **Each class has to appear in the occluded position, not always as the hero object.** The misses
+  are consistently the second instance — the one behind, or smaller, or partly covered. A set where
+  `safeguard` is always the front item teaches the model `safeguard` and teaches it nothing about
+  finding a safeguard behind two tins. Rotate which item is nearest, largest and fully visible.
+- **Two-item frames are the best-covered crowded case, so go past them.** v1's crowded bucket is
+  mostly pairs. Aim the bulk of C1 at 4–6 items, and put the similar-SKU pairs in a frame that
+  already holds other products, which is the version a counter produces and the one that hides the
+  second tin.
+
 ## Tier C2 — hard negatives
 
 Content to capture, straight from §2: an empty counter, hands, bags, a wallet, a phone, the
@@ -511,6 +535,10 @@ for the weights says which of the two it is.
 - [ ] Tier A: `555-sardines` mid (23)
 - [ ] Tier B: `bear-brand-milk` mid (77), `milo` mid (66), `safeguard` mid (59)
 - [ ] Tier C1: multi-item scenes, 80 per class, with the similar-SKU pairs inside at least 20 of them
+- [ ] Tier C1: each class shot in the occluded/background position in at least 20 scenes — not
+      always the nearest item, since the misses are the second instance and not the first
+- [ ] Tier C1: the bulk of the scenes at 4–6 items, not only pairs (v1's crowded bucket was mostly
+      two-item frames, and that is the crowded case the model already handles)
 - [ ] Tier C2a: hard negatives shot as *one roster product + clutter* (hands, phone, bag, wallet)
 - [ ] Tier C2b: ~30 pure background frames, then mark each one with the null tool (**N**)
       (an earlier session left 60 StreamCam frames with empty labels in
