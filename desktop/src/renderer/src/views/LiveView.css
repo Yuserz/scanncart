@@ -215,6 +215,22 @@
   font-weight: 500;
 }
 
+/* The weights readout's two states. Amber is a standing condition rather than a failure - the same
+   meaning it carries in the banner above - and dim italic is "not measured", which is a gap in
+   what is known rather than a bad score. Deliberately different: one sends you to a setting or the
+   dataset, the other to `train_v2.py --val`. */
+.stat-tile.warn b {
+  color: #ffb020;
+}
+
+.stat-tile.unmeasured b {
+  color: var(--dim);
+}
+
+.stat-tile.unmeasured small {
+  font-style: italic;
+}
+
 .log-card {
   display: flex;
   flex-direction: column;
@@ -317,6 +333,50 @@
 }
 
 /* Sidecar error banner: a failed start/stop, or a capture that died mid-run. */
+/* A standing condition rather than a failure: capture is running fine, at the wrong scale.
+   Amber to the error banner's red, and no dismiss button - see the comment in LiveView.tsx. */
+.live-warning {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  border: 1px solid #7c5a12;
+  border-radius: 6px;
+  background: #2a2110;
+  color: #ffb020;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.live-warning code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-style: normal;
+  color: inherit;
+}
+
+/* The sentence and the control that answers it, stacked: the prose is long enough to wrap, and a
+   button centred beside a four-line paragraph reads as belonging to no particular line. Same shape
+   the Admin Panel's actionable entry uses. */
+.live-warning.has-action {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+/* The other outcome of the same click, in the slot the warning vacated. Green because nothing is
+   wrong any more and there is nothing to act on — the same meaning the Admin Panel's confirmed
+   line carries — and it is the same sentence, so one write is described once. */
+.live-confirm {
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  border: 1px solid #2f6a45;
+  border-radius: 6px;
+  background: #12251a;
+  color: #6ecb8c;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
 .live-error {
   display: flex;
   align-items: center;

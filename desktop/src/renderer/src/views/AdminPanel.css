@@ -55,6 +55,210 @@
   border-bottom: 1px solid var(--border);
 }
 
+/* Dataset labeling: a read-only snapshot, so it is styled as a quiet readout rather
+   than a control. */
+/* The refresh button is the only affordance, since the sidecar does not poll this. */
+.admin-dataset {
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.admin-dataset h4 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 6px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.admin-dataset-refresh {
+  margin-left: auto;
+  font-size: 11px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.admin-dataset-summary {
+  margin: 0 0 4px;
+  font-size: 13px;
+}
+
+.admin-hint {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: var(--dim);
+}
+
+/* The capture gap, set apart from the class table above it: these rows are waiting for
+   a camera, not a label, and a plain list keeps them from reading as more classes. */
+.admin-dataset-tier-a {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+
+.admin-dataset-gaps {
+  margin: 0;
+  padding-left: 16px;
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.admin-dataset-gaps li {
+  margin-bottom: 2px;
+}
+
+.dataset-gap-count {
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* The capture-session spread, set apart like the capture gap: it answers a different
+   question from labeling progress - not "how much is done" but "how far does the test
+   number travel". */
+.admin-dataset-sessions {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+
+/* A session on both sides of the train/test line. Not styled as an error, because with
+   one capture it is unavoidable rather than wrong - but it is the reason a test reading
+   is only held-out frames, so it is marked instead of left to be noticed. A session
+   spread across train and valid only is not marked: that is the ordinary remainder, and
+   it does not spoil the test number. */
+.dataset-session-shared td {
+  color: #ffb020;
+}
+
+.admin-dataset-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.admin-dataset-table th,
+.admin-dataset-table td {
+  padding: 3px 6px 3px 0;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+
+.admin-dataset-table th {
+  color: var(--dim);
+  font-weight: 500;
+}
+
+.admin-dataset-table td:not(:first-child),
+.admin-dataset-table th:not(:first-child) {
+  width: 80px;
+  text-align: right;
+}
+
+/* The labeling worklist. A numbered list rather than a table because the order *is* the
+   information: row 1 is the next cell to open in Roboflow, and the list shortens as it is
+   worked through. */
+.admin-backlog {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.admin-backlog-row {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto 48px;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.admin-backlog-row:nth-child(odd) {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.admin-backlog-rank {
+  color: var(--dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-align: right;
+}
+
+.admin-backlog-cell {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.admin-backlog-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The distance is what makes this a cell rather than a class, so it reads as a label under
+   the name instead of a column of its own. */
+.admin-backlog-where {
+  font-size: 10px;
+  color: var(--dim);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.admin-backlog-count {
+  color: var(--dim);
+  font-size: 11px;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.admin-backlog-left {
+  color: var(--text);
+  font-family: var(--font-mono);
+}
+
+.admin-backlog-of {
+  margin-left: 6px;
+  font-family: var(--font-mono);
+}
+
+.admin-backlog-bar {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.admin-backlog-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+/* The hard negatives: the one row whose instruction is the opposite of every other row's.
+   A hairline rather than amber - nothing has gone wrong, the work is just different. */
+.admin-backlog-row.is-background {
+  box-shadow: inset 2px 0 0 var(--border);
+}
+
+.admin-backlog-row.is-background .admin-backlog-where {
+  font-style: italic;
+  text-transform: none;
+}
+
+.admin-backlog-null {
+  grid-column: 2 / -1;
+  font-size: 10px;
+  font-style: italic;
+  color: var(--dim);
+}
+
 .preset-cards {
   display: flex;
   gap: 10px;
@@ -214,12 +418,202 @@
   color: #ffb020;
 }
 
+/* The requirement recorded beside the selected weights does not match the setting. Marked
+   like the experimental hint rather than as an error: nothing is broken, the detections
+   are just weaker than they should be - worst on the far cells, which is exactly the case
+   nobody notices without being told. */
+.field-hint.mismatch {
+  color: #ffb020;
+}
+
+.field-hint.mismatch code,
+.installed-models code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-style: normal;
+  color: inherit;
+}
+
+/* What is on disk, under the picker that selects one of them. Quieter than the warning
+   above: this is reference material for the whole directory, not a problem to act on. */
+.installed-models {
+  margin: 0;
+}
+
+.installed-models-title {
+  margin: 0;
+  font-size: 10.5px;
+  color: var(--dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.installed-models ul {
+  list-style: none;
+  margin: 2px 0 0;
+  padding: 0;
+  font-size: 10.5px;
+  color: var(--dim);
+  line-height: 1.35;
+}
+
+.installed-models-source {
+  opacity: 0.75;
+}
+
+/* What the selected weights scored, under the entry that needs them. Reference material like
+   `installed-models` rather than a warning, but denser: it is the only place the acceptance
+   number is visible once the terminal that printed it is gone. */
+.model-validation {
+  margin: 0;
+}
+
+.model-validation-split {
+  margin-top: 4px;
+}
+
+.model-validation-head {
+  margin: 0;
+  font-size: 10.5px;
+  color: var(--dim);
+  line-height: 1.35;
+}
+
+.model-validation-aggregates {
+  margin: 1px 0 0;
+  font-size: 10.5px;
+  color: var(--dim);
+  opacity: 0.8;
+  font-variant-numeric: tabular-nums;
+}
+
+.model-validation-classes {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  margin: 2px 0 0;
+  padding: 0;
+  font-size: 10.5px;
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Three states, and only one of them is a problem. `unmeasured` is deliberately not the
+   same colour as `below`: a class the split never asked about is a gap in the data, not a
+   failure of the model, and the two call for different work. */
+.model-validation-classes .below {
+  color: #ffb020;
+}
+
+.model-validation-classes .unmeasured {
+  opacity: 0.7;
+  font-style: italic;
+}
+
+/* The class x distance grid. Rows are classes and columns are distances, because the question
+   it answers is a comparison along a row ("this class is fine up close and weak far away") -
+   which a list of per-distance blocks could not put side by side. */
+.model-validation-distances {
+  margin-top: 5px;
+}
+
+.model-validation-subhead {
+  margin: 0;
+  font-size: 10.5px;
+  color: var(--dim);
+}
+
+.model-validation-grid {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 3px;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.model-validation-grid th {
+  color: var(--dim);
+  font-weight: 500;
+  text-align: right;
+  padding: 2px 0 2px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.model-validation-grid th:first-child {
+  text-align: left;
+  padding-left: 0;
+}
+
+/* The frame count under each distance, so a 1.000 over three images cannot read as a
+   stronger claim than 0.900 over sixty. */
+.model-validation-images {
+  display: block;
+  font-size: 9.5px;
+  opacity: 0.7;
+}
+
+.model-validation-grid td {
+  padding: 2px 0 2px 10px;
+  text-align: right;
+  border-bottom: 1px solid var(--border);
+  color: var(--dim);
+}
+
+.model-validation-grid td:first-child {
+  text-align: left;
+  padding-left: 0;
+  color: var(--text);
+}
+
+/* The same three states as the per-class list above, for the same reason. */
+.model-validation-grid .below {
+  color: #ffb020;
+}
+
+.model-validation-grid .unmeasured {
+  opacity: 0.7;
+  font-style: italic;
+}
+
+.model-validation-distance-misses {
+  margin: 3px 0 0;
+  font-size: 10.5px;
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.model-validation code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-style: normal;
+  color: inherit;
+}
+
 .admin-warnings {
   list-style: disc;
   margin: 0;
   padding-left: 20px;
   font-size: 12px;
   color: #ffb020;
+}
+
+/* The warning with a remedy, laid out as sentence-then-button rather than as one more bullet:
+   the button is what makes this entry different, and it has to be unmistakably attached to the
+   sentence it answers. */
+.admin-warnings > li.actionable {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+/* Confirmed, not merely accepted: the record is read back from the sidecar's listing, so this
+   line is the same fact the weights list below shows. Green and unbulleted, because it is no
+   longer something to act on. */
+.admin-warnings > li.resolved {
+  list-style: none;
+  margin-left: -20px;
+  color: #6ecb8c;
 }
 
 .admin-warning {
@@ -308,6 +702,14 @@
   margin: 0.5rem 0 0;
   font-size: 0.85rem;
   color: var(--ok, #3fb950);
+}
+
+/* The remote probe's third state: the workflow answered, but said nothing about the frame's size.
+   Dim rather than amber — nothing has gone wrong, the panel simply cannot confirm what the workflow
+   did with the image, and the wording says exactly that. */
+.field-hint[data-state='unreported'] {
+  opacity: 0.7;
+  font-style: italic;
 }
 
 /* Camera picker: named device dropdown + rescan, on one row. */

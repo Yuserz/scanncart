@@ -11,10 +11,15 @@ import type { SettingsPayload } from './api'
 // CUSTOM_MODEL_DIR convention — any .onnx/.pt under sidecar/models/ is valid,
 // this is just the one we ship with.
 export const CUSTOM_MODEL = 'models/scanncart-grocery.onnx'
+// The locally trained successor (MODEL_TRAINING.md §8.2). Named here only for its label and
+// hint; the picker *discovers* the file from GET /api/models, so this entry is optional and
+// its absence would not hide the model — a future v3 needs no entry at all to be selectable.
+export const CUSTOM_MODEL_V2 = 'models/scanncart-grocery-v2.pt'
 
 // A raw path is not a label. Anything not listed falls back to its own name.
 export const MODEL_LABELS: Record<string, string> = {
-  [CUSTOM_MODEL]: 'SCANnCART grocery (custom, 7 SKUs)'
+  [CUSTOM_MODEL]: 'SCANnCART grocery v1 (custom, 7 SKUs)',
+  [CUSTOM_MODEL_V2]: 'SCANnCART grocery v2 (custom, 8 SKUs)'
 }
 
 export const ALLOWED_MODELS = [
@@ -78,6 +83,16 @@ export const EXPERIMENTAL_MODELS: readonly string[] = ['yolo26n.pt', 'yolo26s.pt
 // Per-model hardware guidance shown under the Model field while an
 // experimental model is selected.
 export const MODEL_SPEC_HINTS: Record<string, string> = {
+  // Not "remember to set this": a `.pt` resolves `resize_mode: auto` to *letterbox*, and
+  // the v2 weights were trained on a Stretch version (MODEL_TRAINING.md §6). Letterboxing
+  // them presents every object at 0.56x the canvas they were trained at — no error, just
+  // weaker detections, worst on the far cells where the pixels were already scarce.
+  // The resize_mode half of this used to be here as prose. It is now derived: `train_v2.py
+  // --install` records the requirement beside the weights, the sidecar reports it, and the
+  // Model field flags a mismatch for *any* installed weight rather than only this filename.
+  // What is left is what a record cannot carry - what these weights are and what they cost.
+  [CUSTOM_MODEL_V2]:
+    'Locally trained (8 SKUs) — see the requirement recorded beside it below. Runs on torch, so a CUDA GPU is the fast path.',
   'yolo26n.pt':
     'Experimental — lightest YOLO26. Needs roughly yolo11n-class hardware: a modern 4-core CPU and 8 GB RAM. Its NMS-free design typically runs faster than yolo11n on CPU. Weights auto-download on first capture start (internet needed once).',
   'yolo26s.pt':
@@ -176,7 +191,7 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
   {
     key: 'resize_mode',
     label: 'Frame fitting',
-    hint: "How each frame is fitted to the inference size — it must match how the model was trained. Ultralytics letterboxes (pads to square); Roboflow exports are trained on 'Stretch to'. Letterboxing a 1280x720 frame uses only 56% of the 640x640 canvas, shrinking every object well below its training scale. 'auto' picks stretch for the custom model and letterbox for the stock YOLO weights.",
+    hint: "How each frame is fitted to the inference size — it must match how the model was trained. Ultralytics letterboxes (pads to square); Roboflow exports are trained on 'Stretch to'. Letterboxing a 1280x720 frame uses only 56% of the 640x640 canvas, shrinking every object well below its training scale. 'auto' uses the requirement recorded beside the selected weights, and falls back to stretch for a custom .onnx and letterbox otherwise — leave it on 'auto' unless you deliberately mean something else; the Model field above reports what it gives.",
     type: 'select',
     options: ALLOWED_RESIZE_MODES
   },
