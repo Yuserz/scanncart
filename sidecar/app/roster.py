@@ -9,7 +9,7 @@ it - `palmolive close` / `palmolive mid` / `palmolive far` instead of one `palmo
 without complaint and predicts 24 classes. Every box then comes back under a label the roster does
 not contain, the item log fills with near-duplicates of one product, and *nothing errors*: a class
 name records none of this. (The dataset tools refuse to *create* such a set - `clean_v2.py
-sanity`, `label_classes.py`, `generate_version.py --yes`, `train_v2.check_export` - which is the
+sanity`, `label_classes.py`, `generate_version.py --yes`, `train_model.check_export` - which is the
 other half of the same guard. This is the half that catches a weight arriving from anywhere else.)
 
 **It cannot import the tools that own the roster.** `sidecar/tools/` is deliberately outside the

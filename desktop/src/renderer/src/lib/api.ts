@@ -331,7 +331,7 @@ export interface InstalledModel {
   resize_mode: string | null
   auto_resolves_to: string
   source: string
-  // The class list these weights predict, as recorded beside them by `train_v2.py --install`.
+  // The class list these weights predict, as recorded beside them by `train_model.py --install`.
   // Empty means *not recorded* — a hand-copied weight, or a record written before the field
   // existed — and never "predicts nothing", so an empty list produces no findings below.
   class_names: string[]

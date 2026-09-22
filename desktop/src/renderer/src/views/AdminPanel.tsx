@@ -636,7 +636,7 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
             // empty list alone: a weight copied into `models/` by hand has no numbers either,
             // and telling its owner to run `--val` would be advice about someone else's file.
             <p className="field-hint" data-testid="model-validation-missing">
-              No measured score is recorded beside these weights — <code>train_v2.py --val</code>{' '}
+              No measured score is recorded beside these weights — <code>train_model.py --val</code>{' '}
               writes the per-class recall that appears here.
             </p>
           ))}

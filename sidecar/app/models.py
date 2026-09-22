@@ -10,7 +10,7 @@ moment the model changed was the one moment the app needed a code edit. Reportin
 directory fixes that once, for every future generation.
 
 It also reads the **record** each weight may carry - `models/<stem>.json`, written by
-`tools/train_v2.py --install`, or by `record_requirement` below when the operator is the only
+`tools/train_model.py --install`, or by `record_requirement` below when the operator is the only
 source of the fact - because neither the requirement a model has to be *run* with nor the class
 list it predicts is recoverable from the weight or from its name. That second fact is what lets
 `installed_models` report `class_list_problems` for a weight before it ever runs: a checkpoint
@@ -238,7 +238,7 @@ def read_record(weights: Path) -> dict:
     `validation` is what `--val` measured, per split. Empty list means "not measured", which
     is distinct from a measurement that scored zero.
 
-    `class_names` is the weight's own class list as `tools/train_v2.py --install` recorded it,
+    `class_names` is the weight's own class list as `tools/train_model.py --install` recorded it,
     and the empty list means "not recorded" rather than "predicts nothing" - a hand-copied
     weight, or a record written before this field existed. This is the read that lets a bad
     weight be caught from the listing instead of only once it runs: a model trained from a
@@ -296,7 +296,7 @@ def record_requirement(
 ) -> Path:
     """Write `resize_mode` into the record beside these weights, and return that record's path.
 
-    The other writer of these files is `tools/train_v2.py --install`, which knows the requirement
+    The other writer of these files is `tools/train_model.py --install`, which knows the requirement
     because it knows the version the weights were trained from. This one is for the case that
     path cannot cover: weights that reached `models/` some other way — a copy from another
     machine, a stock checkpoint, a checkpoint whose training run was never recorded — where the

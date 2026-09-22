@@ -21,18 +21,30 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
 
 import pytest
 
+import audit_recall
 import clean_v2
 import generate_version
+import generations
 import label_classes
 import label_progress
 import plan_split
-import train_v2
+import resources
+import train_model
+
+# The default generation's artifacts, so the assertions below name exactly what the tool writes
+# rather than a second copy of the naming rule - `generations.py` owns that, and the v1 half of
+# it is covered by the tests at the end of this file.
+V2 = generations.V2
+RUN_NAME = V2.run_name
+WEIGHT_NAME = V2.weight_name
+VAL_NAME = train_model.val_name(V2)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DOC = REPO_ROOT / "docs" / "MODEL_TRAINING.md"
@@ -1166,7 +1178,7 @@ def test_v1_class_names_in_the_doc_are_the_ones_used_for_continuity():
 
 
 # --------------------------------------------------------------------------
-# 9. train_v2 - the export check, the run's verdict, and the drop-in
+# 9. train_model - the export check, the run's verdict, and the drop-in
 # --------------------------------------------------------------------------
 
 
@@ -1208,10 +1220,10 @@ def _fake_export(
 
 def test_export_check_passes_on_the_roster(tmp_path):
     root = _fake_export(tmp_path / "export-v2")
-    splits, problems = train_v2.check_export(root)
+    splits, problems = train_model.check_export(root)
     assert problems == []
     assert set(splits) == {"train", "valid", "test"}
-    assert train_v2.count_images(splits["train"]) == 3
+    assert train_model.count_images(splits["train"]) == 3
 
 
 def test_export_missing_a_class_is_a_problem_not_a_warning(tmp_path):
@@ -1220,37 +1232,37 @@ def test_export_missing_a_class_is_a_problem_not_a_warning(tmp_path):
     """
     names = sorted(label_classes.SLUG_TO_CLASS.values())[:-1]  # drop one
     root = _fake_export(tmp_path / "export-v2", names=names)
-    _splits, problems = train_v2.check_export(root)
+    _splits, problems = train_model.check_export(root)
     assert any("no class for" in p for p in problems)
     assert any(sorted(label_classes.SLUG_TO_CLASS.values())[-1] in p for p in problems)
 
 
 def test_export_with_a_phantom_class_is_a_problem(tmp_path):
     root = _fake_export(tmp_path / "export-v2", names=["croutons"])
-    _splits, problems = train_v2.check_export(root)
+    _splits, problems = train_model.check_export(root)
     assert any("not v2 classes" in p for p in problems)
 
 
 def test_export_check_reports_a_missing_split_and_an_empty_one(tmp_path):
     root = _fake_export(tmp_path / "export-v2", splits=("train", "valid"), per_split=0)
-    _splits, problems = train_v2.check_export(root)
+    _splits, problems = train_model.check_export(root)
     assert any("no test/images directory" in p for p in problems)
     assert any("train/images is empty" in p for p in problems)
 
 
 def test_find_split_dirs_accepts_the_nested_extraction(tmp_path):
     nested = _fake_export(tmp_path / "nested", nested=True)
-    assert set(train_v2.find_split_dirs(nested)) == {"train", "valid", "test"}
+    assert set(train_model.find_split_dirs(nested)) == {"train", "valid", "test"}
 
 
 def test_missing_export_explains_what_to_download(tmp_path, capsys):
     """The operator-facing half of the check: this is the state the repo is in today (no
     version 2 generated yet), so the message is what a reader meets first."""
-    splits, problems = train_v2.check_export(tmp_path / "nope")
+    splits, problems = train_model.check_export(tmp_path / "nope")
     assert splits == {}
     assert any("no export at" in p for p in problems)
 
-    code = train_v2.main(["--export-dir", str(tmp_path / "nope")])
+    code = train_model.main(["--export-dir", str(tmp_path / "nope")])
     out = capsys.readouterr().out
     assert code == 2
     assert "YOLOv11 PyTorch" in out  # named the way the version page names it
@@ -1261,7 +1273,7 @@ def test_cli_dry_run_checks_the_export_and_runs_nothing(tmp_path, capsys):
     """No --yes means no training and no file written outside the export, which is the
     only safe way to show a reviewer what the run would be."""
     root = _fake_export(tmp_path / "export-v2")
-    code = train_v2.main(
+    code = train_model.main(
         [
             "--export-dir",
             str(root),
@@ -1274,7 +1286,7 @@ def test_cli_dry_run_checks_the_export_and_runs_nothing(tmp_path, capsys):
     out = capsys.readouterr().out
     assert code == 0
     assert "Nothing ran" in out
-    assert "yolo detect train" in out and f"model={train_v2.BASE_MODEL}" in out
+    assert "yolo detect train" in out and f"model={train_model.BASE_MODEL}" in out
     assert not (tmp_path / "runs").exists()
     assert not (tmp_path / "models").exists()
 
@@ -1283,12 +1295,12 @@ def test_cli_install_from_a_finished_run_copies_the_checkpoint(tmp_path, capsys)
     """The drop-in, at the CLI level: a completed run installs, and the resize_mode reminder
     comes with it - that field is what makes stretched training pay off."""
     root = _fake_export(tmp_path / "export-v2")
-    run = tmp_path / "runs" / train_v2.RUN_NAME
+    run = tmp_path / "runs" / RUN_NAME
     (run / "weights").mkdir(parents=True)
     (run / "weights" / "best.pt").write_bytes(b"weights")
     (run / "results.csv").write_text(_RESULTS_CSV, encoding="utf-8")
 
-    code = train_v2.main(
+    code = train_model.main(
         [
             "--export-dir",
             str(root),
@@ -1303,7 +1315,7 @@ def test_cli_install_from_a_finished_run_copies_the_checkpoint(tmp_path, capsys)
     )
     out = capsys.readouterr().out
     assert code == 0
-    assert (tmp_path / "models" / train_v2.WEIGHT_NAME).read_bytes() == b"weights"
+    assert (tmp_path / "models" / WEIGHT_NAME).read_bytes() == b"weights"
     assert "resize_mode: stretch" in out
 
 
@@ -1316,8 +1328,8 @@ def test_written_data_yaml_uses_absolute_paths_and_the_export_s_own_name_order(t
 
     roster = sorted(label_classes.SLUG_TO_CLASS.values())
     root = _fake_export(tmp_path / "export-v2", names=list(reversed(roster)))
-    splits = train_v2.find_split_dirs(root)
-    written = train_v2.write_data_yaml(root, splits)
+    splits = train_model.find_split_dirs(root)
+    written = train_model.write_data_yaml(root, splits)
     body = yaml.safe_load(written.read_text(encoding="utf-8"))
 
     assert body["names"] == list(reversed(roster))
@@ -1343,7 +1355,7 @@ def _results(tmp_path, text: str = _RESULTS_CSV) -> Path:
 
 
 def test_results_csv_columns_are_stripped_and_rows_parsed(tmp_path):
-    rows = train_v2.read_results(_results(tmp_path))
+    rows = train_model.read_results(_results(tmp_path))
     assert len(rows) == 3
     assert rows[-1]["metrics/mAP50-95(B)"] == 0.620
     assert rows[0]["epoch"] == 1.0
@@ -1354,8 +1366,8 @@ def test_verdict_fails_on_the_final_epoch_even_when_an_earlier_one_passed(tmp_pa
     quotes the end of the run, and `best_epoch` is reported beside it so the two are read
     together rather than the better number being cherry-picked.
     """
-    rows = train_v2.read_results(_results(tmp_path))
-    passed, failed = train_v2.verdict(rows)
+    rows = train_model.read_results(_results(tmp_path))
+    passed, failed = train_model.verdict(rows)
     assert any("mAP50-95" in f for f in failed)
     # mAP50 clears its target in the same row, so the two are decided independently - and
     # the lookup must not have answered mAP50 with mAP50-95's value.
@@ -1363,45 +1375,45 @@ def test_verdict_fails_on_the_final_epoch_even_when_an_earlier_one_passed(tmp_pa
     assert not any("mAP50(B)" in f for f in failed)
     # The log's epoch column is 1-based (ultralytics writes `self.epoch + 1`), so the
     # 0.630 row is epoch 2 and must be reported as 2, not silently rewritten to 1.
-    assert train_v2.best_epoch(rows) == (2, 0.630)
+    assert train_model.best_epoch(rows) == (2, 0.630)
 
 
 def test_verdict_passes_when_both_targets_are_met(tmp_path):
     text = _RESULTS_CSV.replace("0.910, 0.620", "0.940, 0.700")
-    rows = train_v2.read_results(_results(tmp_path, text))
-    passed, failed = train_v2.verdict(rows)
+    rows = train_model.read_results(_results(tmp_path, text))
+    passed, failed = train_model.verdict(rows)
     assert failed == []
     assert len(passed) == 2
 
 
 def test_verdict_reports_a_missing_metric_rather_than_assuming_it():
     rows = [{"epoch": 1.0, "metrics/mAP50(B)": 0.95}]
-    _passed, failed = train_v2.verdict(rows)
+    _passed, failed = train_model.verdict(rows)
     assert any("not in the run log" in f for f in failed)
 
 
 def test_metric_matches_either_the_suffixed_or_bare_column_name():
-    assert train_v2.metric({"metrics/mAP50": 0.5}, "metrics/mAP50(B)") == 0.5
-    assert train_v2.metric({"metrics/mAP50(B)": 0.6}, "metrics/mAP50(B)") == 0.6
-    assert train_v2.metric({"metrics/mAP50-95(B)": 0.4}, "metrics/mAP50(B)") is None
+    assert train_model.metric({"metrics/mAP50": 0.5}, "metrics/mAP50(B)") == 0.5
+    assert train_model.metric({"metrics/mAP50(B)": 0.6}, "metrics/mAP50(B)") == 0.6
+    assert train_model.metric({"metrics/mAP50-95(B)": 0.4}, "metrics/mAP50(B)") is None
 
 
 def test_find_best_prefers_best_over_last(tmp_path):
     weights = tmp_path / "weights"
     weights.mkdir()
     (weights / "last.pt").write_bytes(b"last")
-    assert train_v2.find_best(tmp_path).name == "last.pt"
+    assert train_model.find_best(tmp_path).name == "last.pt"
     (weights / "best.pt").write_bytes(b"best")
-    assert train_v2.find_best(tmp_path).name == "best.pt"
-    assert train_v2.find_best(tmp_path / "empty") is None
+    assert train_model.find_best(tmp_path).name == "best.pt"
+    assert train_model.find_best(tmp_path / "empty") is None
 
 
 def test_run_dir_suffixes_instead_of_overwriting_an_earlier_run(tmp_path):
-    assert train_v2.run_dir(tmp_path) == tmp_path / train_v2.RUN_NAME
-    (tmp_path / train_v2.RUN_NAME).mkdir()
-    assert train_v2.run_dir(tmp_path) == tmp_path / f"{train_v2.RUN_NAME}-2"
-    (tmp_path / f"{train_v2.RUN_NAME}-2").mkdir()
-    assert train_v2.run_dir(tmp_path) == tmp_path / f"{train_v2.RUN_NAME}-3"
+    assert train_model.run_dir(tmp_path, RUN_NAME) == tmp_path / RUN_NAME
+    (tmp_path / RUN_NAME).mkdir()
+    assert train_model.run_dir(tmp_path, RUN_NAME) == tmp_path / f"{RUN_NAME}-2"
+    (tmp_path / f"{RUN_NAME}-2").mkdir()
+    assert train_model.run_dir(tmp_path, RUN_NAME) == tmp_path / f"{RUN_NAME}-3"
 
 
 def test_install_copies_and_refuses_to_clobber(tmp_path):
@@ -1412,16 +1424,16 @@ def test_install_copies_and_refuses_to_clobber(tmp_path):
     src.write_bytes(b"weights")
     models = tmp_path / "models"
 
-    target = train_v2.install(src, models)
-    assert target == models / train_v2.WEIGHT_NAME
+    target = train_model.install(src, models)
+    assert target == models / WEIGHT_NAME
     assert target.read_bytes() == b"weights"
 
     src.write_bytes(b"newer")
     with pytest.raises(SystemExit):
-        train_v2.install(src, models)
+        train_model.install(src, models)
     assert target.read_bytes() == b"weights"
 
-    assert train_v2.install(src, models, force=True).read_bytes() == b"newer"
+    assert train_model.install(src, models, force=True).read_bytes() == b"newer"
 
 
 def test_the_recorded_requirement_is_the_one_the_version_geometry_implies():
@@ -1451,15 +1463,15 @@ def test_install_writes_the_record_beside_the_weights(tmp_path):
     src.write_bytes(b"weights")
     models = tmp_path / "models"
 
-    target = train_v2.install(
-        src, models, record=train_v2.weight_record(2, "snc-grocery")
+    target = train_model.install(
+        src, models, record=train_model.weight_record(V2, 2, "snc-grocery")
     )
 
     record = json.loads((models / f"{target.stem}.json").read_text(encoding="utf-8"))
     # No `model` field on purpose: the filename is the model, and a record that repeated it
     # would be a second answer that a copied file could make wrong.
     assert "model" not in record
-    assert record["generation"] == train_v2.GENERATION
+    assert record["generation"] == V2.name
     assert record["resize_mode"] == "stretch"
     assert record["source"] == "snc-grocery version 2"
     assert record["installed_at"]
@@ -1472,7 +1484,7 @@ def test_a_record_is_optional_so_install_still_works_alone(tmp_path):
     working without a record - the reader treats a missing one as an unknown requirement."""
     src = tmp_path / "best.pt"
     src.write_bytes(b"weights")
-    target = train_v2.install(src, tmp_path / "models")
+    target = train_model.install(src, tmp_path / "models")
     assert target.read_bytes() == b"weights"
     assert not target.with_suffix(".json").exists()
 
@@ -1482,9 +1494,9 @@ def test_cli_install_records_and_announces_the_resize_mode(tmp_path, capsys):
     which value and where the panel will check it."""
     root = _fake_export(tmp_path / "export-v2")
     models = tmp_path / "models"
-    _finished_run(tmp_path / "runs", train_v2.RUN_NAME)
+    _finished_run(tmp_path / "runs", RUN_NAME)
 
-    code = train_v2.main(
+    code = train_model.main(
         [
             "--export-dir",
             str(root),
@@ -1501,8 +1513,8 @@ def test_cli_install_records_and_announces_the_resize_mode(tmp_path, capsys):
 
     assert code == 0
     assert "resize_mode: stretch" in out
-    assert f"{train_v2.WEIGHT_NAME[:-3]}.json" in out
-    record = json.loads((models / f"{train_v2.WEIGHT_NAME[:-3]}.json").read_text("utf-8"))
+    assert f"{WEIGHT_NAME[:-3]}.json" in out
+    record = json.loads((models / f"{WEIGHT_NAME[:-3]}.json").read_text("utf-8"))
     assert record["source"] == "snc-grocery version 2"
 
 
@@ -1512,7 +1524,7 @@ def test_install_creates_the_models_directory(tmp_path):
     src = tmp_path / "best.pt"
     src.write_bytes(b"weights")
     models = tmp_path / "absent" / "models"
-    assert train_v2.install(src, models).is_file()
+    assert train_model.install(src, models).is_file()
     assert models.is_dir()
 
 
@@ -1521,20 +1533,29 @@ def test_run_command_matches_the_hyperparameters_the_doc_quotes():
     alone leaves the doc describing a run nobody performs."""
     doc = DOC.read_text(encoding="utf-8")
     for key, value in (
-        ("epochs", train_v2.EPOCHS),
-        ("imgsz", train_v2.IMGSZ),
-        ("batch", train_v2.BATCH),
-        ("patience", train_v2.PATIENCE),
+        ("epochs", train_model.EPOCHS),
+        ("imgsz", train_model.IMGSZ),
+        ("batch", train_model.BATCH),
+        ("patience", train_model.PATIENCE),
     ):
         assert f"{key}={value}" in doc, f"MODEL_TRAINING.md does not quote {key}={value}"
-    assert train_v2.BASE_MODEL in doc
+    assert train_model.BASE_MODEL in doc
 
-    line = train_v2.command_line(Path("d.yaml"), Path("runs"))
-    for token in (f"model={train_v2.BASE_MODEL}", f"epochs={train_v2.EPOCHS}", f"imgsz={train_v2.IMGSZ}"):
+    hyper = train_model.Hyper()
+    line = train_model.command_line(Path("d.yaml"), Path("runs"), RUN_NAME, hyper, "0")
+    for token in (
+        f"model={train_model.BASE_MODEL}",
+        f"epochs={train_model.EPOCHS}",
+        f"imgsz={train_model.IMGSZ}",
+        f"name={RUN_NAME}",
+        "device=0",
+        f"workers={hyper.workers}",
+    ):
         assert token in line
     # The printed command and the call that runs must not be able to disagree.
-    kwargs = train_v2.train_kwargs(Path("d.yaml"), Path("runs"))
-    assert kwargs["epochs"] == train_v2.EPOCHS and kwargs["name"] == train_v2.RUN_NAME
+    kwargs = train_model.train_kwargs(Path("d.yaml"), Path("runs"), RUN_NAME, hyper, "0")
+    assert kwargs["epochs"] == train_model.EPOCHS and kwargs["name"] == RUN_NAME
+    assert kwargs["device"] == "0"
 
 
 class _Resp:
@@ -1553,12 +1574,12 @@ class _Resp:
 def test_export_link_reads_only_a_ready_body():
     """202-with-progress and 200-with-link are told apart by the body, because the status
     code does not distinguish "accepted" from "ready" on its own."""
-    assert train_v2.export_link({"ready": False, "progress": 0.4}) is None
-    assert train_v2.export_link({}) is None
-    assert train_v2.export_link(None) is None
-    assert train_v2.export_link({"export": {"link": "https://x/y.zip"}}) == "https://x/y.zip"
-    assert train_v2.export_progress({"ready": False, "progress": 0.4}) == 0.4
-    assert train_v2.export_progress({}) is None
+    assert train_model.export_link({"ready": False, "progress": 0.4}) is None
+    assert train_model.export_link({}) is None
+    assert train_model.export_link(None) is None
+    assert train_model.export_link({"export": {"link": "https://x/y.zip"}}) == "https://x/y.zip"
+    assert train_model.export_progress({"ready": False, "progress": 0.4}) == 0.4
+    assert train_model.export_progress({}) is None
 
 
 def _export_zip(tmp_path) -> bytes:
@@ -1588,7 +1609,7 @@ def test_download_export_polls_until_the_link_appears(tmp_path):
 
     slept: list[float] = []
     dest = tmp_path / "export-v2"
-    train_v2.download_export(
+    train_model.download_export(
         "snc-grocery", 2, dest, "key", get=fake_get, sleep=slept.append
     )
 
@@ -1599,9 +1620,9 @@ def test_download_export_polls_until_the_link_appears(tmp_path):
     # shadowed `WORKSPACE` (the dataset *directory*) reach the live API as a path segment: the
     # request still carried "/snc-grocery/2/" while addressing `C:\codes\...\datasets`.
     assert calls[0] == (
-        f"https://api.roboflow.com/{label_classes.WORKSPACE}/snc-grocery/2/{train_v2.EXPORT_FORMAT}"
+        f"https://api.roboflow.com/{label_classes.WORKSPACE}/snc-grocery/2/{train_model.EXPORT_FORMAT}"
     )
-    assert str(train_v2.DATASET_ROOT) != label_classes.WORKSPACE
+    assert str(train_model.DATASET_ROOT) != label_classes.WORKSPACE
     assert ":\\" not in calls[0]  # no filesystem path leaked into the URL
 
 
@@ -1611,12 +1632,12 @@ def test_download_export_refuses_a_bad_request_instead_of_looping(tmp_path):
         return _Resp(404, {"error": "format not available"})
 
     with pytest.raises(SystemExit):
-        train_v2.download_export("p", 2, tmp_path / "d", "k", get=fake_get, sleep=lambda _s: None)
+        train_model.download_export("p", 2, tmp_path / "d", "k", get=fake_get, sleep=lambda _s: None)
 
 
 def test_download_export_gives_up_on_a_stuck_export(tmp_path):
     with pytest.raises(SystemExit):
-        train_v2.download_export(
+        train_model.download_export(
             "p", 2, tmp_path / "d", "k",
             get=lambda url, **kw: _Resp(202, {"ready": False, "progress": 0.1}),
             sleep=lambda _s: None,
@@ -1633,13 +1654,13 @@ def test_extract_zip_refuses_a_member_that_escapes_the_destination(tmp_path):
     with zipfile.ZipFile(archive, "w") as zf:
         zf.writestr("../escaped.txt", "nope")
     with pytest.raises(SystemExit):
-        train_v2.extract_zip(archive, tmp_path / "dest")
+        train_model.extract_zip(archive, tmp_path / "dest")
     assert not (tmp_path / "escaped.txt").exists()
 
 
 def test_cli_skips_a_download_that_is_already_there(tmp_path, capsys):
     root = _fake_export(tmp_path / "export-v2")
-    code = train_v2.main([
+    code = train_model.main([
         "--export-dir", str(root), "--download", "--version", "2",
         "--run-project", str(tmp_path / "runs"), "--models-dir", str(tmp_path / "models"),
     ])
@@ -1650,14 +1671,14 @@ def test_cli_skips_a_download_that_is_already_there(tmp_path, capsys):
 
 def test_cli_download_without_a_version_says_which_flag_is_missing(tmp_path):
     with pytest.raises(SystemExit) as excinfo:
-        train_v2.main(["--export-dir", str(tmp_path / "x"), "--download"])
+        train_model.main(["--export-dir", str(tmp_path / "x"), "--download"])
     assert "--version" in str(excinfo.value)
 
 
-def test_train_v2_does_not_import_ultralytics_at_module_level():
+def test_train_model_does_not_import_ultralytics_at_module_level():
     """Same shape as app/hardware.py's lazy torch import: the tool has to be importable,
     and its pure functions testable, without torch on the path."""
-    source = Path(train_v2.__file__).read_text(encoding="utf-8")
+    source = Path(train_model.__file__).read_text(encoding="utf-8")
     assert not re.search(r"^(from|import)\s+ultralytics", source, re.MULTILINE)
     assert re.search(r"^\s+from ultralytics import", source, re.MULTILINE)
 
@@ -1702,7 +1723,7 @@ def test_per_class_recall_reads_r_positionally_against_ap_class_index():
     box = _FakeBox(index=[0, 3], recall=[0.90, 0.95])
     metrics = _FakeMetrics(_NAMES, box, counts=[10, 0, 0, 12])
 
-    rows = train_v2.per_class_recall(metrics)
+    rows = train_model.per_class_recall(metrics)
     assert [(name, recall) for name, recall, _n in rows] == [
         ("bear-brand", 0.90),
         ("century-tuna", None),
@@ -1724,10 +1745,10 @@ def test_a_single_scored_class_is_not_dropped_by_numpy_truthiness():
     box = _FakeBox(index=np.array([0]), recall=np.array([0.0]))
     metrics = _FakeMetrics({0: "bear-brand"}, box, counts=np.array([10]))
 
-    rows = train_v2.per_class_recall(metrics)
+    rows = train_model.per_class_recall(metrics)
     assert rows == [("bear-brand", 0.0, 10)]
 
-    passed, failed, unmeasured, values = train_v2.recall_report(rows)
+    passed, failed, unmeasured, values = train_model.recall_report(rows)
     assert failed == ["bear-brand 0.000 < 0.85 (n=10)"]
     assert passed == [] and unmeasured == []
     assert values == {"bear-brand": 0.0}
@@ -1738,7 +1759,7 @@ def test_a_class_the_split_never_asked_about_is_not_a_zero():
     images for the split, the other means go capture images for the class."""
     box = _FakeBox(index=[0, 3], recall=[0.90, 0.95])
     metrics = _FakeMetrics(_NAMES, box, counts=[10, 0, 0, 12])
-    passed, failed, unmeasured, values = train_v2.recall_report(train_v2.per_class_recall(metrics))
+    passed, failed, unmeasured, values = train_model.recall_report(train_model.per_class_recall(metrics))
 
     assert passed == ["bear-brand 0.900 >= 0.85 (n=10)", "milo 0.950 >= 0.85 (n=12)"]
     assert failed == []
@@ -1752,7 +1773,7 @@ def test_recall_report_puts_a_measured_miss_under_the_floor():
     even though it is the near-empty cell you would most expect to read as unmeasured."""
     box = _FakeBox(index=[0, 1], recall=[0.62, 0.99], map50=0.8, map_=0.6, mp=0.8, mr=0.7)
     metrics = _FakeMetrics(_NAMES, box, counts=[4, 30, 0, 0])
-    passed, failed, unmeasured, values = train_v2.recall_report(train_v2.per_class_recall(metrics))
+    passed, failed, unmeasured, values = train_model.recall_report(train_model.per_class_recall(metrics))
 
     assert failed == ["bear-brand 0.620 < 0.85 (n=4)"]
     assert passed == ["century-tuna 0.990 >= 0.85 (n=30)"]
@@ -1764,11 +1785,11 @@ def test_the_floor_is_the_one_the_doc_states():
     """6 sets 0.85 for *every* class. The number lives in code and in the doc, and only one
     of them can be edited silently."""
     doc = DOC.read_text(encoding="utf-8")
-    assert f"≥ {train_v2.RECALL_FLOOR:.2f} for *every* class" in doc
+    assert f"≥ {train_model.RECALL_FLOOR:.2f} for *every* class" in doc
 
 
 def _val_block(split="test", recall=0.9, weights_hash="hash-a", floor=0.85):
-    return train_v2.validation_record(
+    return train_model.validation_record(
         [("bear-brand", recall, 10), ("lucky-me", None, 0)],
         split,
         {"mAP50": 0.88},
@@ -1798,15 +1819,15 @@ def test_a_measurement_of_other_weights_is_not_attached(tmp_path):
     the previous checkpoint is the ordinary case, not the exotic one, and attaching it would
     show an operator a score these weights never got.
     """
-    path = tmp_path / train_v2.VAL_METRICS_NAME
-    train_v2.write_val_metrics(path, _val_block(weights_hash="old-weights"))
+    path = tmp_path / train_model.VAL_METRICS_NAME
+    train_model.write_val_metrics(path, _val_block(weights_hash="old-weights"))
 
-    assert train_v2.load_val_metrics(path, "old-weights")[0]["split"] == "test"
-    assert train_v2.load_val_metrics(path, "new-weights") == []
+    assert train_model.load_val_metrics(path, "old-weights")[0]["split"] == "test"
+    assert train_model.load_val_metrics(path, "new-weights") == []
     # A missing or unreadable file is the same answer, for the same reason.
-    assert train_v2.load_val_metrics(tmp_path / "nope.json", "old-weights") == []
+    assert train_model.load_val_metrics(tmp_path / "nope.json", "old-weights") == []
     (tmp_path / "corrupt.json").write_text("not json", encoding="utf-8")
-    assert train_v2.load_val_metrics(tmp_path / "corrupt.json", "old-weights") == []
+    assert train_model.load_val_metrics(tmp_path / "corrupt.json", "old-weights") == []
 
 
 def test_measuring_the_other_split_keeps_the_one_already_there(tmp_path):
@@ -1814,16 +1835,16 @@ def test_measuring_the_other_split_keeps_the_one_already_there(tmp_path):
     favour of the selection one - and the selection number is the flattering one, so losing
     the other would be the quietest possible way to overstate a model. `test` stays first.
     """
-    path = tmp_path / train_v2.VAL_METRICS_NAME
-    train_v2.write_val_metrics(path, _val_block(split="valid", recall=0.99))
-    train_v2.write_val_metrics(path, _val_block(split="test", recall=0.62))
+    path = tmp_path / train_model.VAL_METRICS_NAME
+    train_model.write_val_metrics(path, _val_block(split="valid", recall=0.99))
+    train_model.write_val_metrics(path, _val_block(split="test", recall=0.62))
 
-    kept = train_v2.load_val_metrics(path, "hash-a")
+    kept = train_model.load_val_metrics(path, "hash-a")
     assert [b["split"] for b in kept] == ["test", "valid"]
     assert kept[0]["per_class"][0]["recall"] == 0.62
     # Re-measuring a split replaces it rather than stacking a second opinion.
-    train_v2.write_val_metrics(path, _val_block(weights_hash="hash-b"))
-    assert [b["split"] for b in train_v2.load_val_metrics(path, "hash-b")] == ["test"]
+    train_model.write_val_metrics(path, _val_block(weights_hash="hash-b"))
+    assert [b["split"] for b in train_model.load_val_metrics(path, "hash-b")] == ["test"]
 
 
 def test_the_recorded_measurement_has_no_hash_and_no_missing_field(tmp_path):
@@ -1832,14 +1853,14 @@ def test_the_recorded_measurement_has_no_hash_and_no_missing_field(tmp_path):
     the `.pt` alone would leave it wrong. And `validation` is absent - not null - when there
     are no numbers, so a re-install writes a byte-identical file.
     """
-    with_numbers = train_v2.weight_record(2, "snc-grocery", validation=[_val_block()])
+    with_numbers = train_model.weight_record(V2, 2, "snc-grocery", validation=[_val_block()])
     (block,) = with_numbers["validation"]
     assert "weights_sha256" not in block
     assert block["floor"] == 0.85 and block["split"] == "test"
 
-    without = train_v2.weight_record(2, "snc-grocery")
+    without = train_model.weight_record(V2, 2, "snc-grocery")
     assert "validation" not in without
-    assert train_v2.weight_record(2, "snc-grocery", validation=[]) == without
+    assert train_model.weight_record(V2, 2, "snc-grocery", validation=[]) == without
 
 
 def test_the_record_carries_the_class_list_the_export_declared():
@@ -1849,13 +1870,13 @@ def test_the_record_carries_the_class_list_the_export_declared():
     that out before the weights are ever run.
     """
     names = [f"Palmolive Naturals Bar Soap 85g {d}" for d in ("close", "mid", "far")]
-    record = train_v2.weight_record(2, "snc-grocery", class_names=names)
+    record = train_model.weight_record(V2, 2, "snc-grocery", class_names=names)
     assert record["class_names"] == names
 
     # Absent, not empty, when the export declared none: an empty list would read as "this model
     # predicts nothing" instead of "not recorded", and those are opposite instructions.
-    assert "class_names" not in train_v2.weight_record(2, "snc-grocery")
-    assert "class_names" not in train_v2.weight_record(2, "snc-grocery", class_names=[])
+    assert "class_names" not in train_model.weight_record(V2, 2, "snc-grocery")
+    assert "class_names" not in train_model.weight_record(V2, 2, "snc-grocery", class_names=[])
 
 
 def test_the_runbook_and_the_checklist_quote_the_val_step():
@@ -1863,33 +1884,33 @@ def test_the_runbook_and_the_checklist_quote_the_val_step():
     number that lives only in the tool is a number nobody is asked for."""
     for doc in (DOC, CHECKLIST):
         text = doc.read_text(encoding="utf-8")
-        assert "train_v2.py --val" in text, f"{doc.name} does not quote the --val step"
+        assert "train_model.py --val" in text, f"{doc.name} does not quote the --val step"
 
 
 def test_the_default_split_is_the_acceptance_one():
     """`test`, not `val`: the validation split is what training selected on, so quoting it
     back would present the selection number as an acceptance one."""
-    assert train_v2.DEFAULT_SPLIT == "test"
-    assert train_v2.DEFAULT_SPLIT in train_v2.VALIDATION_SPLITS
+    assert train_model.DEFAULT_SPLIT == "test"
+    assert train_model.DEFAULT_SPLIT in train_model.VALIDATION_SPLITS
     # The yaml key is `val` (write_data_yaml maps valid -> val), so `valid` would be rejected
     # by ultralytics with a FileNotFoundError rather than silently measured.
-    assert "valid" not in train_v2.VALIDATION_SPLITS
-    kw = train_v2.validation_kwargs(Path("d.yaml"), "test", Path("runs"))
-    assert kw["split"] == "test" and kw["imgsz"] == train_v2.IMGSZ
-    assert kw["name"] == train_v2.VAL_NAME and kw["exist_ok"] is True
+    assert "valid" not in train_model.VALIDATION_SPLITS
+    kw = train_model.validation_kwargs(Path("d.yaml"), "test", Path("runs"), VAL_NAME)
+    assert kw["split"] == "test" and kw["imgsz"] == train_model.IMGSZ
+    assert kw["name"] == VAL_NAME and kw["exist_ok"] is True
 
 
 def test_aggregate_metrics_reports_only_what_the_pass_produced():
     box = _FakeBox(index=[0], recall=[0.9], map50=0.91, map_=0.62, mp=0.88, mr=0.86)
-    assert train_v2.aggregate_metrics(_FakeMetrics(_NAMES, box)) == {
+    assert train_model.aggregate_metrics(_FakeMetrics(_NAMES, box)) == {
         "precision": 0.88,
         "recall": 0.86,
         "mAP50": 0.91,
         "mAP50-95": 0.62,
     }
     # A pass that answered nothing is not a pass with zeros in it.
-    assert train_v2.aggregate_metrics(object()) == {}
-    assert train_v2.per_class_recall(object()) == []
+    assert train_model.aggregate_metrics(object()) == {}
+    assert train_model.per_class_recall(object()) == []
 
 
 def test_validate_passes_the_split_and_data_yaml_to_the_injected_loader(tmp_path):
@@ -1907,8 +1928,13 @@ def test_validate_passes_the_split_and_data_yaml_to_the_injected_loader(tmp_path
             return metrics
 
     data_yaml = tmp_path / "data.scanncart.yaml"
-    returned = train_v2.validate(
-        tmp_path / "weights" / "best.pt", data_yaml, "test", tmp_path / "runs", yolo=_Model
+    returned = train_model.validate(
+        tmp_path / "weights" / "best.pt",
+        data_yaml,
+        "test",
+        tmp_path / "runs",
+        VAL_NAME,
+        yolo=_Model,
     )
 
     assert returned is metrics
@@ -1917,7 +1943,7 @@ def test_validate_passes_the_split_and_data_yaml_to_the_injected_loader(tmp_path
     assert kind == "val"
     assert kwargs["split"] == "test"
     assert kwargs["data"] == str(data_yaml)
-    assert kwargs["imgsz"] == train_v2.IMGSZ
+    assert kwargs["imgsz"] == train_model.IMGSZ
 
 
 def _finished_run(root: Path, name: str, *, mtime: float | None = None) -> Path:
@@ -1937,23 +1963,23 @@ def test_latest_run_finds_a_finished_run_where_run_dir_would_name_the_next_one(t
     `--val`/`--install` needs, which used to look for `<name>-2` and fail."""
     runs = tmp_path / "runs"
     runs.mkdir()
-    assert train_v2.latest_run(runs) is None
-    assert train_v2.resolve_run(runs) == runs / train_v2.RUN_NAME
+    assert train_model.latest_run(runs, RUN_NAME) is None
+    assert train_model.resolve_run(runs, V2) == runs / RUN_NAME
 
-    first = _finished_run(runs, train_v2.RUN_NAME, mtime=1_000)
-    second = _finished_run(runs, f"{train_v2.RUN_NAME}-2", mtime=2_000)
+    first = _finished_run(runs, RUN_NAME, mtime=1_000)
+    second = _finished_run(runs, f"{RUN_NAME}-2", mtime=2_000)
     # The val output is not a run: it has no weights, so it cannot be installed or measured.
-    (runs / train_v2.VAL_NAME / "weights").mkdir(parents=True)
+    (runs / VAL_NAME / "weights").mkdir(parents=True)
 
-    assert train_v2.latest_run(runs) == second
+    assert train_model.latest_run(runs, RUN_NAME, VAL_NAME) == second
     # Newest, not highest-numbered: lexically `-9` sorts above `-2` and `-10` below it, so the
     # suffix cannot be ranked as a number without parsing it back out of the name.
-    _finished_run(runs, f"{train_v2.RUN_NAME}-9", mtime=1_500)
-    assert train_v2.latest_run(runs) == second
-    assert train_v2.resolve_run(runs, str(first)) == first
+    _finished_run(runs, f"{RUN_NAME}-9", mtime=1_500)
+    assert train_model.latest_run(runs, RUN_NAME, VAL_NAME) == second
+    assert train_model.resolve_run(runs, V2, str(first)) == first
     # Training still asks run_dir for the next free name, gap-filling included - that contract
     # is unchanged.
-    assert train_v2.resolve_run(runs, training=True) == runs / f"{train_v2.RUN_NAME}-3"
+    assert train_model.resolve_run(runs, V2, training=True) == runs / f"{RUN_NAME}-3"
 
 
 def test_cli_val_reports_recall_by_distance_and_writes_it_into_the_record(tmp_path, capsys):
@@ -1973,7 +1999,7 @@ def test_cli_val_reports_recall_by_distance_and_writes_it_into_the_record(tmp_pa
         tmp_path, [("near.jpg", "close"), ("middle.jpg", "mid"), ("edge.jpg", "far")]
     )
     runs = tmp_path / "runs"
-    run = _finished_run(runs, train_v2.RUN_NAME)
+    run = _finished_run(runs, RUN_NAME)
     calls: list[str] = []
 
     class _Model:
@@ -1990,7 +2016,7 @@ def test_cli_val_reports_recall_by_distance_and_writes_it_into_the_record(tmp_pa
                 _NAMES, _FakeBox(index=[0], recall=[0.95], map50=0.9), counts=[10, 0, 0, 0]
             )
 
-    code = train_v2.main(
+    code = train_model.main(
         [
             "--export-dir",
             str(root),
@@ -2008,31 +2034,31 @@ def test_cli_val_reports_recall_by_distance_and_writes_it_into_the_record(tmp_pa
 
     assert code == 0
     assert calls == [
-        train_v2.VAL_NAME,
-        f"{train_v2.VAL_NAME}-close",
-        f"{train_v2.VAL_NAME}-mid",
-        f"{train_v2.VAL_NAME}-far",
+        VAL_NAME,
+        f"{VAL_NAME}-close",
+        f"{VAL_NAME}-mid",
+        f"{VAL_NAME}-far",
     ]
     assert "the test split by distance (floor 0.85):" in out
     assert "! = below the floor" in out
     assert "below the floor at a distance: far bear-brand 0.620 (n=10)" in out
 
-    (block,) = json.loads((run / train_v2.VAL_METRICS_NAME).read_text(encoding="utf-8"))
+    (block,) = json.loads((run / train_model.VAL_METRICS_NAME).read_text(encoding="utf-8"))
     assert [entry["distance"] for entry in block["per_distance"]] == ["close", "mid", "far"]
     assert [entry["images"] for entry in block["per_distance"]] == [1, 1, 1]
     far = block["per_distance"][2]
     assert (far["per_class"][0]["name"], far["per_class"][0]["recall"]) == ("bear-brand", 0.62)
     # The floor is on the block, not repeated per distance: the breakdown slices *this*
     # measurement, so a copy per distance could only disagree with the one they were judged on.
-    assert "floor" not in far and block["floor"] == train_v2.RECALL_FLOOR
+    assert "floor" not in far and block["floor"] == train_model.RECALL_FLOOR
 
     # And the same file read by the sidecar's own reader, which is what the panel uses - the
     # writer and the reader asserted against each other rather than against a fixture.
     from app.models import read_record
 
-    record = train_v2.weight_record(2, "snc-grocery", validation=[block])
+    record = train_model.weight_record(V2, 2, "snc-grocery", validation=[block])
     (models_dir := tmp_path / "models-with-record").mkdir()
-    weights = models_dir / train_v2.WEIGHT_NAME
+    weights = models_dir / WEIGHT_NAME
     weights.write_bytes(b"weights")
     weights.with_suffix(".json").write_text(json.dumps(record), encoding="utf-8")
 
@@ -2051,7 +2077,7 @@ def test_cli_no_per_distance_skips_the_extra_passes(tmp_path, capsys):
     )
     manifest = _manifest_with_distances(tmp_path, [("near.jpg", "close")])
     runs = tmp_path / "runs"
-    run = _finished_run(runs, train_v2.RUN_NAME)
+    run = _finished_run(runs, RUN_NAME)
     calls: list[str] = []
 
     class _Model:
@@ -2062,7 +2088,7 @@ def test_cli_no_per_distance_skips_the_extra_passes(tmp_path, capsys):
             calls.append(kwargs["name"])
             return _FakeMetrics(_NAMES, _FakeBox(index=[0], recall=[0.95]), counts=[10, 0, 0, 0])
 
-    code = train_v2.main(
+    code = train_model.main(
         [
             "--export-dir", str(root), "--run-project", str(runs),
             "--models-dir", str(tmp_path / "models"), "--manifest", str(manifest),
@@ -2072,9 +2098,9 @@ def test_cli_no_per_distance_skips_the_extra_passes(tmp_path, capsys):
     )
     out = capsys.readouterr().out
 
-    assert code == 0 and calls == [train_v2.VAL_NAME]
+    assert code == 0 and calls == [VAL_NAME]
     assert "by distance" not in out
-    (block,) = json.loads((run / train_v2.VAL_METRICS_NAME).read_text(encoding="utf-8"))
+    (block,) = json.loads((run / train_model.VAL_METRICS_NAME).read_text(encoding="utf-8"))
     assert block["per_distance"] == []
 
 
@@ -2087,7 +2113,7 @@ def test_cli_val_without_a_usable_manifest_says_the_breakdown_was_skipped(tmp_pa
         tmp_path / "export", {"train": ["t.jpg"], "valid": ["v.jpg"], "test": ["near.jpg"]}
     )
     runs = tmp_path / "runs"
-    run = _finished_run(runs, train_v2.RUN_NAME)
+    run = _finished_run(runs, RUN_NAME)
 
     class _Model:
         def __init__(self, _weights):
@@ -2096,7 +2122,7 @@ def test_cli_val_without_a_usable_manifest_says_the_breakdown_was_skipped(tmp_pa
         def val(self, **_kwargs):
             return _FakeMetrics(_NAMES, _FakeBox(index=[0], recall=[0.95]), counts=[10, 0, 0, 0])
 
-    code = train_v2.main(
+    code = train_model.main(
         [
             "--export-dir", str(root), "--run-project", str(runs),
             "--models-dir", str(tmp_path / "models"),
@@ -2109,7 +2135,7 @@ def test_cli_val_without_a_usable_manifest_says_the_breakdown_was_skipped(tmp_pa
     assert code == 0
     assert "note: no distances for the test split" in out
     assert "skipped, not reported as clean" in out
-    (block,) = json.loads((run / train_v2.VAL_METRICS_NAME).read_text(encoding="utf-8"))
+    (block,) = json.loads((run / train_model.VAL_METRICS_NAME).read_text(encoding="utf-8"))
     assert block["per_distance"] == []
 
 
@@ -2118,7 +2144,7 @@ def test_cli_val_reports_per_class_recall_without_being_told_the_run(tmp_path, c
     quote - the run it just trained, found by being the newest one with weights."""
     root = _fake_export(tmp_path / "export-v2")
     runs = tmp_path / "runs"
-    _finished_run(runs, f"{train_v2.RUN_NAME}-2")
+    _finished_run(runs, f"{RUN_NAME}-2")
 
     metrics = _FakeMetrics(
         _NAMES,
@@ -2135,7 +2161,7 @@ def test_cli_val_reports_per_class_recall_without_being_told_the_run(tmp_path, c
             assert kwargs["split"] == "test"
             return metrics
 
-    code = train_v2.main(
+    code = train_model.main(
         [
             "--export-dir",
             str(root),
@@ -2155,14 +2181,14 @@ def test_cli_val_reports_per_class_recall_without_being_told_the_run(tmp_path, c
     out = capsys.readouterr().out
 
     assert code == 0
-    assert loaded == [str(runs / f"{train_v2.RUN_NAME}-2" / "weights" / "best.pt")]
+    assert loaded == [str(runs / f"{RUN_NAME}-2" / "weights" / "best.pt")]
     assert "[.ok.] bear-brand 0.900 >= 0.85 (n=10)" in out
     assert "[.ok.] milo 0.950 >= 0.85 (n=12)" in out
     assert "[WARN] century-tuna 0.620 < 0.85 (n=30)" in out
     assert "[SKIP] lucky-me: no ground-truth instances in the split" in out
     assert "target >= 0.90" in out  # the mAP50 row keeps 6's aggregate target
     assert "below the 0.85 floor" in out
-    assert "--install --run-dir" in out
+    assert f"--install --generation {V2.name} --run-dir" in out
     # --val alone installs nothing.
     assert not (tmp_path / "models").exists()
 
@@ -2176,7 +2202,7 @@ def test_cli_the_numbers_from_val_reach_the_record_via_a_separate_install(tmp_pa
     root = _fake_export(tmp_path / "export-v2")
     runs = tmp_path / "runs"
     models = tmp_path / "models"
-    run = _finished_run(runs, train_v2.RUN_NAME)
+    run = _finished_run(runs, RUN_NAME)
 
     metrics = _FakeMetrics(
         _NAMES,
@@ -2191,7 +2217,7 @@ def test_cli_the_numbers_from_val_reach_the_record_via_a_separate_install(tmp_pa
         def val(self, **_kwargs):
             return metrics
 
-    measured = train_v2.main(
+    measured = train_model.main(
         [
             "--export-dir", str(root), "--run-project", str(runs),
             "--models-dir", str(models),
@@ -2201,11 +2227,11 @@ def test_cli_the_numbers_from_val_reach_the_record_via_a_separate_install(tmp_pa
     )
     out = capsys.readouterr().out
     assert measured == 0
-    assert str(run / train_v2.VAL_METRICS_NAME) in out
+    assert str(run / train_model.VAL_METRICS_NAME) in out
     # --val alone still installs nothing: the numbers are written, not the model.
     assert not models.exists()
 
-    installed = train_v2.main(
+    installed = train_model.main(
         [
             "--export-dir", str(root), "--run-project", str(runs),
             "--models-dir", str(models), "--install", "--version", "2",
@@ -2215,13 +2241,13 @@ def test_cli_the_numbers_from_val_reach_the_record_via_a_separate_install(tmp_pa
     out = capsys.readouterr().out
     assert installed == 0
 
-    record = json.loads((models / f"{train_v2.WEIGHT_NAME[:-3]}.json").read_text("utf-8"))
+    record = json.loads((models / f"{WEIGHT_NAME[:-3]}.json").read_text("utf-8"))
     # The export's own class list, read off its data.yaml at this boundary rather than passed
     # in by the test: the wiring is the half that could go missing while every unit below it
     # still passes, and its absence is invisible until a bad model runs unnoticed.
     assert record["class_names"] == sorted(label_classes.SLUG_TO_CLASS.values())
     (block,) = record["validation"]
-    assert block["split"] == "test" and block["floor"] == train_v2.RECALL_FLOOR
+    assert block["split"] == "test" and block["floor"] == train_model.RECALL_FLOOR
     assert [(c["name"], c["recall"]) for c in block["per_class"]] == [
         ("bear-brand", 0.62),
         ("century-tuna", 0.99),
@@ -2235,7 +2261,7 @@ def test_cli_the_numbers_from_val_reach_the_record_via_a_separate_install(tmp_pa
     # the writer and the reader asserted against each other, not against a fixture.
     from app.models import read_record
 
-    (parsed,) = read_record(models / train_v2.WEIGHT_NAME)["validation"]
+    (parsed,) = read_record(models / WEIGHT_NAME)["validation"]
     assert parsed.split == "test"
     assert [c.name for c in parsed.per_class if c.recall is None] == ["lucky-me", "milo"]
 
@@ -2247,9 +2273,9 @@ def test_cli_install_says_so_when_nothing_was_measured(tmp_path, capsys):
     root = _fake_export(tmp_path / "export-v2")
     runs = tmp_path / "runs"
     models = tmp_path / "models"
-    _finished_run(runs, train_v2.RUN_NAME)
+    _finished_run(runs, RUN_NAME)
 
-    code = train_v2.main(
+    code = train_model.main(
         [
             "--export-dir", str(root), "--run-project", str(runs),
             "--models-dir", str(models), "--install",
@@ -2258,7 +2284,7 @@ def test_cli_install_says_so_when_nothing_was_measured(tmp_path, capsys):
     out = capsys.readouterr().out
     assert code == 0
     assert "No measurement of *these* weights was found" in out
-    record = json.loads((models / f"{train_v2.WEIGHT_NAME[:-3]}.json").read_text("utf-8"))
+    record = json.loads((models / f"{WEIGHT_NAME[:-3]}.json").read_text("utf-8"))
     assert "validation" not in record
 
 
@@ -2271,7 +2297,7 @@ def test_cli_a_measurement_of_a_replaced_checkpoint_is_not_installed(tmp_path, c
     root = _fake_export(tmp_path / "export-v2")
     runs = tmp_path / "runs"
     models = tmp_path / "models"
-    run = _finished_run(runs, train_v2.RUN_NAME)
+    run = _finished_run(runs, RUN_NAME)
 
     metrics = _FakeMetrics(_NAMES, _FakeBox(index=[0], recall=[0.99]), counts=[10, 0, 0, 0])
 
@@ -2282,19 +2308,19 @@ def test_cli_a_measurement_of_a_replaced_checkpoint_is_not_installed(tmp_path, c
         def val(self, **_kwargs):
             return metrics
 
-    train_v2.main(
+    train_model.main(
         ["--export-dir", str(root), "--run-project", str(runs), "--val"], yolo=_Model
     )
     capsys.readouterr()
-    assert train_v2.load_val_metrics(
-        run / train_v2.VAL_METRICS_NAME, train_v2.weights_sha256(run / "weights" / "best.pt")
+    assert train_model.load_val_metrics(
+        run / train_model.VAL_METRICS_NAME, train_model.weights_sha256(run / "weights" / "best.pt")
     )
 
     # The checkpoint is replaced - same path, different bytes - as a re-train into the same
     # --run-dir does.
     (run / "weights" / "best.pt").write_bytes(b"a different checkpoint")
 
-    code = train_v2.main(
+    code = train_model.main(
         [
             "--export-dir", str(root), "--run-project", str(runs),
             "--models-dir", str(models), "--install",
@@ -2303,13 +2329,13 @@ def test_cli_a_measurement_of_a_replaced_checkpoint_is_not_installed(tmp_path, c
     out = capsys.readouterr().out
     assert code == 0
     assert "No measurement of *these* weights was found" in out
-    record = json.loads((models / f"{train_v2.WEIGHT_NAME[:-3]}.json").read_text("utf-8"))
+    record = json.loads((models / f"{WEIGHT_NAME[:-3]}.json").read_text("utf-8"))
     assert "validation" not in record
 
 
 def test_cli_val_says_nothing_ran_when_asked_for_neither_action(tmp_path, capsys):
     root = _fake_export(tmp_path / "export-v2")
-    code = train_v2.main(
+    code = train_model.main(
         ["--export-dir", str(root), "--run-project", str(tmp_path / "runs")],
         yolo=lambda *_a, **_k: pytest.fail("--val was not asked for; nothing should load"),
     )
@@ -2323,7 +2349,7 @@ def test_cli_val_on_a_split_with_no_run_is_an_error_not_a_silent_pass(tmp_path):
     that would make `--val` worse than not having it."""
     root = _fake_export(tmp_path / "export-v2")
     with pytest.raises(SystemExit) as excinfo:
-        train_v2.main(
+        train_model.main(
             ["--export-dir", str(root), "--run-project", str(tmp_path / "runs"), "--val"],
             yolo=lambda *_a, **_k: pytest.fail("nothing to load"),
         )
@@ -2331,13 +2357,13 @@ def test_cli_val_on_a_split_with_no_run_is_an_error_not_a_silent_pass(tmp_path):
 
 
 def test_cli_install_without_a_run_dir_installs_the_finished_run(tmp_path, capsys):
-    """The docs' own `train_v2.py --install` line, which used to need a `--run-dir` the
+    """The docs' own `train_model.py --install` line, which used to need a `--run-dir` the
     examples did not mention."""
     root = _fake_export(tmp_path / "export-v2")
     runs = tmp_path / "runs"
-    _finished_run(runs, train_v2.RUN_NAME)
+    _finished_run(runs, RUN_NAME)
 
-    code = train_v2.main(
+    code = train_model.main(
         [
             "--export-dir",
             str(root),
@@ -2350,7 +2376,7 @@ def test_cli_install_without_a_run_dir_installs_the_finished_run(tmp_path, capsy
     )
     out = capsys.readouterr().out
     assert code == 0
-    assert (tmp_path / "models" / train_v2.WEIGHT_NAME).read_bytes() == b"weights"
+    assert (tmp_path / "models" / WEIGHT_NAME).read_bytes() == b"weights"
     assert "resize_mode: stretch" in out
 
 
@@ -2380,7 +2406,7 @@ def test_models_readme_is_tracked_and_names_the_weights_the_tool_installs(tmp_pa
     readme = models / "README.md"
     assert readme.is_file()
     text = readme.read_text(encoding="utf-8")
-    assert train_v2.WEIGHT_NAME in text
+    assert WEIGHT_NAME in text
     assert "resize_mode: stretch" in text
 
     ignore = (REPO_ROOT / "sidecar" / ".gitignore").read_text(encoding="utf-8")
@@ -2465,7 +2491,7 @@ def test_an_export_whose_classes_carry_distances_says_which_and_why(tmp_path):
     body["nc"] = len(names)
     (root / "data.yaml").write_text(yaml.safe_dump(body), encoding="utf-8")
 
-    _splits, problems = train_v2.check_export(root)
+    _splits, problems = train_model.check_export(root)
 
     assert any("not v2 classes" in p for p in problems)
     told = next(p for p in problems if "carry a *distance*" in p)
@@ -2487,7 +2513,7 @@ def test_an_export_with_extra_classes_that_are_not_distances_says_only_that(tmp_
     body["nc"] = len(names)
     (root / "data.yaml").write_text(yaml.safe_dump(body), encoding="utf-8")
 
-    _splits, problems = train_v2.check_export(root)
+    _splits, problems = train_model.check_export(root)
 
     assert any("not v2 classes" in p for p in problems)
     assert not any("carry a *distance*" in p for p in problems)
@@ -2610,17 +2636,17 @@ def test_the_distance_map_reads_the_manifest_and_ignores_what_it_cannot_use(tmp_
         ),
         encoding="utf-8",
     )
-    assert train_v2.distance_map(path) == {"a.jpg": "close", "b.jpg": "far", "e.jpg": "mid"}
+    assert train_model.distance_map(path) == {"a.jpg": "close", "b.jpg": "far", "e.jpg": "mid"}
 
 
 def test_a_missing_or_corrupt_manifest_is_no_distances_rather_than_a_failure(tmp_path):
     """A run that cannot find distances must lose the breakdown, not the validation: this file
     is written by a separate program, and the acceptance number does not depend on it."""
-    assert train_v2.distance_map(tmp_path / "nope.json") == {}
+    assert train_model.distance_map(tmp_path / "nope.json") == {}
     (tmp_path / "corrupt.json").write_text("{not json", encoding="utf-8")
-    assert train_v2.distance_map(tmp_path / "corrupt.json") == {}
+    assert train_model.distance_map(tmp_path / "corrupt.json") == {}
     (tmp_path / "shape.json").write_text('{"a": 1}', encoding="utf-8")
-    assert train_v2.distance_map(tmp_path / "shape.json") == {}
+    assert train_model.distance_map(tmp_path / "shape.json") == {}
 
 
 def test_an_image_the_manifest_does_not_know_is_reported_rather_than_dropped(tmp_path):
@@ -2632,7 +2658,7 @@ def test_an_image_the_manifest_does_not_know_is_reported_rather_than_dropped(tmp
     for name in ("known.jpg", "stranger.jpg"):
         (images / name).write_bytes(b"x")
 
-    found, unknown = train_v2.images_by_distance(images, {"known.jpg": "close"})
+    found, unknown = train_model.images_by_distance(images, {"known.jpg": "close"})
 
     assert unknown == ["stranger.jpg"]
     assert [p.name for p in found["close"]] == ["known.jpg"]
@@ -2646,7 +2672,7 @@ def test_images_are_grouped_by_distance_and_the_unplaced_ones_are_counted(tmp_pa
     for name in ("a.jpg", "b.jpg", "c.jpg", "notes.txt"):
         (images / name).write_bytes(b"x")
 
-    found, unknown = train_v2.images_by_distance(
+    found, unknown = train_model.images_by_distance(
         images, {"a.jpg": "close", "b.jpg": "far", "c.jpg": "far"}
     )
 
@@ -2673,7 +2699,7 @@ def _named_export(tmp_path: Path) -> Path:
 def _breakdown(tmp_path, distances):
     """The breakdown over the named export, with a fake `yolo` that records which pass ran."""
     root = _named_export(tmp_path)
-    splits, problems = train_v2.check_export(root)
+    splits, problems = train_model.check_export(root)
     assert problems == [] and splits
     calls: list[str] = []
 
@@ -2685,7 +2711,7 @@ def _breakdown(tmp_path, distances):
             calls.append(kwargs["name"])
             return _FakeMetrics(_NAMES, _FakeBox(index=[0], recall=[0.9]), counts=[10, 0, 0, 0])
 
-    blocks, notes = train_v2.distance_breakdown(
+    blocks, notes = train_model.distance_breakdown(
         tmp_path / "weights" / "best.pt",
         root,
         splits,
@@ -2710,9 +2736,9 @@ def test_the_breakdown_runs_one_pass_per_distance_with_its_own_plot_directory(tm
     assert [b["distance"] for b in blocks] == ["close", "mid", "far"]
     assert [b["images"] for b in blocks] == [1, 1, 1]
     assert calls == [
-        f"{train_v2.VAL_NAME}-close",
-        f"{train_v2.VAL_NAME}-mid",
-        f"{train_v2.VAL_NAME}-far",
+        f"{VAL_NAME}-close",
+        f"{VAL_NAME}-mid",
+        f"{VAL_NAME}-far",
     ]
     assert notes == []
     # The exact image set behind each number is on disk, so a surprising row can be traced
@@ -2762,7 +2788,7 @@ def test_no_distance_matches_at_all_reads_as_skipped_not_as_clean(tmp_path):
 
 def test_the_breakdown_survives_a_manifest_that_is_not_there(tmp_path):
     """The acceptance number must not depend on the dataset workspace being present."""
-    blocks, notes, calls = _breakdown(tmp_path, train_v2.distance_map(tmp_path / "nope.json"))
+    blocks, notes, calls = _breakdown(tmp_path, train_model.distance_map(tmp_path / "nope.json"))
 
     assert blocks == [] and calls == []
     assert "skipped, not reported as clean" in notes[0]
@@ -2790,7 +2816,7 @@ def test_the_grid_puts_a_far_miss_beside_the_number_that_hides_it():
         _distance_block("far", [("bear-brand", 0.90, 20), ("milo", 0.61, 20)]),
     ]
 
-    lines = train_v2.distance_grid(rows, blocks)
+    lines = train_model.distance_grid(rows, blocks)
     text = "\n".join(lines)
 
     assert lines[0].split() == ["class", "close", "mid", "far", "all"]
@@ -2798,7 +2824,7 @@ def test_the_grid_puts_a_far_miss_beside_the_number_that_hides_it():
     assert "0.610 (20)!" in text and "0.950 (20)" in text and "0.970 (20)" in text
     # The overall number is on the same line, which is the comparison being made.
     assert "0.880 (40)" in text
-    assert train_v2.distance_misses(blocks) == ["far milo 0.610 (n=20)"]
+    assert train_model.distance_misses(blocks) == ["far milo 0.610 (n=20)"]
 
 
 def test_a_distance_that_never_asked_about_a_class_is_a_dash_not_a_zero():
@@ -2812,20 +2838,20 @@ def test_a_distance_that_never_asked_about_a_class_is_a_dash_not_a_zero():
         _distance_block("far", [("bear-brand", 0.90, 20), ("milo", None, 0)]),
     ]
 
-    lines = train_v2.distance_grid(rows, blocks)
+    lines = train_model.distance_grid(rows, blocks)
     text = "\n".join(lines)
 
     assert text.count("0.000") == 0
     milo = next(line for line in lines if line.startswith("milo"))
     # close is absent, mid has no block at all, far is present-but-unasked, and `all` is 0.900.
     assert milo.split() == ["milo", "-", "-", "-", "0.900", "(40)"]
-    assert train_v2.distance_misses(blocks) == []
+    assert train_model.distance_misses(blocks) == []
 
 
 def test_the_grid_lists_every_class_the_model_knows_not_only_the_scored_ones():
     """A class missing from a distance *is* the finding there, so it has to appear as a row."""
     rows = [("bear-brand", 0.90, 20), ("milo", None, 0)]
-    lines = train_v2.distance_grid(rows, [])
+    lines = train_model.distance_grid(rows, [])
 
     assert [line.split()[0] for line in lines[2:]] == ["bear-brand", "milo"]
     assert lines[-1].split()[1:] == ["-", "-", "-", "-"]
@@ -2837,8 +2863,574 @@ def test_distance_misses_is_worst_first():
         _distance_block("close", [("milo", 0.80, 20)]),
         _distance_block("far", [("milo", 0.40, 20), ("bear-brand", 0.71, 20)]),
     ]
-    assert train_v2.distance_misses(blocks) == [
+    assert train_model.distance_misses(blocks) == [
         "far milo 0.400 (n=20)",
         "far bear-brand 0.710 (n=20)",
         "close milo 0.800 (n=20)",
     ]
+
+
+# --------------------------------------------------------------------------
+# 10. generations - one trainer, two datasets, and what has to differ
+# --------------------------------------------------------------------------
+
+
+def test_the_generations_share_a_roster_and_differ_by_the_class_v2_adds():
+    """v1 is not a different product list: it is the same seven names v1's project declares, and
+    v2 adds Palmolive. Both halves matter - the shared part is what keeps a v1 weight's labels
+    continuous with v2's, and the added class is why a v1 weight can never predict everything the
+    app expects."""
+    assert set(generations.V1.classes) < set(generations.V2.classes)
+    assert len(generations.V1.classes) == 7 and len(generations.V2.classes) == 8
+    assert generations.added_over(generations.V1, generations.V2) == (
+        "Palmolive Naturals Bar Soap 85g",
+    )
+    # Nothing the other way round: v1 declares no class v2 lacks.
+    assert generations.added_over(generations.V2, generations.V1) == ()
+    # The v2 side is the tools' own copy of the roster, not a retyped list.
+    assert generations.V2.classes == tuple(label_classes.SLUG_TO_CLASS.values())
+
+
+def test_the_generation_names_are_the_ones_the_picker_looks_for():
+    """A generation's name is not a label: it is the filename the Admin Panel lists and
+    `settings_store.is_custom_model` validates (MODEL_TRAINING.md 8.2)."""
+    assert generations.V1.weight_name == "scanncart-grocery-v1.pt"
+    assert generations.V2.weight_name == "scanncart-grocery-v2.pt"
+    assert generations.V1.run_name == "scanncart-grocery-v1"
+    assert train_model.val_name(generations.V2) == "scanncart-grocery-v2-val"
+    assert generations.DEFAULT.name == "v2"
+    with pytest.raises(SystemExit, match="unknown generation"):
+        generations.get("v3")
+
+
+def test_a_v1_export_is_judged_against_v1s_class_list(tmp_path):
+    """Why the check stopped being one shared roster: v1's project has seven classes, so judging
+    its export against v2's eight would refuse a set that is correct - and a check that cries wolf
+    is how the real mismatch gets waved through."""
+    root = _fake_export(tmp_path / "export-v1", names=list(generations.V1.classes))
+    _splits, problems = train_model.check_export(root, generations.V1)
+    assert problems == []
+
+    # The same export read as a v2 one: exactly one missing class, and it is the one v2 adds.
+    _splits, v2_problems = train_model.check_export(root, generations.V2)
+    assert v2_problems == ["the export has no class for: Palmolive Naturals Bar Soap 85g"]
+
+
+def test_the_export_check_says_which_classes_this_generation_can_never_predict(tmp_path, capsys):
+    """Not a problem - it is a property of the dataset - but it is the sentence the app will show
+    about these weights, so it is better known before an hour of GPU time than after it."""
+    root = _fake_export(tmp_path / "export-v1", names=list(generations.V1.classes))
+    train_model.check_export(root, generations.V1)
+    out = capsys.readouterr().out
+    assert "can never predict them: Palmolive Naturals Bar Soap 85g" in out
+
+    # And silence for the generation that declares everything, so the line means something when
+    # it does appear.
+    complete = _fake_export(tmp_path / "export-v2", names=list(generations.V2.classes))
+    train_model.check_export(complete, generations.V2)
+    assert "can never predict" not in capsys.readouterr().out
+
+
+def test_v1_declares_no_distance_axis_where_v2_names_a_manifest():
+    """`None` is the generation saying it has no such axis - v1's export carries no distance tags
+    - which is why `--val` gives it its own sentence rather than reporting a manifest that went
+    missing, and why an absent breakdown there cannot be read as "every distance passed"."""
+    assert generations.V1.manifest is None
+    assert generations.V2.manifest is not None
+    assert generations.V2.manifest.name == "manifest.json"
+    # A generation with no axis has no distances to look up, whatever it is asked for.
+    assert train_model.distance_map(generations.V1.manifest) == {}
+
+
+def test_the_geometry_reading_tells_stretched_frames_from_padded_ones(tmp_path):
+    """Why this reading exists: `resize_mode: auto` resolving to letterbox for a stretch-trained
+    `.pt` is a failure this project has already paid for, so the frames are measured rather than
+    trusted from a constant. A stretched frame fills its border with content; a fitted one pads
+    with a constant colour, and that is the whole signature."""
+    numpy = pytest.importorskip("numpy")
+    image_module = pytest.importorskip("PIL.Image")
+
+    content = numpy.random.default_rng(0).integers(40, 210, (64, 64, 3), dtype="uint8")
+
+    def _images(name: str, pixels) -> Path:
+        directory = tmp_path / name
+        directory.mkdir(parents=True)
+        image_module.fromarray(pixels).save(directory / "frame.jpg")
+        return directory
+
+    stretched = _images("stretched", content)
+    letterboxed_pixels = numpy.zeros((64, 64, 3), dtype="uint8")
+    letterboxed_pixels[16:-16] = content[16:-16]
+    letterboxed = _images("letterboxed", letterboxed_pixels)
+
+    (stretched_note,) = train_model.frame_geometry({"train": stretched}, sample=1)
+    assert "no constant border, i.e. stretched" in stretched_note
+
+    (padded_note,) = train_model.frame_geometry({"train": letterboxed}, sample=1)
+    assert "constant border" in padded_note
+    assert "fitting" in padded_note
+    # A reading that cannot be taken is a note, never a failure: the frames are a claim about the
+    # geometry, and a training run should not die because one file would not open.
+    assert train_model.frame_geometry({}) == [
+        "frames  no images to sample, so the geometry was not measured"
+    ]
+
+
+def test_the_run_is_bounded_by_the_machine_budget():
+    """The trainer shares this box with the app, so its dataloader count comes from the CPU budget
+    rather than ultralytics' default of eight processes, and its batch from the VRAM share rather
+    than from the constant - which is what stops a run taking the machine over."""
+    assert train_model.derive_workers(12) == 2
+    assert train_model.derive_workers(1) == 1  # never zero workers
+    assert resources.CPU_THREADS < (os.cpu_count() or 4)  # something is always left free
+    budget = resources.Budget(vram_cap_gb=3.0)
+    assert budget.batch_size(640) == 8
+    # The same share at four times the pixels fits far less, which is the whole point of deriving
+    # it: a batch that OOMs takes every other application on the card down with the run.
+    assert budget.batch_size(1280) < budget.batch_size(640)
+    # An explicit --batch is a ceiling, never a way past the card's share.
+    assert min(16, budget.batch_size(640)) == 8
+    assert min(4, budget.batch_size(640)) == 4
+
+
+def test_cli_val_for_a_generation_with_no_distance_axis_says_there_is_none(tmp_path, capsys):
+    """The per-class table is the whole readout for v1: no grid, and no complaint about a file
+    that never existed. The distinction is the reason `manifest` is `None` rather than a path."""
+    root = _fake_export(tmp_path / "export-v1", names=list(generations.V1.classes))
+    runs = tmp_path / "runs"
+    _finished_run(runs, generations.V1.run_name)
+
+    metrics = _FakeMetrics(
+        _NAMES,
+        _FakeBox(index=[0], recall=[0.91], map50=0.9, map_=0.63, mp=0.9, mr=0.88),
+        counts=[20, 20, 20, 20],
+    )
+
+    class _Model:
+        def __init__(self, weights):
+            self.weights = weights
+
+        def val(self, **kwargs):
+            return metrics
+
+    code = train_model.main(
+        [
+            "--generation",
+            "v1",
+            "--dataset-dir",
+            str(root),
+            "--run-project",
+            str(runs),
+            "--models-dir",
+            str(tmp_path / "models"),
+            "--val",
+        ],
+        yolo=_Model,
+    )
+    out = capsys.readouterr().out
+
+    assert code == 0
+    assert "has no distance axis" in out
+    assert "no distances for the" not in out
+    assert "split by distance" not in out
+    # The per-class readout itself is the same one v2 gets, floor and instance counts included.
+    assert "[.ok.] bear-brand 0.910 >= 0.85 (n=20)" in out
+
+
+def test_cli_train_creates_the_run_project_and_passes_the_budget_to_the_run(tmp_path, capsys):
+    """The `--yes` path, which is the one this project actually runs and the one no other test
+    reaches. Two things in it are load-bearing: the run project may not exist yet - the free-space
+    check raises FileNotFoundError on a missing directory, which is exactly how the first v1
+    training run died a second before it started - and the batch/worker/device that reach
+    ultralytics have to be the ones the budget derived, not the constants.
+    """
+    root = _fake_export(tmp_path / "export-v1", names=list(generations.V1.classes))
+    runs = tmp_path / "runs"  # deliberately absent
+    pulled: list[str] = []
+    trained: list[dict] = []
+
+    class _Model:
+        def train(self, **kwargs):
+            trained.append(kwargs)
+            # A checkpoint, because the tool reads one back to report on the run; a fake that
+            # left it out would test only the failure path.
+            weights = Path(kwargs["project"]) / kwargs["name"] / "weights"
+            weights.mkdir(parents=True, exist_ok=True)
+            (weights / "best.pt").write_bytes(b"weights")
+
+    def _yolo(name):
+        pulled.append(name)
+        return _Model()
+
+    code = train_model.main(
+        [
+            "--generation",
+            "v1",
+            "--dataset-dir",
+            str(root),
+            "--run-project",
+            str(runs),
+            "--models-dir",
+            str(tmp_path / "models"),
+            "--yes",
+        ],
+        yolo=_yolo,
+    )
+    out = capsys.readouterr().out
+
+    assert code == 0
+    assert runs.is_dir()
+    assert pulled == [train_model.BASE_MODEL]
+    (kwargs,) = trained
+    assert kwargs["name"] == generations.V1.run_name
+    assert kwargs["epochs"] == train_model.EPOCHS
+    assert kwargs["imgsz"] == train_model.IMGSZ
+    # The machine's share, not the constants: a batch that OOMs on a shared card takes the other
+    # applications on it down with the run.
+    assert kwargs["batch"] <= train_model.BATCH
+    assert kwargs["workers"] == train_model.derive_workers(resources.CPU_THREADS)
+    assert kwargs["device"] in ("0", "cpu")
+    assert "resource budget" in out and "GB free at" in out
+    # --yes alone installs nothing: the drop-in is its own step.
+    assert not (tmp_path / "models").exists()
+
+
+def test_cli_v1_installs_under_v1s_own_name_with_its_own_class_list(tmp_path, capsys):
+    """The drop-in is what makes a trained checkpoint selectable, and for v1 it has to be v1's
+    name with v1's seven classes recorded: those weights are correct and still unable to predict
+    Palmolive, and the record is where the app can see that before running them.
+    """
+    root = _fake_export(tmp_path / "export-v1", names=list(generations.V1.classes))
+    models = tmp_path / "models"
+    _finished_run(tmp_path / "runs", generations.V1.run_name)
+
+    code = train_model.main(
+        [
+            "--generation",
+            "v1",
+            "--dataset-dir",
+            str(root),
+            "--run-project",
+            str(tmp_path / "runs"),
+            "--models-dir",
+            str(models),
+            "--version",
+            "1",
+            "--install",
+        ]
+    )
+    out = capsys.readouterr().out
+
+    assert code == 0
+    assert (models / "scanncart-grocery-v1.pt").read_bytes() == b"weights"
+    # Nothing lands under the other generation's name: the filename is the picker's key, so a v1
+    # run installing as v2 would silently replace the model the app is built towards.
+    assert not (models / generations.V2.weight_name).exists()
+
+    record = json.loads((models / "scanncart-grocery-v1.json").read_text("utf-8"))
+    assert record["generation"] == "v1"
+    assert record["resize_mode"] == "stretch"
+    assert record["source"] == "scanncart-grocery version 1"
+    assert record["class_names"] == list(generations.V1.classes)
+    assert "Palmolive Naturals Bar Soap 85g" not in record["class_names"]
+    assert "scanncart-grocery-v1" in out
+
+
+# --- audit_recall: the numbers the crowding finding is stated in ----------------------------
+#
+# Everything the tool prints comes out of `RecallReport.add` / `measure`, which take records
+# rather than a model, so the whole accounting layer is tested here against hand-built frames.
+# The tool's only untested part is the inference loop that fills the records.
+
+
+def _instance(cls: int, box: tuple[float, float, float, float]) -> audit_recall.Instance:
+    return audit_recall.Instance(cls, box)
+
+
+def _pred(cls: int, box: tuple[float, float, float, float], conf: float = 0.9):
+    return audit_recall.Prediction(cls, box, conf)
+
+
+BOXY = (0.1, 0.1, 0.3, 0.3)  # arbitrary but non-degenerate: areas and IoUs elsewhere use it
+
+
+def test_parse_labels_reads_a_polygon_as_its_bounding_box():
+    """The bug this tool exists downstream of.
+
+    v1's export is mostly polygons - `cls x1 y1 x2 y2 ...` - so a reader that assumes
+    `cls cx cy w h` multiplies two polygon *coordinates* together and calls the result an
+    area. That misreading is what produced a report of 484 zero-area labels in a dataset that
+    is fine, so the conversion gets pinned here rather than trusted to whoever reads the file
+    next.
+    """
+    # A triangle-and-a-half wide: x from 0.1 to 0.5, y from 0.2 to 0.6.
+    polygon = "0 0.1 0.2 0.5 0.2 0.5 0.6 0.1 0.6"
+    (found,) = audit_recall.parse_labels(polygon)
+    assert found == _instance(0, (0.1, 0.2, 0.5, 0.6))
+    # The claim that matters: the box is derived, not read, so a `w`/`h` reading is impossible.
+    assert audit_recall.area(found.box) == pytest.approx(0.4 * 0.4)
+
+
+def test_parse_labels_reads_a_plain_box_too():
+    """Both forms train correctly, so both must measure correctly - a mixed export is normal."""
+    (found,) = audit_recall.parse_labels("0 0.30 0.40 0.40 0.40")
+    assert found == _instance(0, (0.3, 0.4, 0.4, 0.4))
+
+
+def test_parse_labels_skips_a_malformed_line_rather_than_inventing_an_instance():
+    """A line that is not five fields is not an object. Counting it would inflate the
+    denominator, and a skipped line at least shows up as a frame whose count is one short."""
+    text = "0 0.1 0.2 0.3 0.4\n\n0 1 2\nnot-a-number 0.1 0.2 0.3 0.4\n1 0.5 0.5 0.6 0.6\n"
+    found = audit_recall.parse_labels(text)
+    assert [i.cls for i in found] == [0, 1]
+
+
+def test_match_instances_is_class_aware():
+    """A confident box of the wrong class is not a hit.
+
+    Two tins that look alike are the realistic version of this: scoring a cross-class box as
+    a hit would report the confusion as a success and hide exactly the failure that matters
+    for a grocery basket.
+    """
+    truth = [_instance(0, BOXY)]
+    match = audit_recall.match_instances(truth, [_pred(1, BOXY)], 0.5)
+    assert match.matched_truth == ()
+    assert match.missed_truth == (0,)
+
+
+def test_match_instances_is_one_to_one():
+    """Duplicate boxes on one object are one hit, not two.
+
+    Without the used-sets, a model that emits the same box twice would score higher than one
+    that emits it once - recall going *up* as the predictions get worse.
+    """
+    truth = [_instance(0, BOXY)]
+    preds = [_pred(0, BOXY, 0.9), _pred(0, (0.11, 0.11, 0.31, 0.31), 0.8)]
+    match = audit_recall.match_instances(truth, preds, 0.5)
+    assert match.matched_truth == (0,)
+    assert len(match.matched_pred) == 1
+
+
+def test_match_instances_gives_a_contested_prediction_to_the_better_label():
+    """Best pair first, which is what makes the result independent of label order."""
+    left = (0.1, 0.1, 0.3, 0.3)
+    right = (0.12, 0.1, 0.32, 0.3)  # overlaps `left` heavily
+    pred = (0.119, 0.1, 0.319, 0.3)  # nearer `right` than `left`
+    for truth in ([_instance(0, left), _instance(0, right)],
+                  [_instance(0, right), _instance(0, left)]):
+        match = audit_recall.match_instances(truth, [_pred(0, pred)], 0.5)
+        better = 0 if truth[0].box == right else 1
+        assert match.matched_truth == (better,), "the closer label should win either order"
+
+
+def _record(n_labels: int, n_hits: int, conf: float = 0.9) -> audit_recall.FrameRecord:
+    """A frame with `n_labels` boxes in a row, of which the first `n_hits` are predicted."""
+    boxes = [(0.1 + 0.2 * i, 0.1, 0.25 + 0.2 * i, 0.25) for i in range(n_labels)]
+    truth = tuple(_instance(0, b) for b in boxes)
+    preds = tuple(_pred(0, b, conf) for b in boxes[:n_hits])
+    return audit_recall.FrameRecord(truth=truth, preds=preds)
+
+
+def test_the_report_splits_recall_by_frame_crowding():
+    """The finding, as an assertion: same hit *rate* per frame, different per-instance rate."""
+    records = [_record(1, 1), _record(1, 0), _record(2, 1), _record(3, 1)]
+    report = audit_recall.measure(records, ("tin",))
+
+    single, multi = report.buckets[audit_recall.SINGLE], report.buckets[audit_recall.MULTI]
+    assert (single.found, single.labelled) == (1, 2)
+    assert (multi.found, multi.labelled) == (2, 5)
+    # Three of the four frames found *something*, but only two found everything - which is
+    # the gap a frame-level count cannot see and this whole tool is about.
+    assert report.buckets[audit_recall.MULTI].frames_clean == 0
+    assert report.recall == pytest.approx(3 / 7)
+
+
+def test_a_frame_with_only_one_of_two_instances_found_is_not_a_clean_frame():
+    """The single reading that separates "missed the object" from "missed the second one"."""
+    report = audit_recall.measure([_record(2, 1)], ("tin",))
+    multi = report.buckets[audit_recall.MULTI]
+    assert multi.frames == 1 and multi.frames_clean == 0
+    assert multi.recall == 0.5
+
+
+def test_a_missed_instance_half_the_area_of_a_hit_shows_up_in_the_areas():
+    """Why the areas are reported: size is how "small object" is told from "second object"."""
+    big = (0.1, 0.1, 0.4, 0.4)  # area 0.09
+    small = (0.5, 0.5, 0.6, 0.6)  # area 0.01
+    record = audit_recall.FrameRecord(
+        truth=(_instance(0, big), _instance(0, small)),
+        preds=(_pred(0, big),),
+    )
+    tally = audit_recall.measure([record], ("tin",)).per_class[0]
+    assert tally.median_hit_area == pytest.approx(0.09)
+    assert tally.median_miss_area == pytest.approx(0.01)
+
+
+def test_a_higher_threshold_never_finds_more_than_a_lower_one():
+    """This is what makes the conf sweep cost no extra pass.
+
+    `collect` runs once at the lowest threshold asked about and `measure` re-filters, which is
+    sound only if the found set shrinks as the threshold rises. If it can grow, then a run at
+    a higher conf would not have produced the boxes the report is counting.
+    """
+    records = [_record(2, 2, conf=0.9), _record(2, 1, conf=0.9), _record(1, 1, conf=0.2)]
+    thresholds = [0.1, 0.3, 0.5, 0.9]
+    found = [audit_recall.measure(records, ("tin",), c).found for c in thresholds]
+    assert found == sorted(found, reverse=True)
+    # Five instances labelled and exactly one prediction sits near the slope: the conf-0.2 hit
+    # is counted at 0.1 and gone from 0.3 up, while the conf-0.9 hits survive at 0.9 (the
+    # filter is `>=`). So the sequence is 4 then 3, flat after - one step, not a slide.
+    assert found == [4, 3, 3, 3]
+
+
+def test_off_roster_predictions_are_counted_and_never_matched():
+    """A weight with more head outputs than the dataset declares is caught, not ignored.
+
+    Left in the matched set, an off-roster name would be filtered against an index that does
+    not exist; dropped silently, a 24-class weight would audit as a clean 7-class one.
+    """
+    record = audit_recall.FrameRecord(
+        truth=(_instance(0, BOXY),), preds=(_pred(0, BOXY),), off_roster=("tin close",)
+    )
+    report = audit_recall.measure([record], ("tin",))
+    assert report.off_roster["tin close"] == 1
+    assert report.found == 1
+
+
+def test_the_floor_shortlist_is_worst_first_and_only_names_real_shortfalls():
+    classes = ("good", "bad", "worse", "unlabelled")
+    records = []
+    for cls, hits, n in ((0, 9, 10), (1, 8, 10), (2, 5, 10)):
+        boxes = [(0.1 + 0.2 * i, 0.1, 0.25 + 0.2 * i, 0.25) for i in range(n)]
+        records.append(
+            audit_recall.FrameRecord(
+                truth=tuple(_instance(cls, b) for b in boxes),
+                preds=tuple(_pred(cls, b) for b in boxes[:hits]),
+            )
+        )
+    report = audit_recall.measure(records, classes)
+    assert report.below_floor == ["worse", "bad"]
+
+
+def test_the_verdict_names_the_fix_the_gap_points_at():
+    """The sentence is the deliverable - a recall pair alone does not say what to do.
+
+    The buckets are built past `MIN_BUCKET_INSTANCES` on purpose: a verdict off a handful of
+    instances is the thing the next test forbids, so a test of the three readings has to be
+    big enough to earn one.
+    """
+    # single 20/20, crowded 15/35 - a wide gap.
+    crowded = audit_recall.measure(
+        [_record(1, 1)] * 20 + [_record(2, 1)] * 10 + [_record(3, 1)] * 5, ("tin",)
+    )
+    assert "multi-item scenes" in audit_recall.crowding_verdict(crowded)
+
+    # single 16/20, crowded 16/20 - the same rate either way.
+    spread = audit_recall.measure(
+        [_record(1, 1)] * 16 + [_record(1, 0)] * 4
+        + [_record(2, 2)] * 6 + [_record(2, 1)] * 4,
+        ("tin",),
+    )
+    assert "more shots" in audit_recall.crowding_verdict(spread)
+
+    # single 10/20, crowded 20/20 - the reverse direction, which is not "no gap".
+    backwards = audit_recall.measure(
+        [_record(1, 1)] * 10 + [_record(1, 0)] * 10 + [_record(2, 2)] * 10, ("tin",)
+    )
+    verdict = audit_recall.crowding_verdict(backwards)
+    assert "scores *higher*" in verdict and "solo objects" in verdict
+
+
+def test_the_verdict_refuses_to_compare_a_bucket_that_is_too_thin():
+    """The refusal is the load-bearing half.
+
+    `--limit 20` is how a smoke test is run, and it leaves the single-object bucket holding a
+    couple of instances - 0% or 100%, either way noise. Printed as a verdict that reads as a
+    finding about the model, so the tool says it cannot tell yet instead.
+    """
+    thin = audit_recall.measure([_record(1, 1), _record(1, 0), _record(2, 1)], ("tin",))
+    verdict = audit_recall.crowding_verdict(thin)
+    assert "Not enough to compare yet" in verdict
+    assert "without --limit" in verdict
+    # And it passes no judgement in either direction while it cannot tell.
+    assert "multi-item scenes" not in verdict and "solo objects" not in verdict
+
+
+def test_the_verdict_compares_once_the_buckets_are_big_enough():
+    """The other side of the guard, and where the boundary sits: exactly the minimum is enough.
+
+    Both buckets land on exactly 20 and 24 instances, so this pins the comparison as inclusive
+    (`< minimum` refuses, `== minimum` reads) rather than leaving the boundary to chance.
+    """
+    big = audit_recall.measure([_record(1, 1)] * 20 + [_record(2, 1)] * 12, ("tin",))
+    assert audit_recall.MIN_BUCKET_INSTANCES == 20
+    assert big.buckets[audit_recall.SINGLE].labelled == 20
+    verdict = audit_recall.crowding_verdict(big)
+    assert "Not enough to compare yet" not in verdict
+    assert "multi-item scenes" in verdict
+
+
+def test_the_report_names_the_device_the_way_the_app_does():
+    """`resolve_device` answers ultralytics' index (`0`), which beside `conf>=0.5` in the header
+    reads as a second threshold. The report says `cuda:0`, which is what the app logs."""
+    assert audit_recall.device_label("0") == "cuda:0"
+    assert audit_recall.device_label("cpu") == "cpu"
+    assert audit_recall.device_label("cuda") == "cuda"
+
+
+def test_audit_recall_does_not_import_ultralytics_at_module_level():
+    """Same shape as the trainer: importable, and its accounting testable, with no torch."""
+    source = Path(audit_recall.__file__).read_text(encoding="utf-8")
+    assert not re.search(r"^(from|import)\s+ultralytics", source, re.MULTILINE)
+    assert re.search(r"^\s+from ultralytics import", source, re.MULTILINE)
+
+
+def test_audit_recall_measures_at_the_app_s_operating_point_by_default():
+    """The one number that has to agree with the running app, since the tool covers all the
+    others with flags."""
+    from app.settings import Settings
+
+    defaults = Settings()
+    assert audit_recall.DEFAULT_CONF == defaults.conf_threshold
+    assert audit_recall.DEFAULT_IMGSZ == defaults.imgsz
+    # And the floor both the tool and the runbook quote, rather than a second one.
+    assert audit_recall.RECALL_FLOOR == 0.85
+
+
+def test_the_training_doc_points_at_the_recall_audit():
+    """The tool is only discoverable if the doc that owns the acceptance number names it.
+
+    `--val` is what the runbook quotes, so `audit_recall.py` is the second command a reader of
+    that section has to be told about - otherwise a class below the floor gets acted on with
+    half the diagnosis and the crowding gap is never looked for.
+    """
+    text = DOC.read_text(encoding="utf-8")
+    assert "audit_recall.py" in text
+    # Named where the reading lives, in the same section as the floor it is read against.
+    floor_at = text.index("### What \"good\" looks like")
+    section = text[floor_at : text.index("## 7. Integrating", floor_at)]
+    assert "audit_recall.py" in section
+    # And both sweeps, since each is a separate thing to run rather than a default.
+    assert "--conf-sweep" in section and "--iou-sweep" in section
+
+
+def test_frame_paths_ignores_an_image_with_no_label(tmp_path):
+    """An unlabelled image has no ground truth, so it cannot contribute a recall number."""
+    gen = dataclasses.replace(generations.V1, export_dir=tmp_path)
+    images, labels = tmp_path / "test" / "images", tmp_path / "test" / "labels"
+    images.mkdir(parents=True)
+    labels.mkdir(parents=True)
+    for stem in ("a", "b"):
+        (images / f"{stem}.jpg").write_bytes(b"")
+    (labels / "a.txt").write_text("0 0.1 0.1 0.2 0.2\n", encoding="utf-8")
+
+    assert [p.name for p in audit_recall.frame_paths(gen, "test")] == ["a.jpg"]
+
+
+def test_frame_paths_says_so_when_the_split_is_not_there(tmp_path):
+    """A missing export is the common case (v2 is not downloaded yet) and deserves a sentence
+    rather than an empty report that reads as a model that detected nothing."""
+    gen = dataclasses.replace(generations.V1, export_dir=tmp_path)
+    with pytest.raises(SystemExit) as exc:
+        audit_recall.frame_paths(gen, "test")
+    assert "no such split" in str(exc.value)

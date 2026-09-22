@@ -17,7 +17,7 @@ A `.pt` (or `.onnx`) file **directly** in this directory is a selectable model:
 
 ## The record beside the weights
 
-`train_v2.py --install` writes `<name>.json` next to the `.pt`. It carries the one thing
+`train_model.py --install` writes `<name>.json` next to the `.pt`. It carries the one thing
 nothing else knows: the **`resize_mode` these weights have to be run with**.
 
 ```json
@@ -121,9 +121,15 @@ manifest left behind would lose the requirement at exactly the moment it is need
 
 ```
 scanncart-grocery.onnx       the unsuffixed v1 baseline — never export over it
-scanncart-grocery-v2.pt      v2, trained locally    <- what train_v2.py installs
+scanncart-grocery-v1.pt      v1's seven classes, trained locally (`--generation v1`)
+scanncart-grocery-v2.pt      v2, trained locally    <- what train_model.py installs
 scanncart-grocery-v3.pt      the next generation
 ```
+
+A `-v1.pt` is *expected* to be flagged in the Admin Panel's *Weights on disk* list: v1 declares
+seven classes and the app's roster has eight, so the listing says it can never predict Palmolive.
+Nothing it does predict is wrong, which is why the sentence is the only symptom — that is the
+record doing its job, not a damaged weight.
 
 The `-vN` suffix is the **model generation**, not the Roboflow version number. They
 deliberately disagree: v2's weights come from `snc-grocery` **version 2**, while the model
@@ -131,7 +137,7 @@ filename says `v2` because that is what the picker, the docs and the training ru
 Keeping the baseline alongside the new generation is the point — it is what lets you A/B
 them in Live View and roll back from the dropdown.
 
-`train_v2.py --install` refuses to overwrite an existing weight. `--force` replaces one
+`train_model.py --install` refuses to overwrite an existing weight. `--force` replaces one
 deliberately; a different generation should get a different filename instead.
 
 ## The setting that goes with a locally trained model
@@ -155,7 +161,7 @@ between silencing a report and supplying the fact.
 stopped before saving them.
 
 No weights are tracked in this repository — the v2 generation is produced by
-`../tools/train_v2.py` from the exported Roboflow version. See `docs/MODEL_TRAINING.md`
+`../tools/train_model.py` from the exported Roboflow version. See `docs/MODEL_TRAINING.md`
 §6–§7 for the run and the integration steps.
 
 ## What does **not** belong here

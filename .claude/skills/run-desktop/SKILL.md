@@ -102,7 +102,7 @@ node .claude/skills/run-desktop/driver.mjs probe      # Test Connection geometry
   no instances of a class or never scored it at all. The scratch record carries two
   distances so both readings exist in one render.
   Nothing is installed on a fresh machine, so it writes a scratch weight and a
-  record with `train_v2.weight_record` + `train_v2.validation_record` (the real
+  record with `train_model.weight_record` + `train_model.validation_record` (the real
   writers — a hand-built JSON would agree with the reader by construction), then
   removes both in a `finally` and restores the settings. It finishes in the Live view,
   which it visits twice. The first visit checks the **stats-strip readout**: that the
@@ -152,7 +152,7 @@ node .claude/skills/run-desktop/driver.mjs probe      # Test Connection geometry
   then written back over the app's for the clearing check. Use
   it after touching `AdminPanel.tsx`, `LiveView.tsx`, `useSidecarSettings.ts`,
   `useActiveWeights.ts`, `lib/resizeMode.ts`, `sidecar/app/models.py`,
-  `sidecar/app/settings_store.py`, or the record `train_v2.py --install` writes.
+  `sidecar/app/settings_store.py`, or the record `train_model.py --install` writes.
 - `classlist` is the roster guard end to end, against a weight that really is non-roster — the
   one thing neither unit suite can do, since they can render the banner from a fake status or
   serve `/api/models` from a temp directory, but not put a real checkpoint through ultralytics in
@@ -162,7 +162,7 @@ node .claude/skills/run-desktop/driver.mjs probe      # Test Connection geometry
   class list would give the app class ids that do not resolve in the names dict it indexes by
   (`normalize_detections`), so the run would die on a `KeyError` instead of reporting a class
   list. The weights are untrained and that is fine — nothing here is about boxes. The record is
-  written by the real `train_v2.weight_record(class_names=…)`.
+  written by the real `train_model.weight_record(class_names=…)`.
   It then checks both halves, in the order the app learns them: the **listing** (the sidecar's
   `/api/models` flags it, and the Admin Panel's *Weights on disk* row shows `24 classes` plus the
   sidecar's own distance sentence) and the **running capture** (Start → the Live view's

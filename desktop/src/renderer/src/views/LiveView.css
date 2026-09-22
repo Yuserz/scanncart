@@ -218,7 +218,7 @@
 /* The weights readout's two states. Amber is a standing condition rather than a failure - the same
    meaning it carries in the banner above - and dim italic is "not measured", which is a gap in
    what is known rather than a bad score. Deliberately different: one sends you to a setting or the
-   dataset, the other to `train_v2.py --val`. */
+   dataset, the other to `train_model.py --val`. */
 .stat-tile.warn b {
   color: #ffb020;
 }

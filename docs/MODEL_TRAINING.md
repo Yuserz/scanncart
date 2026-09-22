@@ -190,32 +190,84 @@ trains in roughly the same wall-clock time on a decent GPU and is noticeably bet
 occluded items. The sidecar's `mid_range` preset (`sidecar/app/presets.py`) already defaults to it.
 
 The run is scripted, so the hyperparameters live in one place and the drop-in step cannot be
-forgotten (`train_v2.py` carries `EPOCHS`/`IMGSZ`/`BATCH`/`PATIENCE` and the test suite pins them
+forgotten (`train_model.py` carries `EPOCHS`/`IMGSZ`/`BATCH`/`PATIENCE` and the test suite pins them
 to the table below):
 
 ```bash
 # fetch the version's YOLOv11 PyTorch export (waits for it to build, then unpacks it)
-sidecar/.venv/Scripts/python.exe sidecar/tools/train_v2.py --download --version 2
+sidecar/.venv/Scripts/python.exe sidecar/tools/train_model.py --download --version 2
 
 # check the export against the roster, then print the exact run - changes nothing
-sidecar/.venv/Scripts/python.exe sidecar/tools/train_v2.py
+sidecar/.venv/Scripts/python.exe sidecar/tools/train_model.py
 
 # train, then report the final-epoch metrics against 6's targets
-sidecar/.venv/Scripts/python.exe sidecar/tools/train_v2.py --yes
+sidecar/.venv/Scripts/python.exe sidecar/tools/train_model.py --yes
 
 # the acceptance number: per-class recall on the test split against the 0.85 floor.
 # Also writes those numbers down, so the next command can carry them into the weights
-sidecar/.venv/Scripts/python.exe sidecar/tools/train_v2.py --val
+sidecar/.venv/Scripts/python.exe sidecar/tools/train_model.py --val
 
 # install the best checkpoint as sidecar/models/scanncart-grocery-v2.pt, recording the
 # resize_mode it needs *and* the score above (--version names the dataset version it came from)
-sidecar/.venv/Scripts/python.exe sidecar/tools/train_v2.py --install --version 2
+sidecar/.venv/Scripts/python.exe sidecar/tools/train_model.py --install --version 2
 ```
 
-(The last four read the export downloaded by the first; `--export-dir <folder>` points them at
-a copy you unzipped by hand instead. `--val` and a bare `--install` find the run themselves —
-an explicit `--run-dir <folder>` still wins, and is what you want when the newest run is not the
-one you mean.)
+(The last four read the export downloaded by the first; `--dataset-dir <folder>` — the same flag
+as the older `--export-dir` — points them at a copy you unzipped or ingested by hand instead.
+`--val` and a bare `--install` find the run themselves — an explicit `--run-dir <folder>` still
+wins, and is what you want when the newest run is not the one you mean.)
+
+#### v1's local build — the same script, a different generation
+
+v1's weights so far are the Roboflow-hosted `.onnx`. This builds a `.pt` on this machine from the
+same 1,815 annotated images, so the app can run a natively-loaded model now instead of waiting for
+v2's set to be finished. It is the same four commands with `--generation v1`:
+
+```bash
+# check the ingested export's seven classes and print the run - changes nothing
+sidecar/.venv/Scripts/python.exe sidecar/tools/train_model.py --generation v1
+
+# train (writes to the dataset workspace, never into the repo)
+sidecar/.venv/Scripts/python.exe sidecar/tools/train_model.py --generation v1 --yes
+
+# per-class recall on the test split, against the same 0.85 floor v2 is judged by
+sidecar/.venv/Scripts/python.exe sidecar/tools/train_model.py --generation v1 --val
+
+# the drop-in: sidecar/models/scanncart-grocery-v1.pt plus its record
+sidecar/.venv/Scripts/python.exe sidecar/tools/train_model.py --generation v1 --install
+```
+
+Three things differ from v2, and none of them is a flag you have to remember — `generations.py`
+holds them per generation (§8.5):
+
+- **Seven classes, not eight.** v1's export is judged against *v1's* class list, so expect the check
+to print `note: 1 class(es) another generation declares are not in this one … Palmolive Naturals
+Bar Soap 85g`. That is the dataset described correctly, not a problem to fix here — v1 has no
+Palmolive (§8.1's table), and the app will say the same thing about the installed weight.
+- **No per-distance grid.** Distance is a Roboflow tag, and v1's images predate the tagging, so
+`--val` reports the per-class table and says the breakdown does not apply. It is *not* a manifest
+that went missing, and the tool says which of the two it means.
+- **Its resize requirement is frozen** at `stretch`, measured from the export's own frames (all
+1,815 are 640×640 with no constant border). v2's is derived from the preprocessing that generated
+its version; v1's version already exists and will never be regenerated, so re-deriving it from
+v2's constant would let a later change to v2 silently rewrite it.
+
+Any generation can be pointed at another folder or another class list with `--dataset-dir` and
+`--classes` — the generation is only the set of defaults those override.
+
+**What the run is allowed to take.** This box is shared with the app, a browser and the sidecar, so
+the run prints its budget before it starts and works inside it: CPU and RAM under
+`--max-use-percent` (20% by default), the dataloader process count derived from that instead of
+ultralytics' default of eight, `torch`'s thread count clamped before anything allocates, and the
+batch size derived from the VRAM share — `--batch` is a *ceiling*, `--max-vram-percent` is the
+lever. Measured on this machine with the defaults: `batch 8`, `workers 2`, `yolo11s` at 640 over
+1,265 training images, ≈42 s/epoch, GPU at ~85%.
+
+> The VRAM number needs one honest caveat: the share is applied through the **batch size**, not the
+> allocator, so 35% is not a hard ceiling. Measured mid-run, training held ≈5.9 GB of the 8.6 GB
+> card — the optimizer state and activations are real, and `resources.py`'s ~0.6 GB figure is a
+> forward pass. `--batch 4` is how to take it lower; `--max-use-percent 60` when the box is
+> otherwise idle; `--workers 1` to give the CPU back.
 
 `--val` and `--install` are separate commands, so the measurement reaches the weights through a
 file in the run directory (`val_metrics.json`). Each measurement records a **hash of the
@@ -265,8 +317,8 @@ yolo detect train \
 | **mAP50-95** | ≥ 0.65 |
 | **Per-class recall** | ≥ 0.85 for *every* class — check the per-class table, not just the average |
 
-`train_v2.py --yes` reports the first two, and only those, because they are the only numbers a
-training log contains. **`train_v2.py --val` reports the third**: it runs a validation pass and
+`train_model.py --yes` reports the first two, and only those, because they are the only numbers a
+training log contains. **`train_model.py --val` reports the third**: it runs a validation pass and
 prints per-class recall against the 0.85 floor, with the instance count beside each number
 (`milo 0.950 >= 0.85 (n=12)`), so the verdict names the class rather than the average — a model
 can clear both aggregates while failing one distance's worth of cells, which is the thing this
@@ -326,6 +378,61 @@ recall under another class's name — no error, plausible number, and with a per
 is the normal case rather than the edge one.
 | Confusion matrix | Low off-diagonal mass between similar SKUs; low "background" column (false positives) |
 
+#### When the miss is the second object
+
+`--val` answers *which class is short*. It cannot answer *which object was missed*, and on a
+crowded frame those are different defects pointing at opposite fixes: a class at 0.74 reads as
+"shoot more of this item", while the same number read per instance can say "this item is never
+missed when it is alone, and only the second one in a frame is lost" — which is a capture-plan
+finding, not a coverage one.
+
+`audit_recall.py` measures that. It matches per instance the way the validator does — class-aware,
+best IoU first, one prediction per label — but at the app's operating `conf_threshold` instead of
+the best-F1 threshold, then splits the result by how many objects each frame's labels carry:
+
+```
+sidecar/.venv/Scripts/python.exe sidecar/tools/audit_recall.py --generation v1
+
+class                                             inst  found  recall   med hit  med miss
+555 sardines 155grams                               97     72   0.742    0.4164    0.0756  <-- below 0.85
+century_tuna_flakes_in_oil_155_grams                50     50   1.000    0.6482    0.0000
+TOTAL                                              401    337   0.840
+
+crowding: instances found / labelled, and frames that came back complete
+single  1 object      235/265    88.7%   frames 235/265   88.7%
+multi   2+ objects    102/136    75.0%   frames 35/62    56.5%
+```
+
+Five readings, and the last two are the ones that decide what to do:
+
+- **The crowding pair is the headline.** A gap between the buckets means instances are found one
+  at a time and lost when several share a frame; no gap means the misses are spread across frames
+  and the fix is more shots of the classes below. The tool prints that as a sentence rather than
+  leaving the reader to infer it, and it **refuses to compare** when either bucket holds fewer than
+  20 instances — `--limit 20` would otherwise print a confident verdict off two objects.
+- **The area columns** separate "cannot see the object" from "cannot see the second one". A class
+  whose missed instances are a fraction of the area of the ones it found has a small-object
+  problem; equal areas on both sides means size is not what separates them.
+- **Distance is not the axis here; crowding is.** Distance is a Roboflow *tag* and needs a manifest
+  (`--val`'s per-distance grid). Crowding comes free from any export's labels, so this works on v1,
+  which predates the tagging entirely.
+- **`--conf-sweep` turns a miss into a slider.** A miss ranked below `conf` is not a model gap, and
+  `conf_threshold` is hot-reloadable — on v1 the crowded bucket reads 75.0% at the shipped 0.5 and
+  88.2% at 0.1, while the single bucket sits at 88.7% throughout. That is the whole gap turning out
+  to be a threshold rather than a capability, which `--val` cannot show at any setting.
+- **`--iou-sweep` tells a suppressed box from an unseen one.** Two tins side by side overlap, and
+  ultralytics' NMS default (0.7) merges boxes overlapping more than that — so a *detected* second
+  tin can be discarded inside the model. A large recovery at 0.9 means that share of the crowded
+  recall is an inference setting; on v1 there is none (334/337/337), so the misses are real.
+
+It reads the generation's dataset and class list from `generations.py`, so it cannot be pointed at
+one generation's images while judging the other's names, and it reports any predicted class that is
+not on that list — the same 24-output mistake the runtime catches, caught at the measuring step.
+
+---
+
+#### What to do about a class below the floor
+
 If one class lags badly, that's a **data problem, not a training problem** — go add 100 more varied
 images of that item rather than tweaking hyperparameters.
 
@@ -344,7 +451,7 @@ Checklist to wire in `best.pt`:
 
 1. Install the trained weights into `sidecar/models/` with the generation's name, e.g.
    `scanncart-grocery-v2.pt` — see §8.2 for the naming rule, and `sidecar/models/README.md` for
-   the short version of it. `train_v2.py --install` does the copy and **refuses to overwrite an
+   the short version of it. `train_model.py --install` does the copy and **refuses to overwrite an
    existing weight** (the picker is keyed by filename, so an overwrite silently replaces the
    model a running app is configured with). Nothing else is needed on the sidecar side:
    `is_custom_model()` accepts any `.pt`/`.onnx` directly under `models/`.
@@ -640,8 +747,8 @@ name the app's own roster does not contain — with no error anywhere, because n
 | `clean_v2.py sanity` | the **live** project's class list | the check §9 already gates a shoot on, so it is the earliest point — before any frames are shot, and blocking (`sanity` exits 1) rather than a warning |
 | `label_classes.py` (any run, `--apply` or not) | the **live** project's Classes tab | the same project, in the run that also writes the names and the tags |
 | `generate_version.py --yes` | the **live** project's class list, at the moment of generation | the last point where the fix is free: it refuses before the `POST`, so a bad list costs no version number. Fail-closed (exit 2), nothing generated |
-| `train_v2.check_export` | the class list a **generated version** was built with | before the GPU runs, and before the download is trusted — otherwise the mistake costs a training run on top of the version number |
-| `train_v2.py --install` → `models/<stem>.json` → the Admin Panel's *Weights on disk* listing | the class list **recorded beside the weights** | before the weight is even selected. Same judgement (`app/roster.py`), the earliest moment it can be made: the export is the only thing that ever knew the list, and it is gone by the next session |
+| `train_model.check_export` | the class list a **generated version** was built with | before the GPU runs, and before the download is trusted — otherwise the mistake costs a training run on top of the version number |
+| `train_model.py --install` → `models/<stem>.json` → the Admin Panel's *Weights on disk* listing | the class list **recorded beside the weights** | before the weight is even selected. Same judgement (`app/roster.py`), the earliest moment it can be made: the export is the only thing that ever knew the list, and it is gone by the next session |
 | `app/roster.py` (Test connection in the Admin Panel, **and the Live view while capture runs**) | the class list a **weight already predicts** | the last line, and the only one that can catch a model that arrived from somewhere else entirely. It warns rather than blocks — a loaded model cannot be argued with — and it is the only check that can run at all here, since a `.pt` records no roster and the export is gone |
 
 The last two rows are also demonstrable on demand rather than on trust: `node
@@ -665,7 +772,7 @@ as a number. The chip renders nothing until the sidecar has read a model's vocab
 would be a claim about a head that has not spoken yet.
 
 **And one step earlier still: the record.** A `.pt` records no roster, so a weight that is never
-run and never probed has nothing to judge — which is why `train_v2.py --install` writes the
+run and never probed has nothing to judge — which is why `train_model.py --install` writes the
 export's `class_names` into `models/<stem>.json` beside the requirement. `app/models.read_record`
 reads it and `installed_models` judges it with the *same* `roster.class_list_problems`, so the
 Admin Panel's *Weights on disk* list carries the same sentences the probe and the Live view do,
@@ -708,7 +815,7 @@ Two different numbers are in play, and they deliberately disagree:
 | | Numbering | v1 | v2 |
 |---|---|---|---|
 | **Roboflow project version** | chronological, per project, created when you generate a dataset | `scanncart-grocery` v1 — 1,815 images (train 1,265 / valid 223 / test 327) | `snc-grocery` **v2** — v1 was burned emptily by accident, see the note below |
-| **Model generation** | the `-vN` suffix on the weights file, yours to choose | `sidecar/models/scanncart-grocery.onnx` (unsuffixed baseline) | `sidecar/models/scanncart-grocery-v2.onnx` (or `.pt`) |
+| **Model generation** | the `-vN` suffix on the weights file, yours to choose | `sidecar/models/scanncart-grocery.onnx` (unsuffixed baseline — the Roboflow export), or `scanncart-grocery-v1.pt` once §6's local v1 build has run | `sidecar/models/scanncart-grocery-v2.onnx` (or `scanncart-grocery-v2.pt` from a local run) |
 
 - Name weights `scanncart-grocery-v<N>` — `.pt` when trained locally, `.onnx` when exported from
   Roboflow. The suffix is the **model generation, not the Roboflow version**: v2's weights come
@@ -870,6 +977,28 @@ What is *not* an option is treating the warning as noise: public means the image
 names, and the split) are readable by anyone with the URL, and there is no "unpublish" button to
 press once they are up.
 
+### 8.5 One trainer, two generations — `sidecar/tools/generations.py`
+
+The trainer was v2's: the export directory, the 8-class roster and the `scanncart-grocery-v2`
+names were constants in it, so training v1 meant editing that file or copying it — and a copy is
+how two generations' "same" checks drift apart, which is the failure §8.1's guards exist to catch.
+`generations.py` now holds one **spec** per generation (dataset directory, class list, manifest,
+resize requirement, Roboflow project), and `train_model.py` reads it:
+
+| Field | v1 | v2 | Why it is per generation |
+|---|---|---|---|
+| `classes` | the 7 names `scanncart-grocery` declares | the 8 names of §8.1's roster | An export is judged against *its own* list. Judging v1 against v2's eight would refuse a set that is correct — and a guard that cries wolf is how the real mismatch gets waved through |
+| `manifest` | `None` | `cleaned-v2/manifest.json` | Distance is a Roboflow **tag**, and a YOLO export drops tags; v1 predates the tagging, so `None` means "this set has no distance axis", which is a different sentence from "the manifest went missing" |
+| `resize_mode` | `stretch`, frozen | `generate_version.REQUIRED_RESIZE_MODE` | v2's is derived from the preprocessing that generated its version; v1's version already exists, and binding it to v2's constant would let a change to v2 rewrite a requirement about an export that cannot change |
+| `export_dir` | the ingested export | `export-v2` (`--download` fills it) | The one path that genuinely differs |
+| `roboflow_project` | `scanncart-grocery` | `snc-grocery` | The download URL and the record's `source` both name it |
+
+The claim `--generation` makes is therefore narrow and checkable: it selects a *spec*, not a code
+path. `--dataset-dir` and `--classes` override the two inputs it describes, so a dataset that is
+neither of these two is still trainable without editing anything — and `check_export` prints which
+classes another generation declares that this one cannot predict, because a v1 weight is correct
+and still cannot predict Palmolive.
+
 ---
 
 ## 9. Quick Checklist
@@ -899,7 +1028,7 @@ this section is the summary of what has to be true when you are done.
 - [ ] Split planned with `plan_split.py` and applied (Plan B by wipe + `upload --split-plan`,
       or Plan A by 21 tag-query bulk actions), then per-class and per-distance coverage checked (§8.3)
 - [ ] Modest augmentation only; raw counts reported, not augmented
-- [ ] Trained from `yolo11s.pt`, mAP50 ≥ 0.90, and `train_v2.py --val` reports recall ≥ 0.85
+- [ ] Trained from `yolo11s.pt`, mAP50 ≥ 0.90, and `train_model.py --val` reports recall ≥ 0.85
       for *every* class **and at every distance** (no `[WARN]`, no `[SKIP]`, and nothing under
       "below the floor at a distance")
 - [ ] Version generated with `generate_version.py`, and `--verify` reports it *matches*

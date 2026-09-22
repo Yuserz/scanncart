@@ -1019,7 +1019,7 @@ describe('AdminPanel', () => {
       render(<AdminPanel port={8765} deps={deps} />)
 
       expect(await screen.findByTestId('model-validation-missing')).toHaveTextContent(
-        'train_v2.py --val'
+        'train_model.py --val'
       )
       expect(screen.queryByTestId('model-validation')).toBeNull()
     })

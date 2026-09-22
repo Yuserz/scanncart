@@ -128,7 +128,7 @@ def distance_tokens_in(name: str) -> list[str]:
     """The distance words a class name carries, if any. Pure, so it can be tested directly.
 
     Shared by the two places that can see a wrong class list: this file's check of the live
-    project, and `train_v2.check_export`, which reads the list a *version* was generated with.
+    project, and `train_model.check_export`, which reads the list a *version* was generated with.
     Both need to say the same thing about the same name.
     """
     tokens = re.split(r"[^a-z0-9]+", str(name).lower())
@@ -225,7 +225,7 @@ def main(argv: list[str] | None = None) -> int:
         # ---- 3a. is any class a distance in disguise? ----
         # Checked before the create/assess step because it changes what to *do*: a project with
         # `palmolive close` in it has to have that class deleted and its annotations moved, not
-        # another class added. Left to the extra-classes check in train_v2 this surfaces only
+        # another class added. Left to the extra-classes check in train_model this surfaces only
         # after a version has been generated - i.e. after the mistake is expensive.
         tainted = {name: distance_tokens_in(name) for name in sorted(have)}
         tainted = {name: words for name, words in tainted.items() if words}

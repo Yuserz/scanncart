@@ -8,7 +8,7 @@ pytest>=9.1
 httpx>=0.28
 psutil>=6.0
 
-# Read/written by sidecar/tools/train_v2.py for the export's data.yaml. ultralytics
+# Read/written by sidecar/tools/train_model.py for the export's data.yaml. ultralytics
 # already pulls it in, but declaring it here means the tools do not depend on a
 # transitive one that could move.
 pyyaml>=6

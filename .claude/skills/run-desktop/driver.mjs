@@ -488,7 +488,7 @@ if (mode === 'models') {
   //
   // Nothing is installed on this machine yet (the v2 weights do not exist), so the mode makes
   // a scratch weight and removes it in `finally`. The record is written by
-  // `train_v2.weight_record` rather than by hand here: the filename-and-shape pairing between
+  // `train_model.weight_record` rather than by hand here: the filename-and-shape pairing between
   // that tool and `app/models.py` is precisely what is at stake, and a driver that invented
   // its own JSON would agree with the reader by construction.
   const SIDECAR = path.join(REPO_ROOT, 'sidecar');
@@ -519,17 +519,17 @@ if (mode === 'models') {
         python,
         [
           '-c',
-          `import json, train_v2
+          `import json, train_model, generations
 rows = [
     ("bear-brand", 0.9, 10),
     ("century-tuna", 0.62, 30),
     ("lucky-me", None, 0),
     ("milo", 0.95, 12),
 ]
-block = train_v2.validation_record(
+block = train_model.validation_record(
     rows, "test",
     {"precision": 0.9, "recall": 0.82, "mAP50": 0.88, "mAP50-95": 0.61},
-    train_v2.RECALL_FLOOR,
+    train_model.RECALL_FLOOR,
 )
 # The per-distance breakdown, built by the same helpers the real runs use
 # (class_rows, and rows shaped like per_class_recall's). Two distances, because the
@@ -541,7 +541,7 @@ block["per_distance"] = [
         "distance": "close",
         "images": 34,
         "aggregates": {"mAP50": 0.93},
-        "per_class": train_v2.class_rows(
+        "per_class": train_model.class_rows(
             [("bear-brand", 0.97, 12), ("century-tuna", 0.88, 20), ("lucky-me", None, 0)]
         ),
     },
@@ -549,10 +549,10 @@ block["per_distance"] = [
         "distance": "far",
         "images": 28,
         "aggregates": {"mAP50": 0.51},
-        "per_class": train_v2.class_rows([("bear-brand", 0.55, 8)]),
+        "per_class": train_model.class_rows([("bear-brand", 0.55, 8)]),
     },
 ]
-print(json.dumps(train_v2.weight_record(2, "snc-grocery", validation=[block])))`
+print(json.dumps(train_model.weight_record(generations.V2, 2, "snc-grocery", validation=[block])))`
         ],
         { cwd: path.join(SIDECAR, 'tools'), encoding: 'utf8' }
       )
@@ -561,7 +561,7 @@ print(json.dumps(train_v2.weight_record(2, "snc-grocery", validation=[block])))`
         .pop()
     );
     fs.writeFileSync(recordPath, JSON.stringify(record, null, 2) + '\n');
-    console.log('scratch record written by train_v2.weight_record:', JSON.stringify(record));
+    console.log('scratch record written by train_model.weight_record:', JSON.stringify(record));
 
     port = await page.evaluate(() => window.api.getSidecarPort());
     const api = (p, init) =>
@@ -636,7 +636,7 @@ print(json.dumps(train_v2.weight_record(2, "snc-grocery", validation=[block])))`
       JSON.stringify(block)
     );
 
-    // The measurement travels the whole way: `train_v2.weight_record(2, 'snc-grocery', [block])`
+    // The measurement travels the whole way: `train_model.weight_record(2, 'snc-grocery', [block])`
     // wrote it beside the scratch weight, the sidecar read it back, and the panel renders it.
     // Nothing here re-states a number the writer did not produce.
     check(
@@ -1126,7 +1126,7 @@ if (mode === 'classlist') {
           '-c',
           `import json, torch
 from ultralytics.nn.tasks import DetectionModel
-import train_v2
+import train_model, generations
 
 PRODUCTS = [
     "Bear Brand Fortified Powdered Milk 33g",
@@ -1143,7 +1143,7 @@ names = [f"{p} {d}" for p in PRODUCTS for d in ("close", "mid", "far")]
 model = DetectionModel("yolo11n.yaml", nc=len(names), verbose=False)
 model.names = {i: n for i, n in enumerate(names)}
 torch.save({"model": model, "date": "driver-scratch", "version": ""}, r"${weightPath}")
-print(json.dumps(train_v2.weight_record(2, "snc-grocery", class_names=names)))`
+print(json.dumps(train_model.weight_record(generations.V2, 2, "snc-grocery", class_names=names)))`
         ],
         { cwd: path.join(SIDECAR, 'tools'), encoding: 'utf8' }
       )

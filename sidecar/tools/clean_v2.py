@@ -1663,7 +1663,7 @@ V1_CLASSES = [
 from generate_version import EXPECTED_RESIZE  # noqa: E402  (kept with its consumers below)
 
 # The distance-as-class predicate, shared rather than re-spelled here: `label_classes.py`
-# checks the live project with it and `train_v2.check_export` checks a generated version
+# checks the live project with it and `train_model.check_export` checks a generated version
 # with it, so all three verdicts on the same class name have to come from the same words.
 from label_classes import distance_tokens_in  # noqa: E402
 
@@ -1783,7 +1783,7 @@ def class_list_rows(classes: object) -> list[tuple[str, str, str]]:
     Both are checked here, at the point the checklist already gates a shoot on (`sanity`,
     MODEL_TRAINING.md section 9), rather than being left to the two consumers of the same
     predicate's other two consumers: `label_classes.py` sees the live project when asked, and
-    `train_v2.check_export` sees a version only after one has been generated - i.e. after a
+    `train_model.check_export` sees a version only after one has been generated - i.e. after a
     version number is already spent.
     """
     names = {str(n) for n in (classes or [])}
@@ -1823,7 +1823,7 @@ def class_list_rows(classes: object) -> list[tuple[str, str, str]]:
             "not contain, and nothing errors, because a class *name* records none of this.\n"
             "Fix the Classes tab, MOVE the annotations onto the product class (a class-list edit\n"
             "alone orphans the boxes), then regenerate the version - a version number cannot be\n"
-            "reused. `label_classes.py` and `train_v2.check_export` run the same check.",
+            "reused. `label_classes.py` and `train_model.check_export` run the same check.",
         ))
     return rows
 
@@ -1929,7 +1929,7 @@ def cmd_sanity(args: argparse.Namespace) -> int:
                 f"That sends auto-orient on and resize {want_fmt} {want_w}x{want_h}. The sidecar\n"
                 f"infers at settings.imgsz, so any other size trains at a scale inference never\n"
                 f"uses - and for a locally trained .pt the geometry has to travel with the\n"
-                f"weights, which is what train_v2.py --install records beside them (resize_mode\n"
+                f"weights, which is what train_model.py --install records beside them (resize_mode\n"
                 f"'auto' then honours it; the format heuristic alone would answer *letterbox*).",
             ))
         else:

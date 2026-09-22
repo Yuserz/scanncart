@@ -217,7 +217,7 @@ Training `yolo11n` from it yields a real `.pt` that runs on torch + CUDA — the
 ONNX runtime, no preprocessing mismatch, and the model the PRD wants. See `MODEL_TRAINING.md §7`:
 any `models/*.pt` is already selectable with no code edits in either codebase, and `device: "auto"`
 resolves to CUDA. `resize_mode: "auto"` uses the geometry recorded beside the weights — the record
-`train_v2.py --install` writes, or the one the app's `Record it now` button writes for a
+`train_model.py --install` writes, or the one the app's `Record it now` button writes for a
 weight with no run behind it (Admin's, or the Live view's own copy while a capture runs) — falling back to `letterbox` for a `.pt` nobody recorded anything
 about, since that is how ultralytics-native training fits its frames. That fallback is an
 assumption rather than a fact, so it is reported as one (`SettingsResponse.unrecorded_resize_mode`,

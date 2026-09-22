@@ -399,7 +399,7 @@ class InstalledModel(BaseModel):
     auto_resolves_to: str = ""
     # Free text: which dataset version the weights came from, "" when unknown.
     source: str = ""
-    # The class list these weights predict, as `train_v2.py --install` recorded it beside them.
+    # The class list these weights predict, as `train_model.py --install` recorded it beside them.
     # Empty means *not recorded* - a hand-copied weight, or a record written before the field
     # existed - and never "predicts nothing": `roster.class_list_problems([])` would read as all
     # 8 roster classes missing, so an empty list reports no findings rather than a verdict about

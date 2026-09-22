@@ -376,7 +376,7 @@ def test_the_response_carries_paths_and_nothing_secret():
 
 
 # --------------------------------------------------------------------------
-# the record written beside a weight by `train_v2.py --install`
+# the record written beside a weight by `train_model.py --install`
 # --------------------------------------------------------------------------
 #
 # The requirement has to be read from somewhere, and the weight itself cannot be it: a
@@ -476,24 +476,27 @@ def test_a_class_list_of_junk_reads_as_unrecorded_and_a_real_one_survives(tmp_pa
 
 
 def test_the_install_step_writes_the_record_this_reader_finds(tmp_path):
-    """The seam, end to end: `train_v2.py --install` decides the filename and the contents,
+    """The seam, end to end: `train_model.py --install` decides the filename and the contents,
     `app/models.py` finds the file and reads them, and *nothing* but this test would notice
     if the two stopped agreeing - a renamed record is a requirement silently reverting to
     "not recorded", with no error anywhere. Uses the tool's own writer for that reason,
     rather than a hand-built JSON that would agree with the reader by construction.
     """
-    import train_v2
+    import generations
+    import train_model
 
     best = tmp_path / "best.pt"
     best.write_bytes(b"weights")
-    train_v2.install(
+    train_model.install(
         best,
         tmp_path / "models",
-        record=train_v2.weight_record(2, "snc-grocery", class_names=list(ROSTER)),
+        record=train_model.weight_record(
+            generations.V2, 2, "snc-grocery", class_names=list(ROSTER)
+        ),
     )
 
     (only,) = installed_models(tmp_path / "models")
-    assert only.value == f"{CUSTOM_MODEL_DIR}{train_v2.WEIGHT_NAME}"
+    assert only.value == f"{CUSTOM_MODEL_DIR}{generations.V2.weight_name}"
     assert only.source == "snc-grocery version 2"
     # And the value the tool records is one this app would accept as a setting.
     assert only.resize_mode in ALLOWED_RESIZE_MODES
@@ -502,6 +505,43 @@ def test_the_install_step_writes_the_record_this_reader_finds(tmp_path):
     # surfacing as an unflagged model that logs one product under three labels.
     assert only.class_names == list(ROSTER)
     assert only.class_warnings == []
+
+
+def test_a_v1_weight_installs_and_the_listing_names_the_one_class_it_cannot_predict(tmp_path):
+    """The other direction of the same guard, and the case this project's v1 build lands in: v1's
+export declares seven classes, so a v1 weight is *correct* and still cannot predict Palmolive -
+the one class v2 adds (`generations.added_over`). Nothing it does predict is wrong, which is
+exactly why the listing has to say it: with no sentence, the only symptom is that one product
+never appears in the item log. Uses the tool's own writer, like the seam test above.
+    """
+    import generations
+    import train_model
+
+    best = tmp_path / "best.pt"
+    best.write_bytes(b"weights")
+    train_model.install(
+        best,
+        tmp_path / "models",
+        name=generations.V1.weight_name,
+        record=train_model.weight_record(
+            generations.V1, 1, "scanncart-grocery", class_names=list(generations.V1.classes)
+        ),
+    )
+
+    (only,) = installed_models(tmp_path / "models")
+    assert only.value == f"{CUSTOM_MODEL_DIR}{generations.V1.weight_name}"
+    assert only.recorded is True
+    # The geometry requirement travels with it too, and is the value the settings PATCH accepts.
+    assert only.resize_mode in ALLOWED_RESIZE_MODES
+    assert only.class_names == list(generations.V1.classes)
+
+    (warning,) = only.class_warnings
+    assert "cannot predict 1 of the 8 roster classes" in warning
+    assert "Palmolive Naturals Bar Soap 85g" in warning
+    # Neither of the other two findings: every name it predicts *is* a roster name, and none of
+    # them carries a distance - which is what makes this the quiet one.
+    assert "carry a distance" not in warning
+    assert "not in this app's roster" not in warning
 
 
 def test_the_listing_flags_a_weight_trained_per_product_and_distance(monkeypatch, tmp_path):

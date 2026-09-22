@@ -37,7 +37,7 @@ function recallReadout(measured: ValidationRecord | null): {
       label: 'recall not measured',
       title:
         'No measured score is recorded beside these weights, so how well they score is not known. ' +
-        'Run `train_v2.py --val` to measure them; the Admin Panel shows the result once recorded.',
+        'Run `train_model.py --val` to measure them; the Admin Panel shows the result once recorded.',
       warn: false,
       unmeasured: true
     }

@@ -342,7 +342,7 @@ export const ROSTER_NAMES = [
   'Palmolive Naturals Bar Soap 85g'
 ]
 
-// What `train_v2.py --install` records beside the weights, as the sidecar reports it.
+// What `train_model.py --install` records beside the weights, as the sidecar reports it.
 // `auto_resolves_to` equals the requirement because the sidecar's `auto` honours the record, so
 // leaving the field alone uses `stretch` and nothing is flagged. Only an explicit value can
 // contradict the weights, which is the state both the Admin field and the Live banner warn about.
@@ -396,7 +396,7 @@ export function unrecordedResizeMode(
       'models/hand-copied.pt has no record of the geometry it was trained with, so ' +
       'resize_mode=auto assumes letterbox.',
     remedy:
-      'Record it if you know these weights are letterbox-trained — `train_v2.py --install` ' +
+      'Record it if you know these weights are letterbox-trained — `train_model.py --install` ' +
       'records it from the training run, and the Admin Panel records the same fact from what ' +
       'you know.',
     ...overrides

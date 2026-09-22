@@ -1007,7 +1007,7 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
         The Admin Panel's one-click remedy for SettingsResponse.unrecorded_resize_mode: the
         operator attests to a fact only they hold (what these weights were trained on), and
         `auto` stops guessing for them. The other writer of these files is
-        `tools/train_v2.py --install`, which knows the requirement from the training run; this
+        `tools/train_model.py --install`, which knows the requirement from the training run; this
         route exists for the weights that path never installed.
 
         Allowed while capture runs, unlike the restart-required settings: what it writes is by

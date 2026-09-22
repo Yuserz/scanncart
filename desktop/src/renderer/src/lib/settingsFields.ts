@@ -87,7 +87,7 @@ export const MODEL_SPEC_HINTS: Record<string, string> = {
   // the v2 weights were trained on a Stretch version (MODEL_TRAINING.md §6). Letterboxing
   // them presents every object at 0.56x the canvas they were trained at — no error, just
   // weaker detections, worst on the far cells where the pixels were already scarce.
-  // The resize_mode half of this used to be here as prose. It is now derived: `train_v2.py
+  // The resize_mode half of this used to be here as prose. It is now derived: `train_model.py
   // --install` records the requirement beside the weights, the sidecar reports it, and the
   // Model field flags a mismatch for *any* installed weight rather than only this filename.
   // What is left is what a record cannot carry - what these weights are and what they cost.

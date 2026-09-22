@@ -27,7 +27,7 @@ The thing that has to travel with the geometry: a model trained on this version 
 *run* stretched, and `resolve_resize_mode`'s format heuristic answers letterbox for a local
 `.pt` - so without the record it sees everything at the letterboxed scale, the exact mismatch
 the numbers above are about. That is why `REQUIRED_RESIZE_MODE` below is derived from
-`PREPROCESSING` rather than retyped, and why `train_v2.py --install` writes it beside the
+`PREPROCESSING` rather than retyped, and why `train_model.py --install` writes it beside the
 weights: `resize_mode: auto` then honours it (`app.models.requirement_for`). `--verify`
 prints the reminder with the version it checked, and the Admin Panel's model entry carries it
 too.
@@ -167,7 +167,7 @@ def classes_with_distance(classes: object) -> dict[str, list[str]]:
 
     The other three checks see it at a different moment: `clean_v2.class_list_rows` (what
     `sanity` prints) and `label_classes.py` both look at the live project, and
-    `train_v2.check_export` looks at a version that already exists. Only this one can refuse
+    `train_model.check_export` looks at a version that already exists. Only this one can refuse
     *before* the number is spent, which is why it fails closed rather than warning.
     """
     found = {str(name): distance_tokens_in(name) for name in (classes or [])}

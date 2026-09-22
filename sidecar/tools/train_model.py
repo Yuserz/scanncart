@@ -1,22 +1,29 @@
 #!/usr/bin/env python
-"""Train the v2 weights locally, then install them where the picker finds them.
+"""Train one generation's weights locally, then install them where the picker finds them.
 
-Three one-shot decisions meet here, and each one has already bitten this project:
+Four one-shot decisions meet here, and each one has already bitten this project:
 
-1. **The export's class list.** A trained model's output indices are whatever order the
-   dataset declared. If the export's `names` and the roster in `label_classes.py` disagree,
-   every box comes back under the wrong label - with no error, and with plausible-looking
-   confidences. So the export is checked against the roster *before* anything is trained.
-2. **The training run.** Hyperparameters are `MODEL_TRAINING.md` 6's, in code, so the run
-   that produced a shipped model is reproducible from this file rather than from memory.
-3. **The drop-in.** `models/scanncart-grocery-v2.pt` is the name the picker lists and the
-   validator accepts. The previous generation's weights were never installed at all - there
-   is no `sidecar/models/` in this checkout - so the step that turns a good `best.pt` into a
-   selectable model is the one worth scripting. `install()` also writes a small record beside
-   it (`models/scanncart-grocery-v2.json`) carrying the `resize_mode` these weights require,
-   because nothing else knows it: the checkpoint stores the training run, not the dataset
-   geometry, and `auto` resolves to the *wrong* geometry for a locally trained `.pt`. The
-   Admin Panel's Model field reads that record and flags a mismatch.
+1. **Which generation this run is for.** `--generation` picks the dataset, the class list the
+   export has to declare, the resize requirement, and the names of everything written - all
+   from `generations.py`, because v1 and v2 differ in exactly the ways that matter and none of
+   them is a detail: seven classes against eight, no distance axis against three, a frozen
+   geometry requirement against one `generate_version.py` owns. Editing this file to train the
+   other one is what that spec exists to stop.
+2. **The export's class list.** A trained model's output indices are whatever order the dataset
+   declared. If the export's `names` disagree with what its generation expects, every box comes
+   back under the wrong label - with no error, and with plausible-looking confidences. So the
+   export is checked *before* anything is trained, and the check re-measures how the frames were
+   resized too, since that is what the record will claim about them.
+3. **The training run.** Hyperparameters are `MODEL_TRAINING.md` 6's, in code, so the run that
+   produced a shipped model is reproducible from this file rather than from memory.
+4. **The drop-in.** `models/scanncart-grocery-<generation>.pt` is the name the picker lists and
+   the validator accepts. The previous generation's weights were never installed at all - there
+   is no tracked `sidecar/models/` in this checkout - so the step that turns a good `best.pt`
+   into a selectable model is the one worth scripting. `install()` also writes a small record
+   beside it (`models/scanncart-grocery-<generation>.json`) carrying the `resize_mode` these
+   weights require, because nothing else knows it: the checkpoint stores the training run, not
+   the dataset geometry, and `auto` resolves to the *wrong* geometry for a locally trained
+   `.pt`. The Admin Panel's Model field reads that record and flags a mismatch.
 
 `--val` is the fourth step, and it is here because the two numbers a training log carries are
 **means**. A run can clear both while failing one whole class - which is the failure this dataset
@@ -28,6 +35,15 @@ the run never saw. It also **writes those numbers down** (`val_metrics.json`, in
 `--install` can carry them into the weights' record, and the Admin Panel shows what the model
 scored beside what it needs - read from the weights rather than remembered from a terminal.
 
+**The machine stays usable.** This box is shared with the Electron app, a browser and the
+sidecar, and an earlier dataset pass was the reason `resources.py` exists. So CPU and RAM stay
+inside `--max-use-percent` (20% by default), the dataloader process count is derived from that
+budget instead of ultralytics' default of 8, `torch`'s thread count is clamped before the run, and
+the batch size comes from the VRAM share rather than from the constant below - a batch that OOMs on
+a shared card takes the other applications on it down with the run. All of it is printed as a
+`budget` block before training starts, so what the run may take is readable rather than assumed.
+`--max-use-percent 60` when the box is otherwise idle.
+
 Deliberately **not** part of this: generating the version (that is `generate_version.py`, and it
 must happen first) and choosing `resize_mode`. The latter is a settings field, and for these
 weights it must be `stretch` - see `print_reminders()`.
@@ -36,21 +52,38 @@ The one string here that could not be checked offline is `EXPORT_FORMAT` (the AP
 for the version page's "YOLOv11 PyTorch"): there is no generated version to ask. A wrong value
 comes back as an error body rather than a bad download, and `--format` retries it without an edit.
 
-    # fetch the version's export (needs --version, the number generate_version.py reported)
-    sidecar/.venv/Scripts/python.exe sidecar/tools/train_v2.py --download --version 2
+    # v2, the generation the app is being built towards: fetch the version's export (needs
+    # --version, the number generate_version.py reported)
+    sidecar/.venv/Scripts/python.exe sidecar/tools/train_model.py --download --version 2
 
     # check the export, print the exact training command, change nothing
-    sidecar/.venv/Scripts/python.exe sidecar/tools/train_v2.py
+    sidecar/.venv/Scripts/python.exe sidecar/tools/train_model.py
 
     # train (writes to the dataset workspace, not into the repo)
-    sidecar/.venv/Scripts/python.exe sidecar/tools/train_v2.py --yes
+    sidecar/.venv/Scripts/python.exe sidecar/tools/train_model.py --yes
 
     # install the best checkpoint from that run as models/scanncart-grocery-v2.pt
-    sidecar/.venv/Scripts/python.exe sidecar/tools/train_v2.py --install
+    sidecar/.venv/Scripts/python.exe sidecar/tools/train_model.py --install
 
     # the acceptance number: per-class recall on the test split against 6's 0.85 floor,
     # then the same recall split by distance (three extra passes - `--no-per-distance` skips it)
-    sidecar/.venv/Scripts/python.exe sidecar/tools/train_v2.py --val
+    sidecar/.venv/Scripts/python.exe sidecar/tools/train_model.py --val
+
+v1 is the same four commands with `--generation v1`, and two differences follow from the spec
+rather than from a flag: its seven-class export is judged against *its* class list (v1 never had
+Palmolive, so judging it against v2's eight would refuse a correct set), and `--val` has no
+per-distance breakdown to run, because v1 predates the distance tags and its export carries none.
+Its dataset directory is the hand-downloaded export ingested into the workspace:
+
+    sidecar/.venv/Scripts/python.exe sidecar/tools/train_model.py --generation v1
+    sidecar/.venv/Scripts/python.exe sidecar/tools/train_model.py --generation v1 --yes
+    sidecar/.venv/Scripts/python.exe sidecar/tools/train_model.py --generation v1 --val
+    sidecar/.venv/Scripts/python.exe sidecar/tools/train_model.py --generation v1 --install
+
+Any generation can be pointed at another dataset and another class list - which is `--dataset-dir`
+and `--classes` - because the spec describes the two sets this project has rather than the two it
+will ever have (`--classes` replaces the expected list, so an export that gained a class after its
+version was generated is trainable without editing the spec).
 """
 
 from __future__ import annotations
@@ -63,36 +96,42 @@ import shutil
 import sys
 import time
 import zipfile
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import httpx
+
+import generations
+import resources  # imported first: it sets OMP/MKL thread limits at import time
 
 # Two different things are called `WORKSPACE` in these tools, and importing both unaliased
 # binds the wrong one: `label_classes.WORKSPACE` is the Roboflow account namespace
 # (`yusri-caloyloy`), `workspace.WORKSPACE` is the directory the dataset tools read and write.
 # Aliased rather than relied on by import order - the collision put a Windows path into the
 # export URL the first time this ran live.
-from generate_version import REQUIRED_RESIZE_MODE
-from label_classes import SLUG_TO_CLASS, distance_tokens_in, load_key
+from generations import DEFAULT as DEFAULT_GENERATION
+from generations import Generation
+from label_classes import distance_tokens_in, load_key
 from label_classes import WORKSPACE as ROBOFLOW_WORKSPACE
-from workspace import DEFAULT_OUT, SIDECAR_ROOT
+from workspace import SIDECAR_ROOT
 from workspace import WORKSPACE as DATASET_ROOT
 
 # ---------------------------------------------------------------------------
-# The generation. Changing any of these names *is* changing the generation -
-# they are read by the Admin Panel's picker, `settings_store.is_custom_model`
-# and MODEL_TRAINING.md 8.2, which all have to agree.
+# The run's hyperparameters (MODEL_TRAINING.md 6). Which *generation* they are for
+# is not here: that is `generations.py`, because those names are read by the Admin
+# Panel's picker, `settings_store.is_custom_model` and 8.2, and all three have to
+# agree. Nothing in this file may assume it knows which generation it is running.
 # ---------------------------------------------------------------------------
-GENERATION = "v2"
-WEIGHT_NAME = f"scanncart-grocery-{GENERATION}.pt"
 BASE_MODEL = "yolo11s.pt"
-RUN_NAME = f"scanncart-grocery-{GENERATION}"
 
 # MODEL_TRAINING.md 6. `s` rather than `n` because with 8 classes and a few thousand
 # images the larger backbone costs roughly the same wall clock on a 4060 and is
 # distinctly better on small and occluded items - which is what the `far` cells are.
 EPOCHS = 100
 IMGSZ = 640
+# The *ceiling*, not the value: `Budget.batch_size()` decides what actually fits the VRAM share
+# (`--max-vram-percent`), because a batch that OOMs on a shared card takes every other
+# application on it down with the run.
 BATCH = 16
 PATIENCE = 25
 
@@ -129,13 +168,14 @@ API = "https://api.roboflow.com"
 # rather than a bad download, and `--format` retries it without editing this file.
 EXPORT_FORMAT = "yolov11"
 
-# Where the export and the run land. Both are gigabytes of JPEGs and checkpoints, so
-# they go in the dataset workspace (gitignored) rather than beside the code.
-DEFAULT_EXPORT_DIR = DATASET_ROOT / f"export-{GENERATION}"
+# Where the runs land: the dataset workspace (gitignored), because they are checkpoints and plot
+# summaries rather than source. The *export* directory is per generation (`generations.py`) - it
+# is the one path here that differs between them, since v2's is fetched and v1's was ingested.
 DEFAULT_RUN_PROJECT = DATASET_ROOT / "runs"
 DEFAULT_MODELS_DIR = SIDECAR_ROOT / "models"
-# Where --val writes its confusion matrix and per-class table: beside the run, not in the repo.
-VAL_NAME = f"{RUN_NAME}-val"
+# What --val's run is called: the generation's run name plus this, so a val run sits in the same
+# `--run-project` as the training run it measured without ever being mistaken for one.
+VAL_NAME_SUFFIX = "-val"
 # Where --val writes the numbers themselves, in the run directory it measured - see
 # `val_metrics_path()` for why they live there rather than in the repo or in `models/`.
 VAL_METRICS_NAME = "val_metrics.json"
@@ -152,9 +192,16 @@ DISTANCE_ORDER = ("close", "mid", "far")
 # numbers they produced, so a surprising row can be traced back to the exact image set it came
 # from instead of being a line in a log.
 DISTANCE_DIR_NAME = "val-by-distance"
-# The manifest `clean_v2.py` writes, which is the only place class and distance are joined to a
-# filename on this machine - see `distance_map()`.
-DEFAULT_MANIFEST = DEFAULT_OUT / "manifest.json"
+
+
+def val_name(generation: Generation) -> str:
+    """What `--val`'s run directory is called for this generation - see VAL_NAME_SUFFIX.
+
+    A function rather than a constant because it is per generation, and because every call site
+    that spelled it out is one more place the run name could be typed differently from the
+    generation's own.
+    """
+    return f"{generation.run_name}{VAL_NAME_SUFFIX}"
 
 
 def ultralytics_yolo():
@@ -222,6 +269,7 @@ def download_export(
     get=None,
     sleep=None,
     timeout_s: int = 900,
+    generation_name: str = DEFAULT_GENERATION.name,
 ) -> Path:
     """Ask for the version's export, wait for it, download and extract it.
 
@@ -249,7 +297,7 @@ def download_export(
         sleep(10)
 
     # The link is a redirect to signed storage, so it has to be followed.
-    archive = dest / f"{GENERATION}-export.zip"
+    archive = dest / f"{generation_name}-export.zip"
     dest.mkdir(parents=True, exist_ok=True)
     print(f"  downloading the {fmt} export -> {archive}")
     r = get(link, timeout=900, follow_redirects=True)
@@ -310,11 +358,86 @@ def read_export_names(export_dir: Path) -> list[str] | None:
     return None
 
 
-def check_export(export_dir: Path) -> tuple[dict[str, Path], list[str]]:
-    """Everything wrong with this export, as a list. Also returns the split dirs.
+def frame_geometry(splits: dict[str, Path], sample: int = 12) -> list[str]:
+    """What a sample of the export's frames says about how they were resized.
 
-    Runs before training on purpose: a class-list mismatch found after an hour of GPU
-    time is an hour of GPU time, and found after deployment it is every box in the app.
+    Reported rather than used, and the distinction is the point: the `resize_mode` recorded beside
+    the weights is the fact this is checked *against*, so deriving it here would turn one
+    measurement into two sources of truth. What it can do is say whether the export about to be
+    trained from looks like the geometry the record will claim - and a `stretch` requirement over
+    letterboxed frames is exactly the mismatch that has silently cost this project a model before
+    (`auto` resolving to letterbox for a `.pt` trained on a `Stretch to 640` version).
+
+    The signature is in the border: a stretched frame fills its edge with image content, while a
+    fitted one pads with a constant colour, so the padded axis is flat - a near-zero standard
+    deviation along that whole edge - and near-identical across images. Square frames whose edges
+    vary is what "Stretch to WxH" produces.
+
+    Never raises and never decides anything on its own: unreadable frames, no frames at all, and a
+    PIL that will not import all answer notes, because a geometry reading is worth having and is
+    not worth failing a training run over.
+    """
+    images = [
+        path
+        for split in SPLITS
+        if (directory := splits.get(split)) is not None
+        for path in sorted(directory.iterdir())
+        if path.suffix.lower() in IMAGE_SUFFIXES
+    ]
+    if not images:
+        return ["frames  no images to sample, so the geometry was not measured"]
+    picked = images[:: max(1, len(images) // sample)][:sample]
+    try:
+        import numpy as np
+        from PIL import Image
+    except ImportError:
+        return ["frames  PIL/numpy unavailable, so the geometry was not measured"]
+
+    sizes: dict[tuple[int, int], int] = {}
+    padded: list[str] = []
+    for path in picked:
+        try:
+            with Image.open(path) as image:
+                size = image.size
+                pixels = np.asarray(image.convert("RGB"), dtype="float32")
+        except Exception as exc:  # noqa: BLE001 - a note, never a failure
+            return [f"frames  could not read {path.name} ({type(exc).__name__})"]
+        sizes[size] = sizes.get(size, 0) + 1
+        edges = {
+            "top": pixels[0],
+            "bottom": pixels[-1],
+            "left": pixels[:, 0],
+            "right": pixels[:, -1],
+        }
+        flat = [name for name, edge in edges.items() if float(edge.std()) < 2.0]
+        if flat:
+            padded.append(f"{path.name} ({'/'.join(flat)})")
+
+    shape = ", ".join(f"{w}x{h} x{n}" for (w, h), n in sorted(sizes.items(), key=lambda kv: -kv[1]))
+    note = f"frames  {shape} of {len(picked)} sampled: "
+    if padded:
+        note += (
+            f"{len(padded)} with a constant border ({'; '.join(padded[:2])}) - that is *fitting* "
+            "with padding, which is not what a `stretch` requirement assumes. Check this "
+            "generation's resize_mode against how the version was actually generated"
+        )
+    else:
+        note += "no constant border, i.e. stretched - consistent with the recorded requirement"
+    return [note]
+
+
+def check_export(
+    export_dir: Path, generation: Generation = DEFAULT_GENERATION
+) -> tuple[dict[str, Path], list[str]]:
+    """Everything wrong with this export for `generation`, as a list. Also the split dirs.
+
+    Runs before training on purpose: a class-list mismatch found after an hour of GPU time is an
+    hour of GPU time, and found after deployment it is every box in the app.
+
+    Judged against the *generation's* class list rather than one shared roster, because the two
+    generations do not declare the same classes: v1 has seven and v2 has eight, and the eighth
+    (Palmolive) is the class v2 adds. A v1 export judged against v2's list would be refused for
+    being correct - and a check that cries wolf is how the real mismatch gets waved through.
     """
     problems: list[str] = []
     if not export_dir.is_dir():
@@ -330,20 +453,23 @@ def check_export(export_dir: Path) -> tuple[dict[str, Path], list[str]]:
             problems.append(f"{split}/images is empty")
         else:
             print(f"  {split:6} {n:6} images")
+    for note in frame_geometry(splits):
+        print(f"  {note}")
 
     names = read_export_names(export_dir)
-    roster = sorted(SLUG_TO_CLASS.values())
+    expected = list(generation.classes)
     if names is None:
         problems.append("could not read `names` from the export's data.yaml")
     else:
         print(f"  classes {len(names)}: " + ", ".join(names))
-        missing = [n for n in roster if n not in names]
-        extra = [n for n in names if n not in roster]
+        missing = [n for n in expected if n not in names]
+        extra = [n for n in names if n not in set(expected)]
         if missing:
-            problems.append("the export has no class for: " + ", ".join(missing))
+            problems.append(f"the export has no class for: {', '.join(missing)}")
         if extra:
             problems.append(
-                "the export declares classes that are not v2 classes: " + ", ".join(extra)
+                f"the export declares classes that are not {generation.name} classes: "
+                + ", ".join(extra)
             )
             # The most likely cause, named, because the symptom does not point at it: a version
             # generated from a project whose class list has distances in it (one product split
@@ -360,8 +486,23 @@ def check_export(export_dir: Path) -> tuple[dict[str, Path], list[str]]:
                     "(MODEL_TRAINING.md 8.1), so those classes split one product into three and "
                     "this would train one output per product-and-distance. Fix the project's "
                     "class list, move the annotations onto the product class, and regenerate the "
-                    "version - the app's own roster is the 8 product names"
+                    "version - the app's own roster is the product names"
                 )
+
+        # Not a problem - it is a property of the dataset - but it is the exact thing the app will
+        # say about these weights (`roster.class_list_problems`, the third finding: nothing they
+        # *do* predict is wrong, which is why it is easy to miss), so it is better known before an
+        # hour of GPU time than discovered afterwards. Read off the spec table rather than named
+        # here, so it stays true if a third generation ever declares something neither of these
+        # has.
+        elsewhere = sorted(
+            {n for g in generations.GENERATIONS.values() for n in g.classes} - set(expected)
+        )
+        if elsewhere:
+            print(
+                f"  note  {len(elsewhere)} class(es) another generation declares are not in this"
+                f" one, so these weights can never predict them: {', '.join(elsewhere)}"
+            )
     return splits, problems
 
 
@@ -481,9 +622,7 @@ def verdict(rows: list[dict[str, float]]) -> tuple[list[str], list[str]]:
 # ---------------------------------------------------------------------------
 
 
-def validation_kwargs(
-    data_yaml: Path, split: str, project: Path, name: str = VAL_NAME
-) -> dict:
+def validation_kwargs(data_yaml: Path, split: str, project: Path, name: str) -> dict:
     """The validation pass, as kwargs - one dict so the printed pass and the call agree.
 
     `imgsz` is pinned to the size the run trained at rather than inherited from the
@@ -619,7 +758,12 @@ def aggregate_metrics(metrics: object) -> dict[str, float]:
 
 
 def validate(
-    weights: Path, data_yaml: Path, split: str, project: Path, yolo=None, name: str = VAL_NAME
+    weights: Path,
+    data_yaml: Path,
+    split: str,
+    project: Path,
+    name: str,
+    yolo=None,
 ):
     """Load `weights` and validate the split; returns ultralytics' metrics object.
 
@@ -740,7 +884,7 @@ def write_val_metrics(path: Path, block: dict) -> None:
 # ---------------------------------------------------------------------------
 
 
-def distance_map(manifest: Path | None = None) -> dict[str, str]:
+def distance_map(manifest: Path | None) -> dict[str, str]:
     """`{export filename: distance}` from the dataset workspace's manifest.
 
     The join happens on filenames because a **YOLO export carries no tags**: the distance is a
@@ -748,14 +892,16 @@ def distance_map(manifest: Path | None = None) -> dict[str, str]:
     tooling writes is the only place on this machine where a filename is still joined to both
     its class and its distance, so it is what this reads.
 
-    Never raises, and answers `{}` for a missing, unreadable or surprising file: a run that
-    cannot find distances should lose the breakdown, not the validation. The caller says so out
-    loud (`distance_breakdown` returns a note), because an absent section with no explanation
-    reads as "nothing to report" when it means "not measured" - the opposite claim.
+    `None` means *this generation declares no distance axis* (`generations.Generation.manifest`),
+    which is why it is not defaulted to a path here: v1 predates the tagging, so "no manifest"
+    would be a lie about a file, and the caller gives that case its own sentence. Never raises,
+    and answers `{}` for a missing or unreadable file too: a run that cannot find distances
+    should lose the breakdown, not the validation.
     """
-    path = Path(manifest) if manifest is not None else DEFAULT_MANIFEST
+    if manifest is None:
+        return {}
     try:
-        body = json.loads(path.read_text(encoding="utf-8"))
+        body = json.loads(Path(manifest).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
     if not isinstance(body, list):
@@ -831,6 +977,7 @@ def distance_breakdown(
     distances: dict[str, str],
     yolo=None,
     out_dir: Path | None = None,
+    val: str = "",
 ) -> tuple[list[dict], list[str]]:
     """One validation pass per distance, as blocks, plus the notes on what could not be measured.
 
@@ -868,7 +1015,12 @@ def distance_breakdown(
             export_dir, splits, split, list_path, base / f"data-{split}-{distance}.yaml"
         )
         metrics = validate(
-            weights, yaml_path, split, project, yolo=yolo, name=f"{VAL_NAME}-{distance}"
+            weights,
+            yaml_path,
+            split,
+            project,
+            name=f"{val or val_name(DEFAULT_GENERATION)}-{distance}",
+            yolo=yolo,
         )
         # No `floor` here: the block these hang under carries the one they were judged
         # against, and a copy per distance could only ever disagree with it.
@@ -956,38 +1108,76 @@ def distance_misses(blocks: list[dict], floor: float = RECALL_FLOOR) -> list[str
 # ---------------------------------------------------------------------------
 
 
-def train_kwargs(data_yaml: Path, project: Path) -> dict:
+@dataclass(frozen=True)
+class Hyper:
+    """MODEL_TRAINING.md 6's run, plus the two knobs this machine has a say in.
+
+    Grouped rather than passed loose because two callers need the same answer and the printed
+    command has to be the run that happens: `train_kwargs()` builds the dict ultralytics is
+    called with and `command_line()` prints it, both from this one value.
+    """
+
+    epochs: int = EPOCHS
+    imgsz: int = IMGSZ
+    # The ceiling. `budget.batch_size()` may lower it, never raise it.
+    batch: int = BATCH
+    patience: int = PATIENCE
+    base_model: str = BASE_MODEL
+    # "auto" resolves through `resources.resolve_device` - CUDA when it is real, else CPU.
+    device: str = "auto"
+    # Dataloader processes. Left at 0, `derive_workers` answers from the CPU budget.
+    workers: int = 0
+
+
+def derive_workers(cpu_threads: int) -> int:
+    """How many dataloader processes the CPU budget allows.
+
+    Ultralytics defaults to 8, which on a 6-core box is most of the machine: each worker is a
+    *process* decoding and augmenting in Python, so the OMP/MKL thread caps `resources` applies
+    inside the training process do not bound them - they are what the budget would otherwise miss.
+    Two keeps a 4060 fed at 640 while leaving the box usable, and the trade is deliberate: some GPU
+    idle time in exchange for a machine that can still run the app beside it. `--workers` raises it
+    when the box is otherwise idle.
+    """
+    return max(1, min(2, cpu_threads))
+
+
+def train_kwargs(
+    data_yaml: Path, project: Path, run_name: str, hyper: Hyper, device: str
+) -> dict:
     """The training run, as kwargs. One dict so the printed command and the call that
     runs cannot drift apart."""
     return {
         "data": str(data_yaml),
-        "epochs": EPOCHS,
-        "imgsz": IMGSZ,
-        "batch": BATCH,
-        "patience": PATIENCE,
+        "epochs": hyper.epochs,
+        "imgsz": hyper.imgsz,
+        "batch": hyper.batch,
+        "patience": hyper.patience,
         "project": str(project),
-        "name": RUN_NAME,
+        "name": run_name,
+        "device": device,
+        "workers": hyper.workers,
     }
 
 
-def command_line(data_yaml: Path, project: Path) -> str:
-    kw = train_kwargs(data_yaml, project)
+def command_line(data_yaml: Path, project: Path, run_name: str, hyper: Hyper, device: str) -> str:
+    kw = train_kwargs(data_yaml, project, run_name, hyper, device)
     return (
-        f"yolo detect train model={BASE_MODEL} data={data_yaml} epochs={kw['epochs']} "
+        f"yolo detect train model={hyper.base_model} data={data_yaml} epochs={kw['epochs']} "
         f"imgsz={kw['imgsz']} batch={kw['batch']} patience={kw['patience']} "
-        f"project={project} name={RUN_NAME}"
+        f"project={project} name={run_name} device={device} workers={kw['workers']}"
     )
 
 
-def run_dir(project: Path) -> Path:
+def run_dir(project: Path, run_name: str) -> Path:
     """Where ultralytics puts this run, including its `-2`, `-3` suffix on a re-run."""
-    base = project / RUN_NAME
+    base = project / run_name
     if not base.exists():
         return base
     n = 2
-    while (base.parent / f"{RUN_NAME}-{n}").exists():
+    while (base.parent / f"{run_name}-{n}").exists():
         n += 1
-    return base.parent / f"{RUN_NAME}-{n}"
+    return base.parent / f"{run_name}-{n}"
 
 
 def find_best(run: Path) -> Path | None:
@@ -997,23 +1187,29 @@ def find_best(run: Path) -> Path | None:
     return None
 
 
-def latest_run(project: Path) -> Path | None:
-    """The most recently written run under `project`, or None if there is none.
+def latest_run(project: Path, run_name: str, val: str = "") -> Path | None:
+    """The most recently written run of `run_name` under `project`, or None if there is none.
 
     `run_dir()` answers "where would the *next* run go", which is what training needs and
     the opposite of what `--val` and a bare `--install` need: once a run has finished, that
-    directory does not exist yet, so a bare `--install` looked for `<name>-2` and failed.
-    Ordered by modification time because the `-10` suffix does not sort after `-9`.
+    directory does not exist yet - the finished one is `<name>`, so `run_dir()` looked for
+    `<name>-2` and failed. Ordered by modification time because the `-10` suffix does not sort
+    after `-9`.
+
+    `val` is this generation's val-run name, excluded so a measurement pass is never offered as
+    the run to install from.
     """
     runs = [
         p
-        for p in project.glob(f"{RUN_NAME}*")
-        if p.is_dir() and p.name != VAL_NAME and find_best(p)
+        for p in project.glob(f"{run_name}*")
+        if p.is_dir() and p.name != val and find_best(p)
     ]
     return max(runs, key=lambda p: p.stat().st_mtime) if runs else None
 
 
-def resolve_run(project: Path, explicit: str = "", training: bool = False) -> Path:
+def resolve_run(
+    project: Path, generation: Generation, explicit: str = "", training: bool = False
+) -> Path:
     """Which run `--val`/`--install` should read, and which `--yes` will write.
 
     A fresh training run is named before it exists; a finished one has to be *found* - an
@@ -1025,11 +1221,14 @@ def resolve_run(project: Path, explicit: str = "", training: bool = False) -> Pa
     if explicit:
         return Path(explicit).expanduser()
     if training:
-        return run_dir(project)
-    return latest_run(project) or run_dir(project)
+        return run_dir(project, generation.run_name)
+    return latest_run(project, generation.run_name, val_name(generation)) or run_dir(
+        project, generation.run_name
+    )
 
 
 def weight_record(
+    generation: Generation = DEFAULT_GENERATION,
     source_version: int = 0,
     project: str = "",
     validation: list[dict] | None = None,
@@ -1045,8 +1244,12 @@ def weight_record(
     from: the checkpoint records the training run, not the dataset geometry, and the filename
     is a convention rather than a fact.
 
-    Derived from `generate_version.REQUIRED_RESIZE_MODE` rather than written out here, so the
-    requirement and the preprocessing that produced it cannot drift apart.
+    Taken from the generation rather than written out here, and the two sources it allows are
+    different on purpose: v2's is `generate_version.REQUIRED_RESIZE_MODE`, because that block *is*
+    the preprocessing that produced its export, while v1's is a value frozen at the geometry its
+already-generated version was made with (the measurement is in `generations.py`). Deriving v1's
+    from v2's constant would let a later change to v2's preprocessing silently rewrite a
+    requirement about an export that already exists and will never be regenerated.
 
     `class_names` is the export's own class list, in the order the model indexes them, and it
     is recorded for the same reason: a class list is a property of the *weights* and nothing
@@ -1079,8 +1282,8 @@ def weight_record(
     field-by-field record turns into a second, wrong answer to "which weights are these?".
     """
     record = {
-        "generation": GENERATION,
-        "resize_mode": REQUIRED_RESIZE_MODE,
+        "generation": generation.name,
+        "resize_mode": generation.resize_mode,
         # Where it came from, so the panel can say which dataset produced these weights
         # rather than only what they need.
         "source": f"{project} version {source_version}" if source_version else "",
@@ -1098,7 +1301,7 @@ def weight_record(
 def install(
     source: Path,
     models_dir: Path,
-    name: str = WEIGHT_NAME,
+    name: str = DEFAULT_GENERATION.weight_name,
     force: bool = False,
     record: dict | None = None,
 ) -> Path:
@@ -1128,7 +1331,9 @@ def install(
     return target
 
 
-def print_reminders(resize_mode: str | None = REQUIRED_RESIZE_MODE) -> None:
+def print_reminders(
+    resize_mode: str | None, generation: Generation = DEFAULT_GENERATION
+) -> None:
     print()
     print("Next, and this is the field that decides whether any of the above is visible:")
     print()
@@ -1140,7 +1345,9 @@ def print_reminders(resize_mode: str | None = REQUIRED_RESIZE_MODE) -> None:
         print("  nothing was recorded. Set resize_mode by hand to match how it was trained.")
         return
     print(f"  Nothing to set: these weights need resize_mode: {resize_mode}, and it has")
-    print(f"  been recorded as models/{Path(WEIGHT_NAME).stem}.json. `auto` honours the record,")
+    print(
+        f"  been recorded as models/{Path(generation.weight_name).stem}.json. `auto` honours the record,"
+    )
     print("  so leaving the field on its default is the correct geometry.")
     print()
     print(f"  Setting `{resize_mode}` by hand is equivalent. Setting anything else overrides the")
@@ -1183,10 +1390,56 @@ def print_validation_note(validation: list[dict]) -> None:
     print("  well as what it needs.")
 
 
+def parse_classes(spec: str) -> tuple[str, ...]:
+    """`--classes` as a tuple, refusing an empty entry rather than accepting "" as a class name.
+
+    Dropping blanks quietly is the tolerance that turns `--classes "a,,b"` into a class list
+    nobody wrote; an empty name is a mistake in the command, and the export check - which would
+    report the empty string as a class the export does not declare - is the wrong place to find
+    that out.
+    """
+    parts = [part.strip() for part in spec.split(",")]
+    if not parts or any(not part for part in parts):
+        raise SystemExit(
+            f"--classes needs a comma-separated list of names with no empty entries, got {spec!r}"
+        )
+    return tuple(parts)
+
+
 def main(argv: list[str] | None = None, yolo=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--export-dir", default=str(DEFAULT_EXPORT_DIR))
-    ap.add_argument("--project", default="snc-grocery")
+    ap.add_argument(
+        "--generation",
+        default=DEFAULT_GENERATION.name,
+        choices=sorted(generations.GENERATIONS),
+        help=(
+            "which generation's dataset, class list and artifact names this run is for "
+            "(default %(default)s)"
+        ),
+    )
+    # Two option strings, one destination. This flag was `--export-dir` while the tool was v2's,
+    # and the documents that name a command still spell it that way; `--dataset-dir` is the honest
+    # name now that the folder can be a hand-ingested dataset rather than a downloaded export.
+    ap.add_argument(
+        "--dataset-dir",
+        "--export-dir",
+        dest="dataset_dir",
+        default="",
+        help="the dataset to train from (default: the generation's own export directory)",
+    )
+    ap.add_argument(
+        "--classes",
+        default="",
+        help=(
+            "comma-separated class list the dataset must declare, replacing the generation's "
+            "(for an export that gained a class after its version was generated)"
+        ),
+    )
+    ap.add_argument(
+        "--project",
+        default="",
+        help="the Roboflow project (default: the generation's own)",
+    )
     ap.add_argument("--download", action="store_true", help="fetch the version's export first")
     ap.add_argument(
         "--version",
@@ -1224,22 +1477,56 @@ def main(argv: list[str] | None = None, yolo=None) -> int:
     )
     ap.add_argument(
         "--manifest",
-        default=str(DEFAULT_MANIFEST),
-        help="the dataset manifest to read each image's distance from (a tag a YOLO export loses)",
+        default="",
+        help=(
+            "the dataset manifest to read each image's distance from (a tag a YOLO export loses); "
+            "defaults to the generation's own, and a generation with no distance axis has none"
+        ),
+    )
+    ap.add_argument("--install", action="store_true", help="install best.pt under the generation's name, with the record --val wrote")
+    ap.add_argument("--force", action="store_true", help="allow --install to replace an existing weight")
+    # The machine's share, in the same flags the other dataset tools use - see resources.py.
+    ap.add_argument("--epochs", type=int, default=EPOCHS)
+    ap.add_argument("--imgsz", type=int, default=IMGSZ)
+    ap.add_argument(
+        "--batch",
+        type=int,
+        default=BATCH,
+        help="the ceiling: the VRAM share may lower it, never raise it",
+    )
+    ap.add_argument("--patience", type=int, default=PATIENCE)
+    ap.add_argument("--base-model", default=BASE_MODEL)
+    ap.add_argument("--device", default="auto", help="auto | cpu | 0 | 0,1 ...")
+    ap.add_argument(
+        "--workers", type=int, default=0, help="dataloader processes (0 = derived from the CPU budget)"
     )
     ap.add_argument(
-        "--install",
-        action="store_true",
-        help=f"install best.pt as {WEIGHT_NAME}, with the record --val wrote",
+        "--max-use-percent", type=int, default=resources.USE_PERCENT, help="CPU + RAM ceiling"
     )
-    ap.add_argument("--force", action="store_true", help="allow --install to replace an existing weight")
+    ap.add_argument(
+        "--max-vram-percent", type=int, default=resources.VRAM_PERCENT, help="VRAM ceiling"
+    )
+    ap.add_argument("--disk-reserve-gb", type=float, default=resources.DISK_RESERVE_GB)
     ap.add_argument("--json", action="store_true", help="emit the summary as JSON and exit")
     args = ap.parse_args(argv)
 
 
-    export_dir = Path(args.export_dir).expanduser()
-    project = Path(args.run_project).expanduser()
+    generation = generations.get(args.generation)
+    if args.classes:
+        # `replace()` on the frozen spec rather than a second code path: everything downstream
+        # reads it - the export check, the record, the weight's name - so an override that reached
+        # only the check would leave the record claiming a class list nothing was trained for.
+        generation = replace(generation, classes=parse_classes(args.classes))
+
+    export_dir = (
+        Path(args.dataset_dir).expanduser() if args.dataset_dir else generation.export_dir
+    )
+    run_project = Path(args.run_project).expanduser()
     models_dir = Path(args.models_dir).expanduser()
+    # The Roboflow project this generation's versions come from - the download URL and the record's
+    # `source` both need it, and the spec is where that fact is already written down.
+    project = args.project or generation.roboflow_project
+    vname = val_name(generation)
 
     if args.download:
         if not args.version:
@@ -1247,15 +1534,28 @@ def main(argv: list[str] | None = None, yolo=None) -> int:
         if read_export_names(export_dir) is not None:
             print(f"export: {export_dir} (already downloaded - delete it to fetch it again)")
         else:
-            print(f"downloading {args.project} version {args.version} as {args.format}")
+            print(f"downloading {project} version {args.version} as {args.format}")
             download_export(
-                args.project, args.version, export_dir, load_key(args.project), fmt=args.format
+                project,
+                args.version,
+                export_dir,
+                load_key(project),
+                fmt=args.format,
+                generation_name=generation.name,
             )
 
+    print(
+        f"generation: {generation.name} - {len(generation.classes)} classes, "
+        f"resize_mode {generation.resize_mode}"
+    )
     print(f"export: {export_dir}")
     missing_export = not export_dir.is_dir()
-    splits, problems = check_export(export_dir)
-    summary: dict = {"export": str(export_dir), "problems": problems}
+    splits, problems = check_export(export_dir, generation)
+    summary: dict = {
+        "generation": generation.name,
+        "export": str(export_dir),
+        "problems": problems,
+    }
 
     if problems:
         print()
@@ -1275,14 +1575,71 @@ def main(argv: list[str] | None = None, yolo=None) -> int:
         return 2
 
     data_yaml = write_data_yaml(export_dir, splits)
-    run = resolve_run(project, args.run_dir, training=args.yes)
+    run = resolve_run(run_project, generation, args.run_dir, training=args.yes)
+
+    will_run = args.yes or args.val
+    # Ultralytics is imported here, not at module level, so this file can be imported and tested
+    # without torch - the same shape as app/hardware.py's lazy torch import and app/models.py's
+    # "one directory read, no torch".
+    if will_run:
+        yolo = yolo or ultralytics_yolo()
+
+    # `--device auto` is resolved before the command is printed, because a printed command that
+    # does not name the device the run will use is one nobody can rerun. That spends the torch
+    # import on a dry run with the default device; an explicit `--device cpu|0` still costs
+    # nothing, and it is the import a run needs anyway.
+    device = resources.resolve_device(args.device)
+
+    # The machine's share. `apply()` comes first and unconditionally, because `measure()` reads
+    # RAM but *not* the card - the VRAM totals are filled in by `apply()` - so asking for a batch
+    # size before it would take `batch_size()`'s no-VRAM fallback and quietly ignore the ceiling.
+    # It costs the torch import on a CPU-only dry run too, which is why the note below says so.
+    #
+    # The VRAM ceiling is deliberately not enforced by the allocator here (`--hard-vram-cap`
+    # exists in audit_v2 with the measurement behind it): it fights ultralytics and turns a
+    # working batch into an OOM, and the batch derived below is what keeps the card's other users
+    # safe instead - which bounds the *batch* rather than the card. That distinction is worth
+    # stating with the measurement: training yolo11s at 640, batch 8, holds about 5.9 GB of this
+    # machine's 8.6 GB card, because optimizer state and activations are not the ~0.6 GB a forward
+    # pass costs. The share is a policy for sizing the batch, not a wall; `--batch 4` is the lever
+    # when something else needs the card.
+    budget = resources.measure(args.max_use_percent, args.disk_reserve_gb, args.max_vram_percent)
+    budget = resources.apply(budget, device)
+    batch = min(args.batch, budget.batch_size(args.imgsz))
+    if batch < args.batch:
+        budget.notes.append(
+            f"batch {args.batch} -> {batch}: the VRAM share is {budget.vram_cap_gb:.1f} GB "
+            "(raise --max-vram-percent for more)"
+        )
+    hyper = Hyper(
+        epochs=args.epochs,
+        imgsz=args.imgsz,
+        batch=batch,
+        patience=args.patience,
+        base_model=args.base_model,
+        device=device,
+        workers=args.workers or derive_workers(budget.cpu_threads),
+    )
+
     print()
     print(f"data.yaml: {data_yaml}")
     print()
     print("this run:")
-    print(f"  {command_line(data_yaml, project)}")
+    print(f"  {command_line(data_yaml, run_project, generation.run_name, hyper, device)}")
+    if will_run:
+        print()
+        print(budget.describe())
     summary["data_yaml"] = str(data_yaml)
     summary["run_dir"] = str(run)
+    summary["hyper"] = {
+        "epochs": hyper.epochs,
+        "imgsz": hyper.imgsz,
+        "batch": hyper.batch,
+        "patience": hyper.patience,
+        "base_model": hyper.base_model,
+        "device": device,
+        "workers": hyper.workers,
+    }
 
     if not (args.yes or args.install or args.val):
         if args.json:
@@ -1291,17 +1648,22 @@ def main(argv: list[str] | None = None, yolo=None) -> int:
         print("Nothing ran. Re-run with --yes to train, --val to validate, or --install to install.")
         return 0
 
-    # Ultralytics is imported here, not at module level, so this file can be imported and
-    # tested without torch - the same shape as app/hardware.py's lazy torch import and
-    # app/models.py's "one directory read, no torch".
-    if args.yes or args.val:
-        yolo = yolo or ultralytics_yolo()
-
     if args.yes:
+        # The free-space check needs a path that exists, and on a first run the run project does
+        # not - `shutil.disk_usage` raises FileNotFoundError on a missing directory, which is how
+        # the very first training run on this machine died a second before it started. Creating it
+        # here is the same write ultralytics would make a moment later, and it means the reserve is
+        # checked against the filesystem that will actually receive the checkpoints.
+        run_project.mkdir(parents=True, exist_ok=True)
+        free_gb = budget.check_disk(str(run_project))
         print()
-        print(f"training {BASE_MODEL} for up to {EPOCHS} epochs (patience {PATIENCE}) -> {run}")
-        model = yolo(BASE_MODEL)
-        model.train(**train_kwargs(data_yaml, project))
+        print(
+            f"training {hyper.base_model} for up to {hyper.epochs} epochs "
+            f"(patience {hyper.patience}, batch {hyper.batch}) -> {run}"
+        )
+        print(f"  {free_gb:.1f} GB free at {run_project} (reserve {budget.disk_reserve_gb:.0f} GB)")
+        model = yolo(hyper.base_model)
+        model.train(**train_kwargs(data_yaml, run_project, generation.run_name, hyper, device))
 
     best = find_best(run)
     if best is None:
@@ -1334,7 +1696,7 @@ def main(argv: list[str] | None = None, yolo=None) -> int:
     if args.val:
         print()
         print(f"validating {best} on the {args.split} split (floor {RECALL_FLOOR:.2f})")
-        metrics = validate(best, data_yaml, args.split, project, yolo=yolo)
+        metrics = validate(best, data_yaml, args.split, run_project, vname, yolo=yolo)
         rows = per_class_recall(metrics)
         passed, failed, unmeasured, values = recall_report(rows)
         aggregates = aggregate_metrics(metrics)
@@ -1348,7 +1710,16 @@ def main(argv: list[str] | None = None, yolo=None) -> int:
         # describe an older image set - the kind of mixture no reader could detect.
         per_distance: list[dict] = []
         distance_notes: list[str] = []
-        if not args.no_per_distance:
+        # `None` is the generation saying it has no distance axis - v1 predates the tags - which is
+        # not the same statement as a manifest that went missing, and gets its own sentence. A
+        # section that silently vanishes reads as "every distance passed".
+        manifest = Path(args.manifest).expanduser() if args.manifest else generation.manifest
+        if manifest is None:
+            print()
+            print(f"  note: {generation.name} has no distance axis - its export carries no distance")
+            print("        tags - so there is no per-distance breakdown to run. The per-class table")
+            print("        above is the whole readout for this generation.")
+        elif not args.no_per_distance:
             print()
             print(f"splitting the {args.split} split by distance for three more passes")
             per_distance, distance_notes = distance_breakdown(
@@ -1356,10 +1727,11 @@ def main(argv: list[str] | None = None, yolo=None) -> int:
                 export_dir,
                 splits,
                 args.split,
-                project,
-                distance_map(Path(args.manifest).expanduser()),
+                run_project,
+                distance_map(manifest),
                 yolo=yolo,
                 out_dir=best.parent.parent / DISTANCE_DIR_NAME,
+                val=vname,
             )
             for note in distance_notes:
                 print(f"  note: {note}")
@@ -1430,28 +1802,34 @@ def main(argv: list[str] | None = None, yolo=None) -> int:
         # separate commands in the documented sequence, so the file is the only path that
         # works for both, and having one path means the same one is exercised either way.
         validation = load_val_metrics(val_metrics_path(best), weights_sha256(best))
-        # The export's names, not the roster's: this records what the weights *are*, and
-        # `check_export` has already refused a version that disagreed with the roster - so the
-        # two agreeing is a precondition of reaching here, and a recorded list that differs
-        # from the roster means something changed after this run (MODEL_TRAINING.md 8.1).
+        # The export's names, not the generation's list: this records what the weights *are*, and
+        # `check_export` has already refused an export whose names disagreed with the list - so the
+        # two agreeing is a precondition of reaching here, and a recorded set that differs means
+        # something changed after this run (MODEL_TRAINING.md 8.1).
         record = weight_record(
+            generation,
             args.version,
-            args.project,
+            project,
             validation=validation,
             class_names=read_export_names(export_dir),
         )
-        target = install(best, models_dir, force=args.force, record=record)
+        target = install(
+            best, models_dir, name=generation.weight_name, force=args.force, record=record
+        )
         print(f"installed: {target}")
         summary["installed"] = str(target)
         summary["record"] = record
         print(f"recorded:  {target.with_suffix('.json')}")
-        print_reminders(record["resize_mode"])
+        print_reminders(record["resize_mode"], generation)
         print_validation_note(validation)
     else:
         print()
+        # `--generation` is in both hints because it is not implied by `--run-dir`: the val run's
+        # name and the weight's name both come from it, so a command that left it out would
+        # measure or install under the wrong generation's names.
         if not args.val:
-            print(f"Check the acceptance split with: --val --run-dir {run}")
-        print(f"Install it with: --install --run-dir {run}")
+            print(f"Check the acceptance split with: --val --generation {generation.name} --run-dir {run}")
+        print(f"Install it with: --install --generation {generation.name} --run-dir {run}")
 
     if args.json:
         print(json.dumps(summary, indent=1))

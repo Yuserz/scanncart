@@ -122,9 +122,17 @@ the same price.
 ## 5. Train
 
 ```bash
-./sidecar/.venv/Scripts/python.exe sidecar/tools/train_v2.py --download --version 2
-./sidecar/.venv/Scripts/python.exe sidecar/tools/train_v2.py --yes
+./sidecar/.venv/Scripts/python.exe sidecar/tools/train_model.py --download --version 2
+./sidecar/.venv/Scripts/python.exe sidecar/tools/train_model.py --yes
 ```
+
+> **v1's local build is the same steps with `--generation v1`, and no `--download`** — its export
+> is already ingested in the dataset workspace. Three readings differ, all of them from the
+> generation rather than from a flag: the check prints **seven** classes plus a `note` naming
+> Palmolive as the class this generation can never predict (v1 has no Palmolive — §8.1's table),
+> `--val` reports the per-class table and **no distance grid** (v1's images predate the tags), and
+> `--install` writes `scanncart-grocery-v1.pt`. It exists so the app has a natively-loaded model
+> before v2's set is finished; `MODEL_TRAINING.md` §6 has the whole chain.
 
 | Checkpoint | Expect |
 |---|---|
@@ -137,7 +145,7 @@ sufficient — the number that matters is the next step's.
 ## 6. Validate — per class **and** per distance
 
 ```bash
-./sidecar/.venv/Scripts/python.exe sidecar/tools/train_v2.py --val
+./sidecar/.venv/Scripts/python.exe sidecar/tools/train_model.py --val
 ```
 
 Defaults to `--split test` (the acceptance split), and runs three extra passes for the distance
@@ -160,7 +168,7 @@ manifest says the breakdown was *skipped* rather than reporting nothing.
 ## 7. Install
 
 ```bash
-./sidecar/.venv/Scripts/python.exe sidecar/tools/train_v2.py --install
+./sidecar/.venv/Scripts/python.exe sidecar/tools/train_model.py --install
 ```
 
 Writes `sidecar/models/scanncart-grocery-v2.pt` **plus** `scanncart-grocery-v2.json` beside it,

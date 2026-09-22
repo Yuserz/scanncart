@@ -61,7 +61,7 @@ def resolve_resize_mode(
        saying so, and a setting that silently ignored what it was set to would
        be worse than a wrong one.
     2. A **recorded requirement** — `models/<stem>.json`, written beside the
-       weights by `tools/train_v2.py --install` — beats the format heuristic
+       weights by `tools/train_model.py --install` — beats the format heuristic
        below. It is the only input that is a fact about *these* weights: a `.pt`
        trained on a Roboflow `Stretch to` version needs stretch, and neither the
        file nor its name says so. The lookup is `app.models.requirement_for` and
@@ -358,7 +358,7 @@ def resize_guess(
             "at the wrong scale, which costs detections and is worst on small/far objects."
         ),
         remedy=(
-            f"Record it if you know these weights are {mode}-trained — `train_v2.py --install` "
+            f"Record it if you know these weights are {mode}-trained — `train_model.py --install` "
             "records it from the training run, and the Admin Panel records the same fact from "
             "what you know. Setting resize_mode yourself overrides the record instead of "
             "supplying one."

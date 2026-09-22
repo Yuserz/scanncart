@@ -493,7 +493,7 @@ the `far` cells are short of.
 
 **The condition that comes with it:** these weights have to be *run* stretched, while
 `resolve_resize_mode()`'s format heuristic answers *letterbox* for a locally trained `.pt`. What
-closes that gap is the **record** `train_v2.py --install` writes beside them: `auto` honours it, so
+closes that gap is the **record** `train_model.py --install` writes beside them: `auto` honours it, so
 the default is the geometry they trained at. Without a record (a hand-copied weight) `auto` falls
 back to the heuristic and letterboxes every object to 0.56× the canvas it was trained at — no
 error, no warning, just weaker detections where they were already weakest. The Admin Panel's entry
@@ -521,17 +521,17 @@ for the weights says which of the two it is.
 - [ ] Mark the 50 negative frames **null** — not skipped, not auto-labeled ([The null rule](#the-null-rule-50-frames-and-they-are-the-whole-point))
 - [ ] Generate the version from the reviewed settings: `generate_version.py --dry-run`, then `--yes`
 - [ ] `generate_version.py --verify <n>` — it must say it *matches*, and report the image count
-- [ ] Download the version's export: `train_v2.py --download --version <n>`, then check it with
-      `train_v2.py` — it must not report a class-list mismatch
-- [ ] Train: `train_v2.py --yes` (`yolo11s.pt`, `imgsz=640`), target mAP50 ≥ 0.90
-- [ ] Validate: `train_v2.py --val` — recall ≥ 0.85 for **every** class, and no `[WARN]` or
+- [ ] Download the version's export: `train_model.py --download --version <n>`, then check it with
+      `train_model.py` — it must not report a class-list mismatch
+- [ ] Train: `train_model.py --yes` (`yolo11s.pt`, `imgsz=640`), target mAP50 ≥ 0.90
+- [ ] Validate: `train_model.py --val` — recall ≥ 0.85 for **every** class, and no `[WARN]` or
       `[SKIP]` line (a skipped class was never measured: the split holds no instances of it)
 - [ ] Read the class × distance grid `--val` prints as well: nothing under *below the floor at a
       distance*. The per-class floor averages the three distances, so a class can pass it on a
       test split that happens to be mostly `close` while missing the item at `far` — which is the
       bucket this whole checklist exists to fill (MODEL_TRAINING.md §6). `-` in a cell means that
       distance held no instances of the class, `!` means it missed the floor there
-- [ ] Install: `train_v2.py --install --version <n>` → `sidecar/models/scanncart-grocery-v2.pt`,
+- [ ] Install: `train_model.py --install --version <n>` → `sidecar/models/scanncart-grocery-v2.pt`,
       plus the `.json` record beside it carrying the `resize_mode` these weights need **and**
       `--val`'s per-class recall — the install prints the score it picked up, or says none was
       found, so a panel that shows nothing is never a surprise
