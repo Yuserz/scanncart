@@ -14,6 +14,10 @@ graphify-out/
 # Sidecar runtime logs from a manually launched `python run.py`.
 sidecar/*.log
 
-# Local training dataset (SKU image crops, ~5 GB) plus its credentials file.
-# Lives in a scratch dir at the repo root, not part of the app tree.
-/scanncart/
+# Runtime state, not source. `main.py`'s db_path is relative, so a sidecar launched with
+# the repo root as its CWD writes a detection log here instead of into sidecar/data/.
+# Whatever it logs, it is a session record rather than something to clone.
+/data/
+
+# The agent tooling's own project id.
+.freebuff/

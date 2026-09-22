@@ -2,7 +2,32 @@
 __pycache__/
 *.pyc
 data/
-models/
+# Weights are build outputs, not source. The README is the exception: it carries the
+# naming rule (scanncart-grocery-v<N>) that the picker and MODEL_TRAINING.md 8.2 refer to.
+#
+# `models/*` rather than `models/`: excluding the *directory* excludes everything under
+# it, and git does not re-include a path whose parent directory is excluded - so the
+# negation below would be silently dead and the README untracked (verified with
+# `git check-ignore -v sidecar/models/README.md`).
+models/*
+!models/README.md
+
+# Weights anywhere under sidecar/ are build outputs, whoever downloaded them.
+#
+# Ultralytics resolves a bare `active_model` name (`yolo11n.pt`, which `presets.py` writes) by
+# auto-downloading it into the process cwd - which is `sidecar/`. So these land next to the code
+# rather than in `models/`, and they are noise in git *and* invisible in the Model dropdown
+# (which reads `models/`). They belong exactly where they are: moving them into `models/` would
+# list every stock weight twice in the picker - once as the built-in name and once as a custom
+# one - and leave the bare names resolving to a download instead of a local file.
+#
+# `yolo11n/m/s.pt` (63 MB) were committed before this rule existed and have been untracked with
+# `git rm --cached`; the files stay on disk. History still carries them, so a clone pays for them
+# until the history is rewritten - which is the reason the rule exists rather than a reason to
+# rewrite it. A test (`test_no_weight_files_are_tracked`) checks through git that it stays true,
+# since `.gitignore` alone does not untrack something already in the index.
+*.pt
+*.onnx
 .env
 .venv-inference/
 .inference-runtime/
