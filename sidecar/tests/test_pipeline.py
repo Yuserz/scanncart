@@ -1,5 +1,5 @@
 import numpy as np
-from app.pipeline import Pipeline, encode_preview_jpeg
+from app.pipeline import Pipeline, encode_preview_jpeg, mirrored_detections
 from app.camera import CameraCapture
 from app.settings import Settings
 from app.schemas import Detection
@@ -244,3 +244,140 @@ def test_stats_report_zero_when_camera_stalls():
     msg = pipe.process_once()
 
     assert msg["stats"]["capture_fps"] == 0.0
+
+
+# --- the preview is mirrored; inference is not ---------------------------
+
+
+def _left_lit_source(w=64, h=48):
+    """A frame whose only bright area is on the left, so a mirror shows up in the bytes.
+
+    Uniform frames are the trap for this: one encodes byte-identically mirrored or not, so a
+    test built on `_frame()` passes whether or not anything was reflected. This one cannot.
+    """
+
+    class _Source:
+        width, height, fps = w, h, 30.0
+
+        def latest(self):
+            frame = np.zeros((h, w, 3), dtype=np.uint8)
+            frame[:, : w // 4] = 255
+            return (7, frame)
+
+        def read(self):
+            return self.latest()[1]
+
+    return _Source()
+
+
+def _mirrored(frame):
+    """Left-to-right reflection, written independently of the implementation."""
+    return np.ascontiguousarray(frame[:, ::-1])
+
+
+#: `_StubDetector` returns a box on the left: the overlay has to move to the right of a
+#: mirrored preview for it to still describe the item it was detected on.
+_STUB_BOX_MIRRORED = (0.7, 0.2, 0.9, 0.4)
+
+
+def _rounded(box):
+    return tuple(round(v, 6) for v in box)
+
+
+def test_the_preview_is_mirrored_and_the_boxes_reflect_with_it():
+    """The operator asked for a mirror image; the overlay has to come with it.
+
+    Both halves are asserted against independent expressions - a numpy reverse of the x axis for
+    the image, and the reflected coordinates for the box - so this fails if either the flip is
+    dropped or it is applied to only one of the two. A mirrored image with unmirrored boxes is
+    worse than either alone: the boxes sit on the wrong items.
+    """
+    sent = []
+    source = _left_lit_source()
+    pipe = Pipeline(source, _StubDetector(), Settings(), on_message=sent.append)
+
+    msg = pipe.process_once()
+    _, true_frame = source.latest()
+    height = Settings().preview_height
+
+    assert msg["jpeg"] == encode_preview_jpeg(_mirrored(true_frame), height)
+    # And not the true frame either, which is what makes the line above mean something.
+    assert msg["jpeg"] != encode_preview_jpeg(true_frame, height)
+    assert _rounded(msg["detections"][0]["box"]) == _STUB_BOX_MIRRORED
+
+
+def test_the_gap_frames_are_mirrored_by_the_same_rule():
+    """`emit_preview` renders most of the frames on screen, so it has to agree with the other path.
+
+    Reflecting in only one of the two would flicker the overlay between mirrored and true at the
+    inference rate - which is more distracting than not mirroring at all, and is the reason the
+    mirror is applied at both message builds rather than once when the frame is read.
+    """
+    sent = []
+    source = _left_lit_source()
+    pipe = Pipeline(source, _StubDetector(), Settings(), on_message=sent.append)
+    pipe.process_once()
+    pipe._last_emit_ts = 0.0
+
+    msg = pipe.emit_preview()
+    _, true_frame = source.latest()
+
+    assert msg is not None
+    assert msg["jpeg"] == encode_preview_jpeg(
+        _mirrored(true_frame), Settings().preview_height
+    )
+    assert _rounded(msg["detections"][0]["box"]) == _STUB_BOX_MIRRORED
+
+
+def test_the_detector_is_given_the_true_frame_and_never_the_mirror():
+    """The load-bearing half of the decision to mirror in the preview rather than the capture.
+
+    These weights were trained on ordinary photographs, so a mirrored input asks the model to read
+    reversed text and mirrored brand marks - exactly what identifies a sachet. The operator wants
+    the mirror; the model must not pay for it. If the flip ever moves into `CameraCapture`, this
+    is the test that fails.
+    """
+    seen = []
+
+    class _RecordingDetector(_StubDetector):
+        def infer(self, frame):
+            seen.append(np.array(frame, copy=True))
+            return super().infer(frame)
+
+    source = _left_lit_source()
+    pipe = Pipeline(source, _RecordingDetector(), Settings(), on_message=lambda _m: None)
+    pipe.process_once()
+    _, true_frame = source.latest()
+
+    assert len(seen) == 1
+    assert np.array_equal(seen[0], true_frame)
+    assert not np.array_equal(seen[0], _mirrored(true_frame))
+    # Stated as the thing that would actually hurt: the bright region is still on the left
+    # in what the model saw, and on the right in what the operator saw.
+    assert seen[0][:, 0].mean() > seen[0][:, -1].mean()
+
+
+def test_mirrored_detections_swaps_the_edges_rather_than_negating_them():
+    """Pure, so the one easy-to-get-wrong step is pinned without needing a frame at all.
+
+    A reflection is `x' = 1 - x`, so the two edges trade places. Negating both is the tempting
+    version and it is wrong twice: it leaves the box on the side it started on, and it reverses
+    which edge is which, so the overlay would draw inside out.
+    """
+    (out,) = mirrored_detections([Detection(track_id=1, cls="banana", conf=0.9, box=(0.1, 0.2, 0.3, 0.4))])
+
+    assert _rounded(out.box) == _STUB_BOX_MIRRORED
+    # y is untouched and nothing else about the detection changes.
+    assert (out.track_id, out.cls, out.conf) == (1, "banana", 0.9)
+
+    # A centred box is its own mirror - which the negate-both version also passes, and the reason
+    # the assertion above uses an off-centre one.
+    centred = Detection(track_id=2, cls="banana", conf=0.9, box=(0.25, 0.1, 0.75, 0.9))
+    (same,) = mirrored_detections([centred])
+    assert _rounded(same.box) == (0.25, 0.1, 0.75, 0.9)
+
+    # Reflecting twice is the identity: a box lands back where it started.
+    (back,) = mirrored_detections([out])
+    assert _rounded(back.box) == (0.1, 0.2, 0.3, 0.4)
+
+    assert mirrored_detections([]) == []

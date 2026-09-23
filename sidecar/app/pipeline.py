@@ -7,6 +7,39 @@ import numpy as np
 from app.schemas import Detection, Stats, FrameMessage
 
 
+def render_frame(frame: np.ndarray) -> np.ndarray:
+    """The frame as the preview shows it: mirrored, left to right.
+
+    The mirror belongs here, in the preview path, rather than in `CameraCapture` — and that
+    placement is the whole point. Inference has to see the *true* image: the weights were
+    trained on ordinary photographs, so a mirrored input asks the model to read reversed text
+    and mirrored logos, which is exactly what a sachet or a brand mark is. The operator is the
+    one who wants the mirror, because a counter view that moves the way a mirror does is easier
+    to aim at while holding a product. So capture, the detector, the logging store and any
+    dataset frames all keep the true orientation, and only the `jpeg` field of a frame message
+    is reflected — with `mirrored_detections` below reflecting the boxes to match it.
+    """
+    return cv2.flip(frame, 1)
+
+
+def mirrored_detections(detections: list[Detection]) -> list[Detection]:
+    """The same detections, placed as they sit on a mirrored preview.
+
+    A horizontal reflection is `x' = 1 - x`, so a box becomes `(1 - x2, y1, 1 - x1, y2)` — the
+    **edges swap**. Negating both would be the tempting version and it is wrong twice over: it
+    puts the box back on the side it started on, and it reverses which edge is which, so a box
+    that was left-to-right becomes right-to-left and the overlay draws inside out.
+
+    Pure and total, and here rather than in the renderer because the boxes and the image have to
+    be reflected by *the same rule*: an overlay reflected anywhere else is a second place for the
+    two to disagree, which shows up as boxes sitting on the wrong items.
+    """
+    return [
+        d.model_copy(update={"box": (1.0 - d.box[2], d.box[1], 1.0 - d.box[0], d.box[3])})
+        for d in detections
+    ]
+
+
 def encode_preview_jpeg(frame: np.ndarray, target_height: int) -> str:
     h, w = frame.shape[0], frame.shape[1]
     if h > target_height:
@@ -108,20 +141,22 @@ class Pipeline:
 
         self._log_detections(detections)
 
-        jpeg = encode_preview_jpeg(frame, self._settings.preview_height)
+        jpeg = encode_preview_jpeg(render_frame(frame), self._settings.preview_height)
         stats = Stats(
             infer_fps=round(self._infer_fps, 1),
             capture_fps=self._capture_fps(),
             latency_ms=round((t1 - t0) * 1000.0, 1),
         )
         with self._state_lock:
+            # The *true* detections are what is stored: `emit_preview` reflects them on the way
+            # out like this path does, and storing the reflected pair would reflect them twice.
             self._latest_detections = detections
             self._latest_stats = stats
             self._last_emit_ts = t1
 
         msg = FrameMessage(
             type="frame", ts=t1, seq=seq, jpeg=jpeg,
-            detections=detections, stats=stats,
+            detections=mirrored_detections(detections), stats=stats,
         ).model_dump()
         self._on_message(msg)
         return msg
@@ -149,10 +184,14 @@ class Pipeline:
         if got is None:
             return None
         seq, frame = got
-        jpeg = encode_preview_jpeg(frame, self._settings.preview_height)
+        # Mirrored by the same two calls the inference path uses. A second way of producing a
+        # renderable frame is how the image and its boxes drift apart: this emit fills the gaps
+        # between inferences, so reflecting in only one of the two would flicker the overlay
+        # between mirrored and true at the inference rate.
+        jpeg = encode_preview_jpeg(render_frame(frame), self._settings.preview_height)
         msg = FrameMessage(
             type="frame", ts=now, seq=seq, jpeg=jpeg,
-            detections=detections,
+            detections=mirrored_detections(detections),
             stats=stats
             or Stats(infer_fps=0.0, capture_fps=self._capture_fps(), latency_ms=0.0),
         ).model_dump()
