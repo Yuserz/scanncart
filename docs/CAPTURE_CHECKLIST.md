@@ -234,6 +234,83 @@ want them spread across train/valid/test rather than defaulting to train.
 > but it cannot tell the two cases apart — so the check that a C2b set made it in is the
 > *version's* image count after generation, not the project's.
 
+### Why these 50 must ship — the false positive is measured, not hypothetical
+
+Tier C2 is usually sold as cheap insurance. On this project it is the fix for a defect v1 produces
+**on an empty counter**: a live capture logged a full-frame `Bear Brand Fortified Powdered Milk 33g`
+at **0.957** confidence with nothing in front of the camera, holding for **16 of 16 consecutive
+frames**. Sixteen consecutive frames is one track, not a flicker — which is **one phantom row in the
+item log per session**, with an empty counter.
+
+Both sets were then measured through the app's own detector at the shipped `imgsz 640` / `conf 0.5`
+— the 50 staged negatives above, and 60 labelled product frames from v1's `train` split:
+
+| | 50 stored negatives (no product) | 60 labelled product frames |
+|---|---|---|
+| frames with ≥1 detection | 25/50 | 60/60 |
+| detections, total | 25 | 60 |
+| of those, a **clamped full-frame box** | **19** | **0** |
+| confidence: median / max | 0.757 / 0.928 | 0.948 / 0.973 |
+| class | Milo 16, Bear Brand 6, century tuna 3 | all 7 correct, in every frame |
+
+**Zero of 60 real product frames produce a clamped box; 19 of 25 empty-counter detections are
+exactly that.** Negatives fire the shape readily and products never do, which is what makes it a
+property of the model meeting a counter rather than evidence of a sachet. Two more readings from the
+same table matter for how you act on it:
+
+- **The phantom is usually Milo (16), not Bear Brand (6).** Bear Brand is only the one the live
+  session happened to hit, so this is not a single class misbehaving and re-shooting one product
+  would not fix it.
+- **The other 6 negatives still fired something.** The clamp is what made the live one *findable*,
+  not what made it wrong — a non-clamped false positive above `conf 0.5` logs a phantom item just the
+  same. So the count to be alarmed by is **25 of 50 frames**, and the clamp is only how it was caught.
+
+A clamped box means the model predicted something *larger than the image* and `normalize_detections`
+trimmed it to the frame — every edge pinned, `y2` exactly `1.0`:
+
+```
+negative_0028.jpg   conf 0.581   area 0.9993   (0.0002, 0.0001, 0.9996, 1.0000)
+negative_0015.jpg   conf 0.510   area 0.9985   (0.0005, 0.0004, 0.9994, 1.0000)
+```
+
+A real close-up, even a frame-filling one, still jitters by a few percent between frames.
+
+**The cause is v1's own capture regime, and it is spread across every class.** v1 was shot close, so
+border-touching labels are common throughout its training set:
+
+| class | instances | touching a border | area ≥ 0.99 |
+|---|---:|---:|---:|
+| lucky_me_pancit_canton_calamansi_flavor | 247 | 171 | 9 |
+| safeguard_pure_white_60g | 221 | 187 | 0 |
+| **Bear Brand Fortified Powdered Milk 33g** | 230 | **145** | 2 |
+| century_tuna_flakes_in_oil_155_grams | 218 | 127 | 4 |
+| silver_swan_sukang_puti_200ML | 154 | 125 | 0 |
+| 555 sardines 155grams | 352 | 63 | 0 |
+| Milo Chocolate Drink 22g Sachet | 49 | 41 | 4 |
+
+To a model taught that a product is often *pinned against the image border*, an uninformative
+counter scene resolves into the nearest such shape. v2's solo captures are shot to fix the distance
+axis and will not fix this on their own — they add more of the same regime.
+
+**So the negatives are the only thing in Tier C2 that teaches the opposite, and they only teach it
+if they reach the version — as background images with no boxes.** Marked null (`N`), never drawn on,
+never auto-labeled. Skipping the mark excludes them and the phantom survives training; drawing on one
+teaches the model that a shelf, a hand or a phone is a product. Both are worse than not shooting
+them.
+
+**The app can hide this at runtime, but only partly — which is why the negatives are still
+required.** A `suppress_clamped_detections` setting (on by default) drops detections pinned to all
+four frame edges before they reach the overlay or the item log. Verified against these 50 frames
+through the app's own pipeline: **19 of the 25 phantoms stop reaching the log and 6 do not**, because
+those 6 sit 0.0124–0.0286 from the nearest edge — inside the band real detections occupy — and
+loosening the rule to catch them would start discarding real items. So the runtime filter removes the
+loudest symptom and leaves the cause untouched. The negatives are what remove the cause, and they are
+also the only thing that covers the false positives with *no* clamp shape at all.
+
+All 50 are already staged and uploaded (`upload_state.json`: 50/50 `ok: true`), and the numbers above
+were measured on **those staged files** (`cleaned-negatives/negative/negative_*.jpg`), not on the
+`cam0_*` originals — so what is left is the marking, not the capture.
+
 ---
 
 ## Tier D — the held-out session (`s3`), for an acceptance number worth quoting
@@ -543,7 +620,9 @@ for the weights says which of the two it is.
 - [ ] Tier C2b: ~30 pure background frames, then mark each one with the null tool (**N**)
       (an earlier session left 60 StreamCam frames with empty labels in
       `sidecar/data/datasets/hard_negatives/` — eyeball those before shooting new ones)
-- [ ] Mark the C2b frames null **before** generating a version, or they are silently excluded
+- [ ] Mark the C2b frames null **before** generating a version, or they are silently excluded —
+      and the empty-counter false positive they fix (19/25 clamped boxes on negatives vs 0/60 on real
+      products) ships with the model instead
 - [ ] Confirm it registered: `label_progress.py` reports the expected number of null annotations
 - [ ] Label every cell in the order under [The labeling order](#the-labeling-order), then re-run `label_progress.py`
 - [ ] Mark the 50 negative frames **null** — not skipped, not auto-labeled ([The null rule](#the-null-rule-50-frames-and-they-are-the-whole-point))
@@ -617,7 +696,11 @@ Three rules behind that order:
 ### The null rule (50 frames, and they are the whole point)
 
 The 50 frames in the `negative` batch are the Tier C2b hard negatives — background and clutter with
-**no roster product in them**. They are not "images nobody got to yet":
+**no roster product in them**. They are not "images nobody got to yet", and they are not insurance
+either: they are the measured fix for a false positive v1 fires on an empty counter (**19 of 25**
+empty-counter detections are clamped full-frame boxes, against **0 of 60** real product frames — see
+[Why these 50 must ship](#why-these-50-must-ship--the-false-positive-is-measured-not-hypothetical)).
+So the marking below is not bookkeeping; it is what makes the fix exist.
 
 | Action | What happens to them |
 |---|---|

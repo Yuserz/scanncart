@@ -209,6 +209,9 @@ export function LiveView({ port, deps }: LiveViewProps): JSX.Element {
           `${weights.setting}, which resolves to ${weights.geometry} for these weights.`
   const stats = frame?.stats
   const trackedCount = frame?.detections.length ?? 0
+  // Absent on a sidecar that predates the field, which reads as "nothing suppressed" — the same
+  // reading as a clean frame, and the honest one: there is no evidence to the contrary.
+  const suppressed = stats?.suppressed ?? 0
   // Real decoded frame size, read on img load — drives the wrapper's
   // aspect-ratio and fit-to-column sizing in CSS (falls back to 16/9
   // while idle). Same-value updates bail out, so per-frame loads are free.
@@ -431,6 +434,26 @@ export function LiveView({ port, deps }: LiveViewProps): JSX.Element {
                     <b>{trackedCount}</b>
                     <small>tracked</small>
                   </div>
+                  {/* Rendered only when it fires, unlike `tracked` above. A count of 0 IS the
+                      healthy reading here, and a tile that always showed 0 would be one nobody
+                      looks at by the time it says 1. Absence therefore means "no phantom this
+                      frame", and the setting's own state is legible where it is set, in the
+                      tuning card's checkbox. */}
+                  {suppressed > 0 && (
+                    <div
+                      className="stat-tile warn"
+                      data-testid="stat-suppressed"
+                      title={
+                        'Detections whose box was pinned to all four frame edges, dropped before ' +
+                        'they reached the item log. These weights produce that shape on an empty ' +
+                        'counter. If a real item that fills the frame stops being detected, turn ' +
+                        'off “Drop frame-edge phantoms” in Camera tuning.'
+                      }
+                    >
+                      <b>{suppressed}</b>
+                      <small>suppressed</small>
+                    </div>
+                  )}
                 </>
               ) : (
                 // Renamed from "no stats yet": with the weights readout below always present, the

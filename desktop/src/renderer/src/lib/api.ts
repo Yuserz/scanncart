@@ -40,6 +40,12 @@ export interface SettingsPayload {
   device: string
   preview_height: number
   preview_max_fps: number
+  // Mirrors sidecar/app/settings.py::preview_mirror. Preview-only: the model always sees the
+  // true frame, and the overlay is reflected by the sidecar so the two cannot disagree.
+  preview_mirror: boolean
+  // Mirrors sidecar/app/settings.py::suppress_clamped_detections. Drops detections pinned to all
+  // four frame edges - the empty-counter false positive. Hot-reloadable.
+  suppress_clamped_detections: boolean
   track_expiry_s: number
   class_allowlist: string[]
   detector_backend: string

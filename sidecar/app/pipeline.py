@@ -8,7 +8,7 @@ from app.schemas import Detection, Stats, FrameMessage
 
 
 def render_frame(frame: np.ndarray) -> np.ndarray:
-    """The frame as the preview shows it: mirrored, left to right.
+    """The frame as a mirrored preview shows it: reflected, left to right.
 
     The mirror belongs here, in the preview path, rather than in `CameraCapture` — and that
     placement is the whole point. Inference has to see the *true* image: the weights were
@@ -18,6 +18,10 @@ def render_frame(frame: np.ndarray) -> np.ndarray:
     to aim at while holding a product. So capture, the detector, the logging store and any
     dataset frames all keep the true orientation, and only the `jpeg` field of a frame message
     is reflected — with `mirrored_detections` below reflecting the boxes to match it.
+
+    Whether this is applied at all is the operator's `preview_mirror` setting, read fresh at
+    each emit. `render_preview` below is where that decision is made; this stays a pure
+    reflection so "is the preview mirrored" is answered in exactly one place.
     """
     return cv2.flip(frame, 1)
 
@@ -38,6 +42,94 @@ def mirrored_detections(detections: list[Detection]) -> list[Detection]:
         d.model_copy(update={"box": (1.0 - d.box[2], d.box[1], 1.0 - d.box[0], d.box[3])})
         for d in detections
     ]
+
+
+def render_preview(
+    frame: np.ndarray,
+    detections: list[Detection],
+    mirror: bool,
+    target_height: int,
+) -> tuple[str, list[Detection]]:
+    """One preview frame as a pair: the JPEG the renderer shows, and the boxes that go with it.
+
+    The two come out of one call because they have to be reflected by *the same rule at the same
+    moment*. A mirrored image carrying true boxes puts every overlay on the item's mirror twin —
+    the boxes look correct in isolation and land on the wrong side of the frame — and reflecting
+    in one emit path but not the other flickers the overlay between the two at the inference
+    rate. Returning both makes "the image and its boxes agree" a property of this function
+    rather than of two call sites staying in step, which is what the toggle makes easy to get
+    wrong: `mirror` now has an off state, and off has to mean off for both halves.
+
+    `mirror` is read from `settings.preview_mirror` at each emit, so a toggle applies to the next
+    frame. Off returns the frame untouched — capture already read it in the true orientation, so
+    there is nothing to undo.
+    """
+    if not mirror:
+        return encode_preview_jpeg(frame, target_height), detections
+    return (
+        encode_preview_jpeg(render_frame(frame), target_height),
+        mirrored_detections(detections),
+    )
+
+
+#: How close to a frame edge, as a fraction of width/height, a box must sit on **all four** sides
+#: before it counts as a prediction the model wanted larger than the image.
+#:
+#: Chosen from measurement, not taste. Across the 25 detections the 50 empty-counter negatives
+#: produced and the 60 detections from labelled product frames, the distance from the nearest
+#: edge on a box's *worst* side separated the two populations at this value:
+#:
+#:     worst edge      phantoms caught     real lost     training labels rejected
+#:     <= 0.002            19/25             0/60             0.82%
+#:     <= 0.010            19/25             0/60             1.43%
+#:     <= 0.020            23/25             1/60             1.70%
+#:
+#: 0.01 is the loosest value that loses **no** real detection: the tightest real one sits at
+#: 0.0109, so 0.02 would buy four more phantoms by dropping a real item. The six phantoms this
+#: still misses lie between 0.0124 and 0.0286 — *inside* the band real detections occupy — which is
+#: why the rule stops here rather than chasing them: past this point it stops being a phantom filter
+#: and starts being a frame-filling-object filter.
+#:
+#: The 1.43% is the honest cost. It is the share of v1's own training labels that touch all four
+#: edges, so an item that genuinely fills the frame edge-to-edge is the case this can mistake for a
+#: phantom — which is why the suppression is a setting with an off switch rather than a rule baked
+#: into the detector.
+CLAMPED_EDGE_TOLERANCE = 0.01
+
+
+def is_clamped_to_frame(box, tolerance: float = CLAMPED_EDGE_TOLERANCE) -> bool:
+    """Whether a box is pinned to *all four* frame edges: a prediction larger than the image.
+
+    All four, not one or two. A real close-up overflows the frame on the sides the object leaves
+    through, so touching a single edge means nothing — v1's own labels show that, with 63% of Bear
+    Brand's training instances touching one. Touching *every* side is the shape a box takes when
+    the model wanted something bigger than the canvas and `normalize_detections` trimmed it, and
+    that is the signature the empty-counter false positive has: `x1 0.0000`, `y1 0.0001`,
+    `x2 0.9995`, `y2` exactly `1.0000`, held across 16 consecutive frames.
+
+    Pure and total, so the rule can be tested against synthetic boxes rather than a camera.
+    """
+    x1, y1, x2, y2 = box
+    return (
+        x1 <= tolerance
+        and y1 <= tolerance
+        and x2 >= 1.0 - tolerance
+        and y2 >= 1.0 - tolerance
+    )
+
+
+def drop_clamped_detections(
+    detections: list[Detection], tolerance: float = CLAMPED_EDGE_TOLERANCE
+) -> tuple[list[Detection], int]:
+    """The detections that are not frame-clamped, and how many were removed.
+
+    Returns the count as well as the list because a suppression nobody can see is the failure this
+    exists to avoid: the phantom is dropped from the overlay, the item log and the database, and
+    without a number travelling with it there is no evidence the rule did anything at all — the
+    operator simply sees a model that appears not to have this defect.
+    """
+    kept = [d for d in detections if not is_clamped_to_frame(d.box, tolerance)]
+    return kept, len(detections) - len(kept)
 
 
 def encode_preview_jpeg(frame: np.ndarray, target_height: int) -> str:
@@ -131,6 +223,15 @@ class Pipeline:
         if allow:
             allowed = set(allow)
             detections = [d for d in detections if d.cls in allowed]
+        # The frame-clamp filter, deliberately here rather than in the detector. `normalize_detections`
+        # is where the clamp *happens*, so that is the tempting place to undo it — but the detector is
+        # also what `tools/audit_recall.py` and `tools/spec_check.py` measure through, and a filter
+        # inside it would delete the very evidence those tools exist to count. This suppression is an
+        # app-level decision about what to *show and log*, so it sits with the other one
+        # (`class_allowlist`) and leaves the model's raw output intact for anything that asks.
+        suppressed = 0
+        if self._settings.suppress_clamped_detections:
+            detections, suppressed = drop_clamped_detections(detections)
         t1 = time.time()
 
         if self._last_infer_ts is not None:
@@ -141,11 +242,14 @@ class Pipeline:
 
         self._log_detections(detections)
 
-        jpeg = encode_preview_jpeg(render_frame(frame), self._settings.preview_height)
+        jpeg, shown = render_preview(
+            frame, detections, self._settings.preview_mirror, self._settings.preview_height
+        )
         stats = Stats(
             infer_fps=round(self._infer_fps, 1),
             capture_fps=self._capture_fps(),
             latency_ms=round((t1 - t0) * 1000.0, 1),
+            suppressed=suppressed,
         )
         with self._state_lock:
             # The *true* detections are what is stored: `emit_preview` reflects them on the way
@@ -155,8 +259,7 @@ class Pipeline:
             self._last_emit_ts = t1
 
         msg = FrameMessage(
-            type="frame", ts=t1, seq=seq, jpeg=jpeg,
-            detections=mirrored_detections(detections), stats=stats,
+            type="frame", ts=t1, seq=seq, jpeg=jpeg, detections=shown, stats=stats,
         ).model_dump()
         self._on_message(msg)
         return msg
@@ -184,14 +287,15 @@ class Pipeline:
         if got is None:
             return None
         seq, frame = got
-        # Mirrored by the same two calls the inference path uses. A second way of producing a
+        # Built by the same single call the inference path uses. A second way of producing a
         # renderable frame is how the image and its boxes drift apart: this emit fills the gaps
         # between inferences, so reflecting in only one of the two would flicker the overlay
         # between mirrored and true at the inference rate.
-        jpeg = encode_preview_jpeg(render_frame(frame), self._settings.preview_height)
+        jpeg, shown = render_preview(
+            frame, detections, self._settings.preview_mirror, self._settings.preview_height
+        )
         msg = FrameMessage(
-            type="frame", ts=now, seq=seq, jpeg=jpeg,
-            detections=mirrored_detections(detections),
+            type="frame", ts=now, seq=seq, jpeg=jpeg, detections=shown,
             stats=stats
             or Stats(infer_fps=0.0, capture_fps=self._capture_fps(), latency_ms=0.0),
         ).model_dump()

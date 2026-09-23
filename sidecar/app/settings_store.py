@@ -119,6 +119,12 @@ HOT_RELOADABLE_FIELDS = {
     "infer_frame_skip",
     "preview_height",
     "preview_max_fps",
+    # Read at each emit by `Pipeline`, which reflects the image and the boxes together, so the
+    # toggle takes effect on the next frame without stopping capture.
+    "preview_mirror",
+    # Read per inference, alongside class_allowlist, so turning it off takes effect on the next
+    # frame — which is when an operator watching a suppressed item would want to.
+    "suppress_clamped_detections",
     "track_expiry_s",
     "class_allowlist",
     # Read per inference call (YoloDetector passes it to track(); the remote
@@ -203,6 +209,13 @@ def _valid_field(name: str, value: Any) -> bool:
         return isinstance(value, int) and 0 <= value <= 120
     if name == "preview_height":
         return isinstance(value, int) and 120 <= value <= 1080
+    if name == "preview_mirror":
+        # `isinstance(True, int)` is True, so the bool must be tested for its own type rather
+        # than left to a numeric branch; there is no branch here to fall through to, but the
+        # explicit check is what stops 1/0 from JSON standing in for the two states.
+        return isinstance(value, bool)
+    if name == "suppress_clamped_detections":
+        return isinstance(value, bool)
     if name == "track_expiry_s":
         return isinstance(value, (int, float)) and 0.0 < value <= 30.0
     if name == "class_allowlist":

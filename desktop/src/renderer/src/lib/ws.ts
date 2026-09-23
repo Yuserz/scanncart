@@ -13,6 +13,11 @@ export interface FrameStats {
   infer_fps: number
   capture_fps: number
   latency_ms: number
+  // Detections this frame's inference produced and the sidecar's frame-clamp filter dropped
+  // (settings.suppress_clamped_detections). Optional because the field is newer than the wire:
+  // a sidecar that predates it sends no such key, and `undefined` has to read as "nothing
+  // suppressed" rather than as a missing reading.
+  suppressed?: number
 }
 
 export interface FrameMessage {

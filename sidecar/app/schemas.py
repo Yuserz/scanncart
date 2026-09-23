@@ -24,6 +24,16 @@ class Stats(BaseModel):
     infer_fps: float
     capture_fps: float
     latency_ms: float
+    # How many detections this frame's inference produced and the frame-clamp filter dropped
+    # (`Pipeline.drop_clamped_detections`). Per-frame rather than cumulative, like the other three,
+    # and 0 on every frame of a healthy capture.
+    #
+    # Carried on the frame message because the suppression is otherwise invisible by construction:
+    # it removes a row from the item log, and an operator looking at a log that is missing a
+    # phantom has no way to tell a working filter from a model that never had the defect. A count
+    # that travels with the frame makes the rule's activity a readout rather than an assumption
+    # about the code.
+    suppressed: int = 0
 
 
 class FrameMessage(BaseModel):
@@ -94,6 +104,8 @@ class SettingsPayload(BaseModel):
     device: str
     preview_height: int
     preview_max_fps: int
+    preview_mirror: bool
+    suppress_clamped_detections: bool
     track_expiry_s: float
     class_allowlist: list[str]
     detector_backend: str
@@ -181,6 +193,8 @@ class SettingsUpdateRequest(BaseModel):
     device: str | None = None
     preview_height: int | None = Field(default=None, ge=120, le=1080)
     preview_max_fps: int | None = Field(default=None, ge=0, le=120)
+    preview_mirror: bool | None = None
+    suppress_clamped_detections: bool | None = None
     track_expiry_s: float | None = Field(default=None, gt=0.0, le=30.0)
     class_allowlist: list[str] | None = None
     detector_backend: str | None = None

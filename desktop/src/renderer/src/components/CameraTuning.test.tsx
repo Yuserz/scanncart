@@ -952,3 +952,111 @@ describe('reading and setting exact values', () => {
     expect(screen.getByTestId('unit-preview_height')).toHaveTextContent('px')
   })
 })
+
+describe('the preview mirror toggle', () => {
+  it('renders on the tuning card with the state the sidecar reports', async () => {
+    // It has to be here and not in Admin: which way the feed faces is judged
+    // while looking at the feed, and it applies without a restart.
+    renderCard()
+    const box = await screen.findByLabelText('Mirror preview')
+
+    expect(box).toBeInstanceOf(HTMLInputElement)
+    expect((box as HTMLInputElement).type).toBe('checkbox')
+    expect(box).toBeChecked()
+  })
+
+  it('shows an unmirrored preview as unchecked rather than as an off slider', async () => {
+    // A boolean drawn as a range input cannot express false at all (it would
+    // read as 0/"unset"), so the field type is load-bearing here.
+    renderCard({ getSettings: async () => baseSettings({ preview_mirror: false }) })
+
+    await waitFor(() => expect(screen.getByLabelText('Mirror preview')).not.toBeChecked())
+  })
+
+  it('writes the new value live, without persisting', async () => {
+    // A live PATCH is what makes the toggle apply to the next frame; persist
+    // = false keeps a glance at a label from rewriting the startup config.
+    const patches: unknown[] = []
+    const persists: (boolean | undefined)[] = []
+    renderCard({
+      updateSettings: async (patch: unknown, persist?: boolean) => {
+        patches.push(patch)
+        persists.push(persist)
+        return baseSettings(patch as object)
+      }
+    })
+    await screen.findByLabelText('Mirror preview')
+    await userEvent.click(screen.getByRole('button', { name: /Camera tuning/ }))
+    await userEvent.click(screen.getByLabelText('Mirror preview'))
+
+    await waitFor(() => expect(patches).toContainEqual({ preview_mirror: false }))
+    expect(persists).toEqual([false])
+  })
+
+  it('counts as an unsaved change so Save can commit the choice', async () => {
+    renderCard({
+      getSettings: async () => baseSettings({ preview_mirror: true }),
+      updateSettings: async (patch: unknown) => baseSettings(patch as object)
+    })
+    await screen.findByLabelText('Mirror preview')
+    await userEvent.click(screen.getByRole('button', { name: /Camera tuning/ }))
+    await userEvent.click(screen.getByLabelText('Mirror preview'))
+
+    await waitFor(() => expect(screen.getByTestId('tuning-dirty')).toHaveTextContent('1 unsaved'))
+  })
+})
+
+describe('the frame-edge phantom filter toggle', () => {
+  it('renders on the tuning card, on by default', async () => {
+    // It has to be reachable while watching the item log: the case for turning it off is a real
+    // item disappearing from that log, which is a judgement nobody makes in the Admin Panel.
+    renderCard()
+    const box = await screen.findByLabelText('Drop frame-edge phantoms')
+
+    expect(box).toBeInstanceOf(HTMLInputElement)
+    expect((box as HTMLInputElement).type).toBe('checkbox')
+    expect(box).toBeChecked()
+  })
+
+  it('shows a saved off state as unchecked', async () => {
+    renderCard({ getSettings: async () => baseSettings({ suppress_clamped_detections: false }) })
+
+    await waitFor(() =>
+      expect(screen.getByLabelText('Drop frame-edge phantoms')).not.toBeChecked()
+    )
+  })
+
+  it('writes the new value live, without persisting', async () => {
+    // Live is what makes the escape hatch usable: an operator who has just watched a frame-filling
+    // item go missing needs it back on the next frame, not after a save and a restart.
+    const patches: unknown[] = []
+    const persists: (boolean | undefined)[] = []
+    renderCard({
+      updateSettings: async (patch: unknown, persist?: boolean) => {
+        patches.push(patch)
+        persists.push(persist)
+        return baseSettings(patch as object)
+      }
+    })
+    await screen.findByLabelText('Drop frame-edge phantoms')
+    await userEvent.click(screen.getByRole('button', { name: /Camera tuning/ }))
+    await userEvent.click(screen.getByLabelText('Drop frame-edge phantoms'))
+
+    await waitFor(() =>
+      expect(patches).toContainEqual({ suppress_clamped_detections: false })
+    )
+    expect(persists).toEqual([false])
+  })
+
+  it('says what the knob costs, not only what it removes', async () => {
+    // The tradeoff is the whole difficulty: ~1.4% of these weights' own training boxes touch all
+    // four edges, so the hint has to name the failure mode of turning it *on*, not just the
+    // phantom it removes. A hint that only sells the feature is how a filter gets left on past
+    // the model that needed it.
+    renderCard()
+    await screen.findByLabelText('Drop frame-edge phantoms')
+
+    const hint = screen.getByText(/all four frame edges/i)
+    expect(hint).toHaveTextContent(/1\.4%|fills the frame/i)
+  })
+})

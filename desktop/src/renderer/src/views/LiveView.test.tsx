@@ -44,14 +44,17 @@ function readoutDeps(
   return { ...deps, pollHealth: false, pollCameras: false }
 }
 
-function frameWith(dets: FrameMessage['detections']): FrameMessage {
+function frameWith(
+  dets: FrameMessage['detections'],
+  stats: Partial<FrameMessage['stats']> = {}
+): FrameMessage {
   return {
     type: 'frame',
     ts: 123,
     seq: 1,
     jpeg: 'AAAA',
     detections: dets,
-    stats: { infer_fps: 22.4, capture_fps: 60, latency_ms: 88 }
+    stats: { infer_fps: 22.4, capture_fps: 60, latency_ms: 88, ...stats }
   }
 }
 
@@ -126,6 +129,50 @@ describe('LiveView', () => {
     expect(screen.getByTestId('stat-capture-fps')).toHaveTextContent('60')
     expect(screen.getByTestId('stat-latency')).toHaveTextContent('88')
     expect(screen.getByTestId('stat-tracked')).toHaveTextContent('1')
+  })
+
+  it('shows the suppressed count when the sidecar drops a frame-edge phantom', () => {
+    // The suppression removes a row from the item log, so this chip is the only evidence it
+    // happened at all: without it a working filter is indistinguishable from a model that never
+    // had the defect, and an operator whose real item was dropped has nothing to notice.
+    const h = makeHarness()
+    render(<LiveView port={8765} deps={h.deps} />)
+    act(() => {
+      h.opts().onOpen?.()
+      h.opts().onFrame?.(frameWith([], { suppressed: 2 }))
+    })
+
+    expect(screen.getByTestId('stat-suppressed')).toHaveTextContent('2')
+    expect(screen.getByTestId('stat-suppressed')).toHaveTextContent('suppressed')
+  })
+
+  it('leaves the suppressed tile off when nothing was dropped', () => {
+    // Zero is the healthy reading, so a tile showing it would be one nobody looks at by the time
+    // it says 1 — and the setting's own state is legible in the tuning card either way.
+    const h = makeHarness()
+    render(<LiveView port={8765} deps={h.deps} />)
+    act(() => {
+      h.opts().onOpen?.()
+      h.opts().onFrame?.(frameWith([], { suppressed: 0 }))
+    })
+
+    expect(screen.getByTestId('stats')).toBeInTheDocument()
+    expect(screen.queryByTestId('stat-suppressed')).not.toBeInTheDocument()
+  })
+
+  it('treats a sidecar that omits the field as nothing suppressed', () => {
+    // The field is newer than the wire, so an older sidecar sends no such key; `undefined` has to
+    // read as "no phantom" rather than as a tile stuck at a falsy value.
+    const h = makeHarness()
+    render(<LiveView port={8765} deps={h.deps} />)
+    const frame = frameWith([])
+    delete frame.stats.suppressed
+    act(() => {
+      h.opts().onOpen?.()
+      h.opts().onFrame?.(frame)
+    })
+
+    expect(screen.queryByTestId('stat-suppressed')).not.toBeInTheDocument()
   })
 
   it('does not add a duplicate item-log row for a repeated track_id', () => {

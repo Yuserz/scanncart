@@ -424,6 +424,50 @@ def test_class_allowlist_is_hot_reloadable():
     assert "class_allowlist" in HOT_RELOADABLE_FIELDS
 
 
+def test_valid_field_preview_mirror():
+    """Only a real bool. `isinstance(True, int)` is True in Python, so a numeric branch would
+    have let 1 and 0 through from a hand-edited file and stood in for the two states."""
+    assert _valid_field("preview_mirror", True)
+    assert _valid_field("preview_mirror", False)
+    assert not _valid_field("preview_mirror", 1)
+    assert not _valid_field("preview_mirror", 0)
+    assert not _valid_field("preview_mirror", "true")
+    assert not _valid_field("preview_mirror", None)
+
+
+def test_preview_mirror_is_hot_reloadable():
+    """It is read at each emit, so the checkbox has to apply without stopping capture."""
+    assert "preview_mirror" in HOT_RELOADABLE_FIELDS
+    assert "preview_mirror" not in RESTART_REQUIRED_FIELDS
+
+
+def test_save_then_load_round_trips_preview_mirror(tmp_path):
+    path = tmp_path / "settings.json"
+    save_settings(Settings(preview_mirror=False), str(path))
+    assert load_settings(str(path)).preview_mirror is False
+
+
+def test_valid_field_suppress_clamped_detections():
+    assert _valid_field("suppress_clamped_detections", True)
+    assert _valid_field("suppress_clamped_detections", False)
+    assert not _valid_field("suppress_clamped_detections", 1)
+    assert not _valid_field("suppress_clamped_detections", "false")
+    assert not _valid_field("suppress_clamped_detections", None)
+
+
+def test_suppress_clamped_detections_is_hot_reloadable():
+    """It is read per inference, so an operator watching a suppressed item can turn it off and see
+    that item on the next frame - not after a stop and start."""
+    assert "suppress_clamped_detections" in HOT_RELOADABLE_FIELDS
+    assert "suppress_clamped_detections" not in RESTART_REQUIRED_FIELDS
+
+
+def test_save_then_load_round_trips_suppress_clamped_detections(tmp_path):
+    path = tmp_path / "settings.json"
+    save_settings(Settings(suppress_clamped_detections=False), str(path))
+    assert load_settings(str(path)).suppress_clamped_detections is False
+
+
 def test_save_then_load_round_trips_class_allowlist(tmp_path):
     path = tmp_path / "settings.json"
     save_settings(Settings(class_allowlist=["bottle", "cup"]), str(path))

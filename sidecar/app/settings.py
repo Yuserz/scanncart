@@ -36,7 +36,32 @@ class Settings:
     # which competes with inference on a CPU-bound machine — lower it, or set
     # 0 to emit only on inference as before.
     preview_max_fps: int = 30
+    # Whether the preview is mirrored left to right. On by default because a counter view that
+    # moves the way a mirror does is easier to aim at while holding a product, and off is what
+    # an operator wants when they need to read a label or a barcode the right way round.
+    #
+    # Preview-only, and that placement is the whole point: capture, inference, the logging store
+    # and any dataset frames keep the true orientation, because the weights were trained on
+    # ordinary photographs and a mirrored input asks the model to read reversed text and mirrored
+    # brand marks — exactly what identifies a sachet. The overlay follows this setting rather
+    # than a second rule of its own, so turning it off puts the boxes back on the items in the
+    # same frame. Hot-reloadable: `Pipeline` reads it at each emit, so the toggle takes effect
+    # without stopping capture.
+    preview_mirror: bool = True
     track_expiry_s: float = 1.5
+    # Drop detections whose box is pinned to all four frame edges — the shape a prediction takes
+    # when the model wanted something larger than the image. This is a measured defect in the
+    # grocery weights rather than a precaution: 19 of the 25 detections the 50 stored empty-counter
+    # negatives produced are exactly that shape, against 0 of 60 real product frames, and a live
+    # capture logged one as a persistent phantom item at 0.957 confidence.
+    #
+    # On by default because those weights are what the app presently runs. It is a setting, and not
+    # a rule baked into the detector, because ~1.4% of the weights' own training labels touch all
+    # four edges: an item that genuinely fills the frame is the case this can mistake for a phantom,
+    # and the escape hatch has to exist. Expect it to become the wrong default once v2 ships with
+    # the hard negatives in it, at which point the phantoms stop and only that risk remains.
+    # Hot-reloadable, so it can be turned off while watching the item log.
+    suppress_clamped_detections: bool = True
     # Class names to KEEP (post-inference); empty list = keep everything.
     # Narrows detection to checkout-relevant classes; hot-reloadable.
     class_allowlist: list[str] = field(default_factory=list)

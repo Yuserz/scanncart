@@ -400,6 +400,8 @@ def _settings_response(state: "AppState") -> SettingsResponse:
         device=state.settings.device,
         preview_height=state.settings.preview_height,
         preview_max_fps=state.settings.preview_max_fps,
+        preview_mirror=state.settings.preview_mirror,
+        suppress_clamped_detections=state.settings.suppress_clamped_detections,
         track_expiry_s=state.settings.track_expiry_s,
         class_allowlist=list(state.settings.class_allowlist),
         detector_backend=state.settings.detector_backend,

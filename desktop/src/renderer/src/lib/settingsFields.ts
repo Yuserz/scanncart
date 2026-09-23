@@ -180,6 +180,12 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
     step: 0.05
   },
   {
+    key: 'suppress_clamped_detections',
+    label: 'Drop frame-edge phantoms',
+    hint: 'Ignores detections whose box is pinned to all four frame edges. This model produces them on an empty counter — measured: 19 of 25 empty-counter detections were that shape, against 0 of 60 real product frames — and each one logs a phantom item. Turn it off if a genuine item that fills the frame stops being detected: about 1.4% of this model\u2019s own training boxes touch all four edges, so that case is rare but real.',
+    type: 'boolean'
+  },
+  {
     key: 'imgsz',
     label: 'Inference size (px)',
     hint: 'Size each frame is scaled to before detection (square, multiple of 32). Bigger sees small and fast-moving items better — the key lever for catching thrown objects — but raises latency. 640 is the default; 960 is a good accuracy step on a discrete GPU.',
@@ -223,6 +229,12 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
     min: 0,
     max: 120,
     step: 5
+  },
+  {
+    key: 'preview_mirror',
+    label: 'Mirror preview',
+    hint: 'Flips the image left to right, the way a mirror does, so the feed moves the same way you do while holding an item. The boxes flip with it and keep sitting on the items. Detection is untouched either way — the model always sees the true frame. Turn it off when you need to read a label or barcode the right way round.',
+    type: 'boolean'
   },
   {
     key: 'detector_backend',
@@ -378,10 +390,20 @@ export const SETTINGS_GROUPS: FieldGroup[] = [
     home: 'live',
     keys: ['camera_brightness', 'camera_exposure', 'camera_autofocus', 'camera_focus']
   },
-  { label: 'Detection', home: 'live', keys: ['conf_threshold'] },
+  {
+    label: 'Detection',
+    home: 'live',
+    keys: ['conf_threshold', 'suppress_clamped_detections']
+  },
   {
     label: 'Stream',
     home: 'live',
-    keys: ['infer_frame_skip', 'preview_height', 'preview_max_fps', 'track_expiry_s']
+    keys: [
+      'infer_frame_skip',
+      'preview_height',
+      'preview_max_fps',
+      'preview_mirror',
+      'track_expiry_s'
+    ]
   }
 ]
