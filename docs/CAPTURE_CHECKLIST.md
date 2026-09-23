@@ -301,7 +301,8 @@ them.
 **The app can hide this at runtime, but only partly — which is why the negatives are still
 required.** A `suppress_clamped_detections` setting (on by default) drops detections pinned to all
 four frame edges before they reach the overlay or the item log. Verified against these 50 frames
-through the app's own pipeline: **19 of the 25 phantoms stop reaching the log and 6 do not**, because
+through the app's own pipeline — the command at the end of this section re-runs exactly that —
+**19 of the 25 phantoms stop reaching the log and 6 do not**, because
 those 6 sit 0.0124–0.0286 from the nearest edge — inside the band real detections occupy — and
 loosening the rule to catch them would start discarding real items. So the runtime filter removes the
 loudest symptom and leaves the cause untouched. The negatives are what remove the cause, and they are
@@ -310,6 +311,26 @@ also the only thing that covers the false positives with *no* clamp shape at all
 All 50 are already staged and uploaded (`upload_state.json`: 50/50 `ok: true`), and the numbers above
 were measured on **those staged files** (`cleaned-negatives/negative/negative_*.jpg`), not on the
 `cam0_*` originals — so what is left is the marking, not the capture.
+
+**Reproduce every number above — the sweep and the end-to-end check both:**
+
+```bash
+cd sidecar
+./.venv/Scripts/python.exe tools/clamp_probe.py --generation v1 --conf 0.5
+```
+
+`clamp_probe.py` re-runs the tolerance sweep against the same three populations (empty-counter
+detections, real product detections, and v1's own training labels) and then walks both sets through
+the app's own `Pipeline.process_once` with the filter off and on, so the table and the end-to-end
+figures come from one visit to each frame rather than two. It prints the five claims it stands
+behind and exits non-zero on `--strict` if any of them stops holding.
+
+**`--conf 0.5` is not decoration — it is what makes the table above reproducible.** A phantom is a
+*low-confidence* detection, so every counted population moves with `conf_threshold`: the same
+weights over the same 50 frames produce **25** clamped detections at `conf 0.5` and **15** at the
+`0.7` this machine's saved profile now runs. The shipped tolerance holds at both — no real detection
+is lost at either — but a count quoted without its threshold cannot be re-derived, so the tool prints
+the operating point it measured and says so when it differs from `Settings()`'s default of 0.5.
 
 ---
 

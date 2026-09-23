@@ -76,8 +76,10 @@ def render_preview(
 #: before it counts as a prediction the model wanted larger than the image.
 #:
 #: Chosen from measurement, not taste. Across the 25 detections the 50 empty-counter negatives
-#: produced and the 60 detections from labelled product frames, the distance from the nearest
-#: edge on a box's *worst* side separated the two populations at this value:
+#: produced and the 60 detections from labelled product frames - both at `conf_threshold` 0.5, and
+#: both re-runnable with `tools/clamp_probe.py --generation v1 --conf 0.5`, which re-checks the
+#: end-to-end behaviour too - the distance from the nearest edge on a box's *worst* side separated
+#: the two populations at this value:
 #:
 #:     worst edge      phantoms caught     real lost     training labels rejected
 #:     <= 0.002            19/25             0/60             0.82%
@@ -94,6 +96,12 @@ def render_preview(
 #: edges, so an item that genuinely fills the frame edge-to-edge is the case this can mistake for a
 #: phantom — which is why the suppression is a setting with an off switch rather than a rule baked
 #: into the detector.
+#:
+#: Those counts move with `conf_threshold` and are quoted at its 0.5 default: a phantom is a
+#: *low-confidence* detection, so the same weights over the same 50 frames produce 25 of them at 0.5
+#: and 15 at 0.7. The rule holds at both - no real detection is inside it at either - but a number
+#: quoted without the threshold it was measured at is not reproducible, which is why the tool above
+#: prints the operating point and flags it when the running profile differs from the default.
 CLAMPED_EDGE_TOLERANCE = 0.01
 
 
