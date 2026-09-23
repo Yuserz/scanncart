@@ -181,6 +181,36 @@ to overwrite an existing weight without `--force`, because the picker is keyed b
 | `resize_mode` | leave it on **`auto`** — it honours the record. An explicit `letterbox` overrides it and is the one value worth warning about |
 | Test connection | `8 classes`, and no class warning. A 24-class weight would read `24 classes` with the distance problem named |
 
+The install measures accuracy. It does not measure speed, and it does not measure the weight
+against the settings actually in force — so the PRD's other two promises are the check that
+follows, and it is the one that catches a weight installed into a profile it was not trained for.
+
+```bash
+./sidecar/.venv/Scripts/python.exe sidecar/tools/spec_check.py --generation v2
+```
+
+| Checkpoint | Expect |
+|---|---|
+| the run | `all 5 PRD targets pass`, or a list naming the ones that did not (`--strict` makes that exit non-zero) |
+| `config` | which settings were measured. `saved settings` by default, so the number describes **the app on this machine**; `--defaults` measures the shipped set instead |
+| the two speeds | `in-app pipeline fps` is the one that decides — `isolated` is the detector alone and will be flattering with nothing around it |
+| recall vs `--val` | allowed to differ. This figure is at the app's `conf_threshold`; `--val` picks each class's best-F1 threshold |
+| a profile-shaped failure | `imgsz` is **not** recorded beside the weights (only `resize_mode` is). v1 at a saved `imgsz` 960 reads 0.344 recall and 24 fps against 0.918 and 41 — check Admin's `imgsz` matches the run before blaming the model |
+
+That check measures the weight, not the app. The running app is a second, separate reading, and it
+is the one a user experiences — so with a camera attached, the same acceptance in the UI:
+
+```bash
+node .claude/skills/run-desktop/driver.mjs v1
+```
+
+| Checkpoint | Expect |
+|---|---|
+| the run | **14 `PASS` lines, exit 0**, once a product is in front of the camera — 6 of them before Start, so a camera-less machine still gets the strip half. Without a product the class check fails with `0 row(s)`, which is the correct reading rather than a bug |
+| the strip | `stretch` `geometry (auto)` · `stretch` `requirement (recorded)` · `94%` `test recall · 1 below floor` — all four derived from the weight's own record |
+| the item log | only v1's seven names, ever. A COCO name means the stock weight is still loaded; a `Palmolive` row means a v2 weight is |
+| the running verdict | `7` + `classes · 1 finding`, with Palmolive named — v1 genuinely cannot predict it. `roster ok` here would mean the gap went unnoticed |
+
 ## 8. Prove the class-list guard fires, before you trust its silence
 
 Step 7's reassuring reading — *Test connection: 8 classes, no class warning* — is only a reading if

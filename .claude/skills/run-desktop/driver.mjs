@@ -35,9 +35,9 @@ fs.mkdirSync(SHOT_DIR, { recursive: true });
 const electronBin = path.join(APP_DIR, 'node_modules', 'electron', 'dist', 'electron.exe');
 
 const mode = process.argv[2] || 'smoke';
-if (!['smoke', 'capture', 'allowlist', 'dataset', 'models', 'classlist', 'probe'].includes(mode)) {
+if (!['smoke', 'capture', 'allowlist', 'dataset', 'models', 'classlist', 'probe', 'v1'].includes(mode)) {
   console.error(
-    `unknown mode '${mode}' — use: smoke | capture | allowlist | dataset | models | classlist | probe`
+    `unknown mode '${mode}' — use: smoke | capture | allowlist | dataset | models | classlist | probe | v1`
   );
   process.exit(1);
 }
@@ -1366,6 +1366,278 @@ print(json.dumps(train_model.weight_record(generations.V2, 2, "snc-grocery", cla
           restored?.body?.resize_mode === original.resize_mode,
         `active_model=${restored?.body?.active_model}`
       );
+    }
+  }
+}
+
+if (mode === 'v1') {
+  // The acceptance run for the locally trained v1 weight: does *this app, as configured*, actually
+  // run it, and does everything it reports come out under v1's own names?
+  //
+  // Why this is a mode and not a tool. `spec_check.py` and `audit_recall.py` both measure a weight
+  // well, and both read `settings.json` themselves — so neither can see the failure that actually
+  // happened on 2026-09-23: the app ran v1 at `imgsz` 960 (0.344 recall, 24 fps) while the tools
+  // were measuring 640 in a different profile (0.918, 41 fps). Nothing recorded which was right.
+  // What is left is answerable only in the running renderer — what the strip says the loaded model
+  // is, and which names reach the item log.
+  //
+  // Needs a camera that delivers frames *and* a product in front of it: the class check is about
+  // names that came out of real detections and nothing here can fake that. With no camera it says
+  // so and fails the checks it cannot make, rather than passing them quietly (as `classlist` does).
+  const V1 = 'models/scanncart-grocery-v1.pt';
+  const port = await page.evaluate(() => window.api.getSidecarPort());
+  const api = (p, init) =>
+    page.evaluate(
+      ([pt, i]) =>
+        fetch(`http://127.0.0.1:${pt}${i.path}`, i).then(async (r) => ({
+          status: r.status,
+          body: await r.json().catch(() => null)
+        })),
+      [port, { path: p, ...init }]
+    );
+  const statText = (id) =>
+    page.evaluate((i) => document.querySelector(`[data-testid="${i}"]`)?.innerText ?? null, id);
+  const hasWarn = (id) => page.evaluate((i) => !!document.querySelector(`[data-testid="${i}"].warn`), id);
+
+  const models = (await api('/api/models')).body;
+  const installed = (models?.installed ?? []).find((m) => m.value === V1);
+  console.log(
+    'sidecar port:',
+    port,
+    '| v1 in the listing:',
+    JSON.stringify(
+      installed && {
+        classes: installed.class_names?.length,
+        resize_mode: installed.resize_mode,
+        auto_resolves_to: installed.auto_resolves_to,
+        recorded: installed.recorded,
+        findings: installed.class_warnings?.length
+      }
+    )
+  );
+  check(`${V1} is installed`, !!installed, installed ? 'listed by /api/models' : 'nothing to run');
+
+  if (installed) {
+    // Everything expected below is derived from the record the app itself reads, rather than
+    // retyped here — a second copy of v1's class list would agree with the driver by construction.
+    const v1Classes = installed.class_names ?? [];
+    const classWarnings = installed.class_warnings ?? [];
+    const validation = (installed.validation ?? [])[0] ?? null;
+    const expected = {
+      mode: installed.auto_resolves_to,
+      recallPct:
+        validation && typeof validation.aggregates?.recall === 'number'
+          ? `${Math.round(validation.aggregates.recall * 100)}%`
+          : null,
+      split: validation?.split ?? null,
+      belowFloor: validation
+        ? validation.per_class.filter((c) => typeof c.recall === 'number' && c.recall < validation.floor)
+            .length
+        : 0
+    };
+    console.log('expected from the record:', JSON.stringify(expected));
+
+    const original = (await api('/api/settings')).body;
+    console.log(
+      'settings before:',
+      JSON.stringify({
+        active_model: original.active_model,
+        resize_mode: original.resize_mode,
+        imgsz: original.imgsz
+      })
+    );
+    let started = false;
+    try {
+      // `auto`, not the record's literal `stretch`: `auto` is what honours the record, so this runs
+      // the path a user takes rather than a mode the driver pasted in. `imgsz` is deliberately left
+      // alone — it is the knob that broke this weight, and the fps and recall checks below are how a
+      // wrong one shows up.
+      const patched = await api('/api/settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ active_model: V1, resize_mode: 'auto' })
+      });
+      check(
+        'the sidecar takes the v1 weight while idle',
+        patched.status === 200,
+        `status=${patched.status} imgsz=${patched.body?.imgsz}`
+      );
+      if (patched.status !== 200) throw new Error(`PATCH refused: ${JSON.stringify(patched.body)}`);
+
+      // `active_model` is restart-required, so the renderer is remounted to describe the model the
+      // next Start will load rather than the drafts still sitting in the Admin form.
+      await page.reload();
+      await page.waitForSelector('[data-testid="nav-live"]', { timeout: 45_000 });
+      await page.waitForTimeout(2_500);
+
+      // The idle half: the weights readout is not gated on capture, so it can be read now. This is
+      // the tile that caught the geometry mismatch, and the one that would catch a mode that
+      // silently stopped resolving `auto`.
+      const geometry = (await statText('stat-geometry')) ?? '';
+      const requirement = (await statText('stat-requirement')) ?? '';
+      const recall = (await statText('stat-recall')) ?? '';
+      console.log(
+        'strip:',
+        JSON.stringify({ geometry, requirement, recall, geometryWarn: await hasWarn('stat-geometry') })
+      );
+      check(
+        'auto resolves to the recorded mode, flagged as coming from auto',
+        geometry.includes(expected.mode) && geometry.includes('geometry (auto)') && !(await hasWarn('stat-geometry')),
+        `geometry=${JSON.stringify(geometry)}`
+      );
+      check(
+        'the requirement chip names the same mode from the record, not an assumption',
+        requirement.includes(installed.resize_mode) && requirement.includes('recorded'),
+        `requirement=${JSON.stringify(requirement)}`
+      );
+      check(
+        'the strip shows the measured score off the record',
+        expected.recallPct !== null && recall.includes(expected.recallPct) && recall.includes(expected.split),
+        `recall=${JSON.stringify(recall)} expected ${expected.recallPct} on ${expected.split}`
+      );
+      // And the below-floor class is named rather than averaged away: a clean-looking mean is how a
+      // class that never gets logged goes unnoticed.
+      check(
+        'a class under the floor is called out rather than averaged in',
+        expected.belowFloor === 0
+          ? !recall.includes('below floor')
+          : recall.includes(`${expected.belowFloor} below floor`),
+        `belowFloor=${expected.belowFloor} recall=${JSON.stringify(recall)}`
+      );
+      await shot(page, 'v1-01-idle-geometry');
+
+      await page.evaluate(() => document.querySelector('button[aria-label="Start"]').click());
+      console.log('clicked Start — first model load can take a while');
+      started = true;
+      const outcome = await page
+        .waitForFunction(
+          () => {
+            if (document.querySelector('img.preview-img')) return 'frames';
+            if (document.querySelector('[data-testid="live-error"]')?.innerText) return 'error';
+            return null;
+          },
+          null,
+          { timeout: 120_000 }
+        )
+        .then((h) => h.jsonValue())
+        .catch(() => null);
+      const reason = await readText('[data-testid="live-error"]');
+      console.log(
+        'after Start:',
+        outcome ?? 'neither a frame nor a reason after 120s',
+        '| state:',
+        await stateText(),
+        '| reason:',
+        JSON.stringify(reason)
+      );
+      await shot(page, 'v1-02-running');
+
+      if (outcome !== 'frames') {
+        // Loudly, not quietly: with no frames none of the checks below can be made, and passing here
+        // would claim v1 had been seen detecting when it had not (this machine's camera wedges, and
+        // the reason is the whole reading — see SKILL.md).
+        check(
+          'a capture ran the v1 weight and delivered frames',
+          false,
+          `outcome=${outcome} reason=${JSON.stringify(reason)}`
+        );
+      } else {
+        // Long enough for detections to be deduped into one row per item.
+        await page.waitForTimeout(8_000);
+
+        const classes = await page.evaluate(() =>
+          [...document.querySelectorAll('[data-testid="item-log"] .log-cls')].map((el) =>
+            el.textContent.trim()
+          )
+        );
+        const unknown = classes.filter((c) => !v1Classes.includes(c));
+        console.log('item log classes:', JSON.stringify(classes));
+        check(
+          'the item log holds something, so the names below came from real detections',
+          classes.length > 0,
+          `${classes.length} row(s) — put a product in front of the camera`
+        );
+        check(
+          `every logged class is one of v1's ${v1Classes.length}`,
+          classes.length > 0 && unknown.length === 0,
+          unknown.length ? `not in the record: ${JSON.stringify(unknown)}` : `${classes.length} row(s)`
+        );
+
+        // The running model's verdict, and it has to be *v1's* verdict. v1 cannot predict Palmolive,
+        // so the chip and the banner should carry that one finding — a chip reading `roster ok`
+        // means the gap went unnoticed, and `carry a distance` means a 24-output head, the failure
+        // the roster guard exists for. Both are separations this assertion is the only place to make.
+        const chip = (await statText('stat-classes')) ?? '';
+        const banner = await readText('[data-testid="live-class-warnings"]');
+        const wantsFindings = classWarnings.length > 0;
+        console.log('running verdict — chip:', JSON.stringify(chip), '| banner:', JSON.stringify(banner));
+        check(
+          `the running model reports its ${v1Classes.length} classes`,
+          chip.trim().startsWith(String(v1Classes.length)),
+          `chip=${JSON.stringify(chip)}`
+        );
+        check(
+          'the chip carries the listing\'s own finding count, not a different reading',
+          wantsFindings
+            ? chip.includes(`${classWarnings.length} finding`)
+            : chip.includes('roster ok'),
+          `expected ${classWarnings.length} finding(s) — chip=${JSON.stringify(chip)}`
+        );
+        check(
+          'the running-model banner appears exactly when the record says it should',
+          wantsFindings ? banner !== null : banner === null,
+          JSON.stringify(banner)
+        );
+        check(
+          'and it names the missing roster class rather than a distance problem',
+          !`${chip} ${banner ?? ''}`.includes('carry a distance') &&
+            (!wantsFindings || (banner ?? '').includes('cannot predict')),
+          JSON.stringify(banner)
+        );
+
+        // The PRD's two live promises, read off the running app: these are the tiles that fell when
+        // the profile ran this weight at `imgsz` 960 (24.1 fps against 41.9 at 640).
+        const fps = parseFloat((await statText('stat-infer-fps')) ?? '');
+        const latency = parseFloat((await statText('stat-latency')) ?? '');
+        check('the running capture holds >= 30 infer fps', fps >= 30, `${fps} fps`);
+        check('the running capture stays under 150 ms latency', latency < 150, `${latency} ms`);
+        await shot(page, 'v1-03-detections');
+      }
+    } finally {
+      // Stop first: `active_model` is restart-required, so restoring it under a running capture is a
+      // 409 and would leave the machine pointing at whatever this mode selected.
+      if (started) {
+        const stop = await page.$('button[aria-label="Stop"]');
+        if (stop) {
+          await page.evaluate(() => document.querySelector('button[aria-label="Stop"]').click());
+          await page
+            .waitForFunction(
+              () => document.querySelector('[data-testid="state"]')?.textContent !== 'running',
+              { timeout: 30_000 }
+            )
+            .catch(() => console.log('WARNING: state did not leave running within 30s'));
+          await page.waitForTimeout(1_500);
+        }
+      }
+      const restored = await api('/api/settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          active_model: original.active_model,
+          resize_mode: original.resize_mode
+        })
+      });
+      console.log(
+        'settings restored:',
+        JSON.stringify({
+          status: restored.status,
+          active_model: restored.body?.active_model,
+          resize_mode: restored.body?.resize_mode
+        })
+      );
+      await page.reload();
+      await page.waitForSelector('[data-testid="nav-live"]', { timeout: 45_000 }).catch(() => {});
+      await shot(page, 'v1-04-restored');
     }
   }
 }

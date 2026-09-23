@@ -37,6 +37,7 @@ node .claude/skills/run-desktop/driver.mjs dataset    # Admin dataset panel <-> 
 node .claude/skills/run-desktop/driver.mjs models     # installed weights + resize_mode check <-> sidecar
 node .claude/skills/run-desktop/driver.mjs classlist  # a NON-ROSTER weight: listing flag -> Live banner + count chip
 node .claude/skills/run-desktop/driver.mjs probe      # Test Connection geometry <-> a stub workflow
+node .claude/skills/run-desktop/driver.mjs v1         # the v1 acceptance run: weights record -> Live strip -> item log
 ```
 
 - `smoke` verifies launch + sidecar REST (hardware info printed).
@@ -175,6 +176,27 @@ node .claude/skills/run-desktop/driver.mjs probe      # Test Connection geometry
   the weight and record in a `finally`, and it stops capture before restoring, because
   `active_model` is restart-required and a 409 would otherwise leave the machine pointing at a
   deleted weight.
+- `v1` is the acceptance run for the locally trained v1 weight, and it exists because of a real
+  failure (2026-09-23): v1 measured 0.918 / 41 fps through `spec_check.py --defaults` while the app
+  was running the same weight at `imgsz` 960 — 0.344 recall, 24 fps — and nothing recorded which
+  profile was the right one. The tools cannot see that, because they read `settings.json`
+  themselves; only the running renderer knows what it is running. So it asserts against the app:
+  that `auto` resolves to the record's own mode and the tile says `geometry (auto)`, that the
+  requirement chip reads `recorded` rather than `assumed`, and that the strip's score is **the
+  record's** mean with the below-floor class named rather than averaged in (`94%`,
+  `test recall · 1 below floor`). Every expectation is derived from `/api/models`, so nothing here
+  is a second copy of v1's class list agreeing with itself by construction. Then the core check:
+  Start, and **every class in the item log is one of the seven names in that weight's record** —
+  plus the running model's verdict has to be *v1's*, i.e. the record's own finding count (v1 cannot
+  predict Palmolive, so one finding is correct) and never the `carry a distance` sentence, which
+  would mean a 24-output head. Last, the PRD's two live promises off the strip: >= 30 infer fps and
+  < 150 ms, which are the tiles that fall when `imgsz` is wrong. It leaves `imgsz` alone on purpose
+  (that is the knob that broke this weight, so the fps check is how a wrong one shows up), and
+  stops capture before restoring `active_model` + `resize_mode` in a `finally`, since both are
+  restart-required and a restore under a running capture is a 409. Needs a camera delivering frames
+  *and* a product in front of it: with none it says so and fails the checks it cannot make rather
+  than passing them quietly. Use it after touching `spec_check.py`, the weight record,
+  `useActiveWeights.ts`, or `LiveView.tsx`'s stats strip.
 - Modes that assert print `PASS`/`FAIL` per check and **exit non-zero** when any
   fail, so they can gate a change.
 - Screenshots → `.claude/skills/run-desktop/shots/` (override `SCREENSHOT_DIR`).

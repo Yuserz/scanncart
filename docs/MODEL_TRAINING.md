@@ -444,6 +444,89 @@ swan 0.851 for 0.959) and made the overall number 0.840 where it is 0.918. Ultra
 both forms itself, so **`--val` is the reference to check this against** — if the two disagree on
 a class by more than a threshold's worth, the parser is the suspect, not the model.
 
+#### Do the PRD's targets hold
+
+Recall is one of three promises. The PRD also asks for **≥ 30 fps processing** (§5, restated in §7)
+and **end-to-end latency < 150 ms** (§6), and nothing above measures either — a weight can clear
+every floor here and still be too slow to run, which is the one failure that makes the rest of the
+numbers unusable in a live capture.
+
+`spec_check.py` measures all three through the app's own code, on real test-split frames resized
+to the configured capture geometry:
+
+```
+sidecar/.venv/Scripts/python.exe sidecar/tools/spec_check.py --generation v1
+sidecar/.venv/Scripts/python.exe sidecar/tools/spec_check.py --generation v1 --defaults
+sidecar/.venv/Scripts/python.exe sidecar/tools/spec_check.py --generation v1 --strict
+
+config     shipped defaults  (Settings(), as built)
+device     cuda:0   capture 640x480   imgsz 640   conf 0.5   preview_height 720   frame_skip 0
+
+isolated   YoloDetector.infer over 80 frames, wall clock
+           mean    24.7  p50    23.6  p95    34.0  max    52.7  ms
+in-app     Pipeline.process_once over 80 frames, wall clock - what a frame costs the sidecar
+           mean    24.5  p50    23.3  p95    35.0  max    49.9  ms
+           the pipeline's own latency_ms stat: mean    23.3 ...   <- detection only
+
+  [PASS] isolated infer fps                    40.5 fps   >= 30   (PRD 5, 7)
+  [PASS] in-app pipeline fps                   40.7 fps   >= 30   (PRD 5, 7)
+  [PASS] in-app mean latency                   24.5 ms    < 150   (PRD 6, 7)
+  [PASS] in-app p95 latency                    35.0 ms    < 150   (PRD 6, 7)
+  [PASS] instance recall at app conf          0.918 ratio >= 0.9   (PRD 7)
+```
+
+Three things about that reading:
+
+- **Two speeds and two latencies, because they are different instruments.** `isolated` is the
+  detector's own cost; `in-app` is what a frame costs the sidecar once tracking, the allowlist
+  filter, logging, the 720p JPEG encode and the message build are inside it. An isolated figure
+  alone would pass a detector sitting inside a pipeline that cannot hold 30 fps, and a mean alone
+  would hide the frame that stutters — which is what the p95 column is for.
+- **The pipeline's own `latency_ms` is not the end-to-end figure.** It is `t1 - t0` around
+  `detector.infer`, so it stops before the encode: 23.3 ms where the frame really costs 24.5 ms.
+  The headroom is wide enough that it changes no verdict, but reading that stat as the frame cost
+  understates a Live frame by about a tenth.
+- **It reports one accuracy number on purpose.** PRD §7 asks for ≥ 90% on common grocery items, so
+  that is what is checked; the per-class and per-crowding breakdown is `audit_recall.py`'s, and
+  this tool calls that module's matcher rather than growing a second implementation of it.
+
+Accuracy here is per-instance at the app's `conf_threshold`, so it is the recall a Live view
+actually experiences rather than an available maximum, and the record's own `--val` aggregates are
+printed beside it with the note that they come from a different operating point — the two are
+allowed to differ, and the conf sweep in `audit_recall.py` is what shows the slope between them.
+`--strict` exits non-zero when any target fails, which is what makes this a gate rather than a
+report.
+
+#### The configuration line, and why v1 was failing without it
+
+By default the settings come from `data/settings.json` — the profile the app on this machine
+actually runs — and the report names the file it read. That default exists because of what it
+found. Measured against v1's own geometry the weight clears all five targets; measured against
+this machine's saved profile, which sets `imgsz` 960, it fails three:
+
+```
+config     saved settings    (sidecar/data/settings.json)
+device     cuda:0   capture 640x480   imgsz 960   conf 0.5   preview_height 720   frame_skip 0
+
+  [FAIL] isolated infer fps                    27.6 fps   >= 30   (PRD 5, 7)
+  [FAIL] in-app pipeline fps                   24.1 fps   >= 30   (PRD 5, 7)
+  [PASS] in-app mean latency                   41.5 ms    < 150   (PRD 6, 7)
+  [PASS] in-app p95 latency                    53.9 ms    < 150   (PRD 6, 7)
+  [FAIL] instance recall at app conf          0.344 ratio >= 0.9   (PRD 7)
+```
+
+`audit_recall.py` confirms the accuracy half in one run each: **0.918 at `--imgsz 640` against
+0.344 at `--imgsz 960`**, with every class below the floor at 960 instead of one, and
+single-object frames collapsing from 265/265 to 55/265. The pattern names the cause — the
+close-up objects, already at their largest scale at 640, get pushed past what the head can
+localise, while the smaller crowded-frame objects survive better (61% against 20.8%).
+
+The rule this leaves behind: **`imgsz` is a per-weight inference requirement, not a free knob.**
+Unlike `resize_mode` it is not recorded in `models/<stem>.json`, so a profile tuned to 960 — which
+v2's 8-class set may well want, for objects twice as far away — silently destroys a weight trained
+at 640, and the Admin panel has nothing to contradict. Until the record carries it, this tool is
+what catches the pair, which is why the configuration line is printed rather than assumed.
+
 ---
 
 #### What to do about a class below the floor
