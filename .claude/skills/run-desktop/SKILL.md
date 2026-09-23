@@ -187,9 +187,10 @@ node .claude/skills/run-desktop/driver.mjs v1         # the v1 acceptance run: w
   `test recall · 1 below floor`). Every expectation is derived from `/api/models`, so nothing here
   is a second copy of v1's class list agreeing with itself by construction. Then the core check:
   Start, and **every class in the item log is one of the seven names in that weight's record** —
-  plus the running model's verdict has to be *v1's*, i.e. the record's own finding count (v1 cannot
-  predict Palmolive, so one finding is correct) and never the `carry a distance` sentence, which
-  would mean a 24-output head. Last, the PRD's two live promises off the strip: >= 30 infer fps and
+  plus the running model's verdict has to agree with the record's own finding count — for v1 that
+  is **no** findings, since its seven names are complete for its own generation, so the chip must
+  read `roster ok` and the banner must be absent — and never the `carry a distance` sentence,
+  which would mean a 24-output head. Last, the PRD's two live promises off the strip: >= 30 infer fps and
   < 150 ms, which are the tiles that fall when `imgsz` is wrong. It leaves `imgsz` alone on purpose
   (that is the knob that broke this weight, so the fps check is how a wrong one shows up), and
   stops capture before restoring `active_model` + `resize_mode` in a `finally`, since both are
@@ -299,9 +300,10 @@ contradicting the record) and `live-assumed-geometry` (nothing recorded, so `aut
 guessing) — both present only while capture runs, and mutually exclusive — the second
 carrying its own `live-record-resize-mode` button and handing its slot to
 `live-recorded` once a write lands. Also present only while
-capture runs: `live-class-warnings` (the running model's class list judged against the 8-class
-roster, in the sidecar's own sentences — a 24-class head is not an error state, so it is not
-error-styled), and inside the listing above it
+capture runs: `live-class-warnings` (the running model's class list judged against the roster of
+that weight's own generation — v1's seven or v2's eight, chosen by the record and then by the
+names themselves — in the sidecar's own sentences; a 24-class head is not an error state, so it
+is not error-styled), and inside the listing above it
 `installed-model-class-warning-<value>` for a weight whose *recorded* class list is wrong — the
 same verdict one step earlier, before the weight is selected. The weights
 readout in its stats strip is `stat-geometry` (the resolved mode,

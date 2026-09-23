@@ -891,9 +891,9 @@ sentences (`data-testid="live-class-warnings"`) — replaced on each status, nev
 styled as an error, because a capture running a 24-class weight is not failing, it is producing the
 wrong three rows for every item. Beside that banner the same strip carries the running model's class
 **count** in a chip of its own — `classes · roster ok`, or `classes · 1 finding` in amber — because the
-count is the one thing the banner cannot say, and it is what makes `24` where `8` was expected legible
-as a number. The chip renders nothing until the sidecar has read a model's vocabulary: `0 classes`
-would be a claim about a head that has not spoken yet.
+count is the one thing the banner cannot say, and it is what makes `24` where the model's own count
+was expected legible as a number. The chip renders nothing until the sidecar has read a model's
+vocabulary: `0 classes` would be a claim about a head that has not spoken yet.
 
 **And one step earlier still: the record.** A `.pt` records no roster, so a weight that is never
 run and never probed has nothing to judge — which is why `train_model.py --install` writes the
@@ -905,19 +905,20 @@ only other place it can come from: the install is the moment the export is still
 export is the only thing that ever knew the list. Recorded as an **empty list when nothing is
 known** (a hand-copied weight, or a record written before this field existed) rather than written
 as "no classes" — `class_list_problems([])` would otherwise read as a weight that predicts none
-of the 8, which is a verdict about a list nobody has seen.
+of its roster, which is a verdict about a list nobody has seen.
 
 **Why it cannot be checked at start.** `YoloDetector.names` is deliberately empty until the first
 inference — reading it at construction would build a second ONNX session — so a start-time check
-would announce "this model predicts none of the 8" for a perfectly good weight. The names are only
+would announce "this model predicts none of its roster" for a perfectly good weight. The names are only
 knowable *after* an inference, so that is where the check lives; a remote detector fills `names`
 from its first response, so both backends report through the same path.
 
 All four build-time checks call the same predicate, `label_classes.distance_tokens_in()`, so they
 cannot disagree about the same name; the runtime copy is held to it by a drift guard
 (`sidecar/tests/test_roster.py`). The runtime check is also the one that reports the *opposite*
-failure — a model that can only predict some of the 8 — because nothing it does predict is wrong,
-so nothing else would ever notice. It matches **whole tokens** against a fixed word list (`close`,
+failure — a model that can only predict some of its roster's classes — because nothing it does
+predict is wrong, so nothing else would ever notice. Which roster that is comes from the weight:
+v1's seven, or v2's eight when the record says so or the class list is exactly v2's. It matches **whole tokens** against a fixed word list (`close`,
 `closeup`, `mid`, `middle`, `far`, `near`, `distance`), which is what keeps a legitimate name from
 tripping it: "Farmer's Choice" tokenises to `farmer`, not `far`. Each finding is phrased as the
 *fix* rather than the symptom — the offending classes have to be removed and their annotations

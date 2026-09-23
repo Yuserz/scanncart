@@ -35,7 +35,8 @@ export interface SidecarStream {
   // model to describe yet.
   classNames: string[]
   // What is wrong with the class list of the model that is actually running, as the sidecar judged
-  // it against its 8-class roster. Empty means either nothing is wrong or nothing is known yet,
+  // it against the roster of that weight's generation. Empty means either nothing is wrong or
+  // nothing is known yet,
   // which are the same to this side of the wire — and the distinction the sidecar keeps, since it
   // is the process that knows when a detector has inferred. Set from the same messages as
   // `classNames`, and cleared with them for the same reason.

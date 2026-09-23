@@ -1563,10 +1563,13 @@ if (mode === 'v1') {
           unknown.length ? `not in the record: ${JSON.stringify(unknown)}` : `${classes.length} row(s)`
         );
 
-        // The running model's verdict, and it has to be *v1's* verdict. v1 cannot predict Palmolive,
-        // so the chip and the banner should carry that one finding — a chip reading `roster ok`
-        // means the gap went unnoticed, and `carry a distance` means a 24-output head, the failure
-        // the roster guard exists for. Both are separations this assertion is the only place to make.
+        // The running model's verdict, and it has to agree with the *listing's*. Both sides are read
+        // from the app: the expectation off the record (`installed.class_warnings`) and the running
+        // side off the stream, which is what makes this a comparison rather than a second copy.
+        // For v1 the answer is `roster ok` — its seven classes are complete for its own generation,
+        // so a finding here means the roster got applied to the wrong generation again, and
+        // `carry a distance` means a 24-output head, the failure the roster guard exists for. Both
+        // are separations this assertion is the only place to make.
         const chip = (await statText('stat-classes')) ?? '';
         const banner = await readText('[data-testid="live-class-warnings"]');
         const wantsFindings = classWarnings.length > 0;

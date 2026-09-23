@@ -35,7 +35,7 @@ import math
 import os
 from pathlib import Path
 
-from app.roster import class_list_problems
+from app.roster import ROSTERS, class_list_problems
 from app.schemas import ClassRecall, DistanceRecall, InstalledModel, ValidationRecord
 from app.settings_store import (
     ALLOWED_RESIZE_MODES,
@@ -150,7 +150,7 @@ def _read_class_names(raw: object) -> list[str]:
     that is absent, or that holds no non-blank string, answers the *empty* list, which is the
     module's word for "not recorded". That is deliberate rather than lossy. The empty list is
     exactly what `class_list_problems` must not be handed, since it would read as a model that
-    predicts none of the 8 roster classes; the caller gates on it, so "nothing is known" stays
+    predicts none of the roster's classes; the caller gates on it, so "nothing is known" stays
     silent instead of being reported as a verdict about a list nobody has seen.
 
     Names are **not** validated against the roster here. This reads a fact; judging it is
@@ -244,6 +244,14 @@ def read_record(weights: Path) -> dict:
     weight be caught from the listing instead of only once it runs: a model trained from a
     distance-split project predicts 24 classes, which nothing about its filename or its
     checkpoint says.
+
+    `generation` is which dataset generation trained these weights, and it is here because a
+    class list alone cannot answer it: v2's eight minus Palmolive *is* v1's seven, so a v2 head
+    that lost a class and a complete v1 head are the same list of names. The two want opposite
+    readings (`roster.resolve_roster`), and the training run is the only thing that ever knew
+    which it was. Read through `ROSTERS`, on `resize_mode`'s rule: a generation this app has no
+    roster for answers None, i.e. "not recorded", so a record written by a *later* tool is judged
+    by the names it carries rather than against a roster that does not exist yet.
     """
     record_path = weights.with_suffix(".json")
     recorded = record_path.is_file()
@@ -256,9 +264,13 @@ def read_record(weights: Path) -> dict:
     mode = body.get("resize_mode")
     if mode is not None and mode not in ALLOWED_RESIZE_MODES:
         mode = None
+    generation = body.get("generation")
+    if not isinstance(generation, str) or generation not in ROSTERS:
+        generation = None
     return {
         "recorded": recorded,
         "resize_mode": mode,
+        "generation": generation,
         "source": body.get("source") if isinstance(body.get("source"), str) else "",
         "class_names": _read_class_names(body.get("class_names")),
         "validation": _read_validation(body.get("validation")),
@@ -289,6 +301,29 @@ def requirement_for(active_model: str, directory: Path | None = None) -> str | N
     if not weights.is_file():
         return None
     return read_record(weights).get("resize_mode")
+
+
+def generation_for(active_model: str, directory: Path | None = None) -> str | None:
+    """The generation recorded beside `active_model`, or None when there is none.
+
+    `requirement_for`'s sibling, and one field further in the same direction: which dataset trained
+    these weights is the other fact only the record knows, and it is what decides the roster the
+    *running* model is judged against (`roster.class_list_problems`). A class list cannot settle
+    it - v1's seven are v2's eight minus Palmolive - so without this the runtime would read a v2
+    head that cannot predict Palmolive as a healthy v1 model.
+
+    Same contract as `requirement_for` in every other respect: never raises, and answers None for
+    a stock weight, a name the settings validator would reject, a missing file, a missing or
+    corrupt record, and a generation this app has no roster for. All of those mean "the record
+    does not say", which leaves the judgement to the class list the model actually declares.
+    """
+    if not isinstance(active_model, str) or not is_custom_model(active_model):
+        return None
+    root = Path(directory) if directory is not None else MODELS_DIR
+    weights = root / active_model.replace("\\", "/")[len(CUSTOM_MODEL_DIR):]
+    if not weights.is_file():
+        return None
+    return read_record(weights).get("generation")
 
 
 def record_requirement(
@@ -367,14 +402,20 @@ def installed_models(directory: Path | None = None) -> list[InstalledModel]:
         # the roster is a rule (`app/roster.py`) and a second copy in TypeScript could only
         # disagree with this one about which names are wrong. Gated on a non-empty list, because
         # an empty one is "not recorded" and `class_list_problems([])` would turn that silence
-        # into "predicts none of the 8" - a finding about a class list nobody has seen.
+        # into "predicts none of the roster" - a finding about a class list nobody has seen.
+        #
+        # The record's generation is passed because this is the one caller that has it, and it is
+        # what stops a v1 weight - the weights this app runs today - being held to v2's roster and
+        # reported as unable to predict Palmolive forever.
         names = record.get("class_names") or []
         installed.append(
             InstalledModel(
                 value=value,
                 resize_mode=required,
                 class_names=names,
-                class_warnings=class_list_problems(names) if names else [],
+                class_warnings=(
+                    class_list_problems(names, record.get("generation")) if names else []
+                ),
                 # Resolved *through* the requirement, not beside it: `auto` now honours a
                 # record, so for a recorded weight this answers the requirement itself. What
                 # it is still for is the unrecorded case — the one situation where `auto`

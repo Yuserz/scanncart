@@ -42,7 +42,13 @@ from app.roboflow import (
 )
 from app.tracking import IouTracker
 from app.dataset_status import load_dataset_status
-from app.models import MODELS_DIR, installed_models, record_requirement, requirement_for
+from app.models import (
+    MODELS_DIR,
+    generation_for,
+    installed_models,
+    record_requirement,
+    requirement_for,
+)
 from app.schemas import (
     ApplyPresetRequest,
     CameraInfo,
@@ -794,8 +800,13 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
                 latency_ms=round(latency_ms, 1),
                 class_names=class_names,
                 # Judged here rather than in the renderer: the names came off the loaded model in
-                # this process, so this is the only place they are known at all.
-                class_warnings=class_list_problems(class_names),
+                # this process, so this is the only place they are known at all. The record's
+                # generation goes with them for the same reason `requirement_for` does - these are
+                # the local weights, whose record is the only thing that can say whether a missing
+                # class is a fault (a v2 head) or the correct list for the generation (v1's).
+                class_warnings=class_list_problems(
+                    class_names, generation_for(state.settings.active_model)
+                ),
                 provider=provider,
             )
 
@@ -848,6 +859,11 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
             # Same check as the native branch, on the classes the workflow actually reports - a
             # remote workflow's model is the one that can be swapped without touching this app,
             # so this is the branch where the roster is least under our control.
+            #
+            # No generation here, unlike the native branch: a record describes the `.pt` beside
+            # it, and under a remote backend no such file is what running. Handing a workflow a
+            # local weight's generation would hold it to a roster nothing about it claims, so the
+            # classes it reports are left to name their own roster (`resolve_roster`).
             class_warnings=class_list_problems(class_names),
             sent_size=sent_size,
             reported_size=reported_size,
@@ -947,7 +963,14 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
                 the cost is one small message.
                 """
                 state.class_names = list(names)
-                state.class_warnings = class_list_problems(names)
+                state.class_warnings = class_list_problems(
+                    names,
+                    # Which roster these are judged against, on the same terms as the probe: the
+                    # local weights' own generation, and nothing when a workflow is what runs.
+                    generation_for(state.settings.active_model)
+                    if state.settings.detector_backend == "native"
+                    else None,
+                )
                 state.ws_manager.submit(
                     StatusMessage(
                         type="status",

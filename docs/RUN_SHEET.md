@@ -209,7 +209,7 @@ node .claude/skills/run-desktop/driver.mjs v1
 | the run | **14 `PASS` lines, exit 0**, once a product is in front of the camera — 6 of them before Start, so a camera-less machine still gets the strip half. Without a product the class check fails with `0 row(s)`, which is the correct reading rather than a bug |
 | the strip | `stretch` `geometry (auto)` · `stretch` `requirement (recorded)` · `94%` `test recall · 1 below floor` — all four derived from the weight's own record |
 | the item log | only v1's seven names, ever. A COCO name means the stock weight is still loaded; a `Palmolive` row means a v2 weight is |
-| the running verdict | `7` + `classes · 1 finding`, with Palmolive named — v1 genuinely cannot predict it. `roster ok` here would mean the gap went unnoticed |
+| the running verdict | `7` + `classes · roster ok`. v1's seven names are complete for v1, and the sidecar picks the roster from the weight's own record (`generation: v1`), so a finding here means the roster got applied to the wrong generation — and `carry a distance` means a 24-output head |
 
 ## 8. Prove the class-list guard fires, before you trust its silence
 

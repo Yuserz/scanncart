@@ -43,8 +43,9 @@ export interface StatusMessage {
   // left guessing from the labels going by.
   class_names?: string[]
   // What is wrong with that class list (`app/roster.py` on the sidecar side), empty when there is
-  // nothing wrong or nothing is known yet. Judged by the sidecar and rendered as it arrives: the
-  // roster is not mirrored on this side, so the sentences are the only description of it.
+  // nothing wrong or nothing is known yet. Judged by the sidecar and rendered as it arrives — and
+  // against the roster of the running weight's own generation, which is a fact only the sidecar
+  // has: the roster is not mirrored on this side, so the sentences are the only description of it.
   class_warnings?: string[]
 }
 

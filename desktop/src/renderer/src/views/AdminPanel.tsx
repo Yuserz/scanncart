@@ -1015,9 +1015,10 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
         )}
 
         {/* What those classes *are*, which the count above cannot say. The sidecar judged them
-            against the 8-class roster because it is the only process that has them (they come off
-            the loaded model), so this renders its sentences rather than re-deriving them: one bad
-            class list has one explanation, and a second copy here could contradict it. */}
+            against the roster of these weights' own generation because it is the only process
+            that has them (they come off the loaded model), so this renders its sentences rather
+            than re-deriving them: one bad class list has one explanation, and a second copy here
+            could contradict it. */}
         {probeResult?.reachable &&
           probeResult.class_warnings.map((warning) => (
             <p className="admin-error" data-testid="probe-class-warning" key={warning.slice(0, 40)}>

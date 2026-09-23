@@ -140,11 +140,11 @@ export interface DetectorProbeResponse {
   detail: string
   latency_ms: number | null
   class_names: string[]
-  // What is wrong with `class_names`, judged in the sidecar against the 8-class roster
-  // (`app/roster.py`) — empty means the weight's own class list matches. A weight trained from a
-  // distance-split project predicts 24 classes and would otherwise run silently, logging one
-  // product under three labels; an empty list here is the *only* place that fact can be known,
-  // because a `.pt` records no roster and the export that produced it is long gone.
+  // What is wrong with `class_names`, judged in the sidecar against the roster of the weight's own
+  // generation (`app/roster.py`) — empty means the weight's own class list matches. A weight
+  // trained from a distance-split project predicts 24 classes and would otherwise run silently,
+  // logging one product under three labels; an empty list here is the *only* place that fact can
+  // be known, because a `.pt` records no roster and the export that produced it is long gone.
   class_warnings: string[]
   provider: string | null
   // The remote answer to the question `resize_mode_resolved` answers for native weights: which
@@ -341,11 +341,12 @@ export interface InstalledModel {
   // Empty means *not recorded* — a hand-copied weight, or a record written before the field
   // existed — and never "predicts nothing", so an empty list produces no findings below.
   class_names: string[]
-  // What is wrong with `class_names`, judged in the sidecar against the 8-class roster, the same
-  // sentences `DetectorProbeResponse.class_warnings` carries. The difference is *when*: these come
-  // with the listing, so a weight whose head was trained per product-and-distance is visible
-  // before it is selected — let alone before it runs and logs one item under three labels. The
-  // sentences are rendered verbatim; the roster is not mirrored here on purpose.
+  // What is wrong with `class_names`, judged in the sidecar against the roster of the weight's own
+  // generation, the same sentences `DetectorProbeResponse.class_warnings` carries. The difference
+  // is *when*: these come with the listing, so a weight whose head was trained per
+  // product-and-distance is visible before it is selected — let alone before it runs and logs one
+  // item under three labels. The sentences are rendered verbatim; the roster is not mirrored here
+  // on purpose.
   class_warnings: string[]
   // Whether a record file exists beside these weights at all. It separates "installed by the
   // tool, nothing measured yet" (fixable, by running `--val`) from "copied into models/ by

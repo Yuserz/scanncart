@@ -120,7 +120,9 @@ function requirementReadout(
 // legible as a number.
 //
 // Three things here are rules rather than formatting. The count is a tile value, because the number
-// is what an operator compares against their expectation of 8. The verdict is a **count of findings**
+// is what an operator compares against their own model's count — 7 for a v1 weight, 8 for v2 — and
+// the sidecar is the side that knows which generation the running weight belongs to. The verdict is
+// a **count of findings**
 // rather than a direction (`wrong` / `missing`), because the sidecar's third finding is the quiet one
 // — a model that simply cannot predict some roster names — and a word like "mismatch" would be false
 // for it. And an empty list renders **nothing**: before the first inference the sidecar knows no
@@ -137,7 +139,7 @@ function classListReadout(
       label: 'classes · roster ok',
       title:
         `This model declares ${names.length} classes, and every one of them is a name in this ` +
-        `app's 8-class roster. ${listed}`,
+        `app's roster. ${listed}`,
       warn: false
     }
   }
@@ -252,7 +254,8 @@ export function LiveView({ port, deps }: LiveViewProps): JSX.Element {
           it from the first inference that knows the model's classes, so it appears on its own, in
           the view where the consequence (boxes logged under labels the app does not know) is
           happening. A 24-class weight - one trained per product-and-distance - is the case this
-          exists for; so is a stock COCO model, which simply cannot predict any of the 8 products.
+          exists for; so is a stock COCO model, which simply cannot predict any of the roster's
+          products.
           The sentences come from the sidecar rather than being composed here: it is the only side
           that has the class names, and one finding must have one description. */}
       {classWarnings.length > 0 && (

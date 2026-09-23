@@ -56,9 +56,10 @@ class StatusMessage(BaseModel):
     #
     # Carried because the count is a readout in its own right, not only the input to a verdict: the
     # Live view's stats strip shows how many classes the running model has, which is how an operator
-    # sees `24` where they expected `8` even in the case where every name happens to be on the
-    # roster. `class_warnings` is the judgement of these names (`app/roster.py`); the two travel
-    # together so a client never has to explain one without the other.
+    # sees `24` where they expected their own model's count even in the case where every name
+    # happens to be on the roster. `class_warnings` is the judgement of these names
+    # (`app/roster.py`); the two travel together so a client never has to explain one without the
+    # other.
     class_names: list[str] = []
     # What is wrong with that class list, judged by the same module. Empty means either nothing is
     # wrong or nothing is known yet - the two are the same to a client that has no better source, and
@@ -415,16 +416,16 @@ class InstalledModel(BaseModel):
     source: str = ""
     # The class list these weights predict, as `train_model.py --install` recorded it beside them.
     # Empty means *not recorded* - a hand-copied weight, or a record written before the field
-    # existed - and never "predicts nothing": `roster.class_list_problems([])` would read as all
-    # 8 roster classes missing, so an empty list reports no findings rather than a verdict about
+    # existed - and never "predicts nothing": `roster.class_list_problems([])` would read as every
+    # roster class missing, so an empty list reports no findings rather than a verdict about
     # a list nothing has seen.
     class_names: list[str] = Field(default_factory=list)
-    # What is wrong with `class_names`, judged in the sidecar against the 8-class roster
-    # (`app/roster.py`) - the same sentences `DetectorProbeResponse.class_warnings` carries, for
-    # the same reason: the names are a property of the weights and this is the only process that
-    # can read them. The difference is *when*: this is served by the listing, so a weight whose
-    # head was trained per product-and-distance is visible before it is selected, let alone
-    # before it runs and logs one item under three labels.
+    # What is wrong with `class_names`, judged in the sidecar against the roster of the weight's own
+    # generation (`app/roster.py`) - the same sentences `DetectorProbeResponse.class_warnings`
+    # carries, for the same reason: the names are a property of the weights and this is the only
+    # process that can read them. The difference is *when*: this is served by the listing, so a
+    # weight whose head was trained per product-and-distance is visible before it is selected, let
+    # alone before it runs and logs one item under three labels.
     class_warnings: list[str] = Field(default_factory=list)
     # Whether a record file exists beside these weights at all. Not diagnostic: a weight with
     # no record and one whose record predates `--val` leave every other field empty, and the
@@ -509,11 +510,11 @@ class DetectorProbeResponse(BaseModel):
     detail: str = ""
     latency_ms: float | None = None
     class_names: list[str] = []
-    # What is wrong with those names, judged against the app's 8-class roster (`app/roster.py`).
-    # Empty means the weight's own class list matches - which is the only way the app can know:
-    # a `.pt` records no roster, the filename is a convention, and the export that produced it is
-    # long gone. A weight trained from a distance-split project predicts 24 classes and would
-    # otherwise run silently, logging one product under three labels.
+    # What is wrong with those names, judged against the roster of the weight's generation
+    # (`app/roster.py`). Empty means the weight's own class list matches - which is the only way
+    # the app can know: a `.pt` records no roster, the filename is a convention, and the export that
+    # produced it is long gone. A weight trained from a distance-split project predicts 24 classes
+    # and would otherwise run silently, logging one product under three labels.
     class_warnings: list[str] = []
     provider: str | None = None
     sent_size: tuple[int, int] | None = None

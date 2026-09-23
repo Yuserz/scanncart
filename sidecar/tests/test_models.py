@@ -20,7 +20,7 @@ from app.models import (
     record_requirement,
     requirement_for,
 )
-from app.roster import ROSTER
+from app.roster import V2_ROSTER
 from app.settings import Settings
 from app.settings_store import (
     ALLOWED_MODELS,
@@ -428,9 +428,9 @@ def test_a_corrupt_or_hostile_record_cannot_break_the_route(tmp_path):
     assert set(by_value) == {"broken.pt", "wrong-mode.pt", "list.pt"}
     assert all(m.resize_mode is None for m in by_value.values())
     assert all(m.class_names == [] for m in by_value.values())
-    # No class list means no finding about one. `class_list_problems([])` would say "cannot
-    # predict 8 of the 8 roster classes", which is a verdict about a list nobody has seen -
-    # the wrong reading for a weight whose record simply predates the field.
+    # No class list means no finding about one. `class_list_problems([])` would say the model
+    # cannot predict any roster class, which is a verdict about a list nobody has seen - the
+    # wrong reading for a weight whose record simply predates the field.
     assert all(m.class_warnings == [] for m in by_value.values())
     # Every field empty, but the file *is* there - which is the whole content of `recorded`,
     # and the difference between a panel that can say "nothing measured yet" and one that has
@@ -438,6 +438,7 @@ def test_a_corrupt_or_hostile_record_cannot_break_the_route(tmp_path):
     assert read_record(tmp_path / "broken.pt") == {
         "recorded": True,
         "resize_mode": None,
+        "generation": None,
         "source": "",
         "class_names": [],
         "validation": [],
@@ -445,6 +446,7 @@ def test_a_corrupt_or_hostile_record_cannot_break_the_route(tmp_path):
     assert read_record(tmp_path / "nothing-here.pt") == {
         "recorded": False,
         "resize_mode": None,
+        "generation": None,
         "source": "",
         "class_names": [],
         "validation": [],
@@ -455,7 +457,7 @@ def test_a_class_list_of_junk_reads_as_unrecorded_and_a_real_one_survives(tmp_pa
     """Two directions in one, because they are the same rule seen twice: an entry that carries no
     name is dropped, and a list where nothing survives is *unrecorded* rather than empty-but-
     recorded. That second half is what keeps the listing honest - `class_list_problems([])`
-    would report all 8 roster classes missing, which is a verdict about a list nobody has seen.
+    would report every roster class missing, which is a verdict about a list nobody has seen.
     A name that does survive is reported as it stands, trimmed.
     """
     _touch(tmp_path, "junk.pt")
@@ -491,7 +493,7 @@ def test_the_install_step_writes_the_record_this_reader_finds(tmp_path):
         best,
         tmp_path / "models",
         record=train_model.weight_record(
-            generations.V2, 2, "snc-grocery", class_names=list(ROSTER)
+            generations.V2, 2, "snc-grocery", class_names=list(V2_ROSTER)
         ),
     )
 
@@ -503,16 +505,20 @@ def test_the_install_step_writes_the_record_this_reader_finds(tmp_path):
     # The second fact only the training run knows: what these weights predict. Read back through
     # the same listing the panel loads, so a renamed or reshaped field fails here instead of
     # surfacing as an unflagged model that logs one product under three labels.
-    assert only.class_names == list(ROSTER)
+    assert only.class_names == list(V2_ROSTER)
     assert only.class_warnings == []
 
 
-def test_a_v1_weight_installs_and_the_listing_names_the_one_class_it_cannot_predict(tmp_path):
-    """The other direction of the same guard, and the case this project's v1 build lands in: v1's
-export declares seven classes, so a v1 weight is *correct* and still cannot predict Palmolive -
-the one class v2 adds (`generations.added_over`). Nothing it does predict is wrong, which is
-exactly why the listing has to say it: with no sentence, the only symptom is that one product
-never appears in the item log. Uses the tool's own writer, like the seam test above.
+def test_a_v1_weight_installs_and_the_listing_raises_nothing_about_it(tmp_path):
+    """The case this project's v1 build lands in, and it must come back clean.
+
+    v1's export declares seven classes; v2's declares eight. The v1 head cannot predict Palmolive
+    and that is *correct for v1* - so judged against v2's roster it produced a permanent finding no
+    setting or retrain could clear, on the weights this app runs. The record's `generation` is what
+    settles it, and it is the only thing that can: six of v1's names are also v2's, so the head's
+    vocabulary alone cannot say which roster it is complete against.
+
+    Uses the tool's own writer, like the seam test above.
     """
     import generations
     import train_model
@@ -535,8 +541,40 @@ never appears in the item log. Uses the tool's own writer, like the seam test ab
     assert only.resize_mode in ALLOWED_RESIZE_MODES
     assert only.class_names == list(generations.V1.classes)
 
+    assert only.class_warnings == []
+
+
+def test_a_v2_weight_that_cannot_predict_palmolive_is_named_as_such(tmp_path):
+    """The same seven names, the opposite verdict - which is why the record is read at all.
+
+    This is a v2 head that lost a class: it declares exactly v1's names, so nothing in the class
+    list distinguishes it from the test above. What makes it a v2 weight is the record, and the
+    quiet finding is then true of it: nothing it predicts is wrong, and one product simply never
+    appears in the log.
+    """
+    import generations
+    import train_model
+
+    best = tmp_path / "best.pt"
+    best.write_bytes(b"weights")
+    train_model.install(
+        best,
+        tmp_path / "models",
+        name=generations.V2.weight_name,
+        record=train_model.weight_record(
+            generations.V2,
+            2,
+            "snc-grocery",
+            # Everything but Palmolive, which is v1's list exactly.
+            class_names=list(generations.V1.classes),
+        ),
+    )
+
+    (only,) = installed_models(tmp_path / "models")
+    assert only.class_names == list(generations.V1.classes)
+
     (warning,) = only.class_warnings
-    assert "cannot predict 1 of the 8 roster classes" in warning
+    assert "cannot predict 1 of the 8 v2 roster classes" in warning
     assert "Palmolive Naturals Bar Soap 85g" in warning
     # Neither of the other two findings: every name it predicts *is* a roster name, and none of
     # them carries a distance - which is what makes this the quiet one.
@@ -559,9 +597,9 @@ def test_the_listing_flags_a_weight_trained_per_product_and_distance(monkeypatch
 
     (only,) = installed_models(tmp_path)
     assert only.class_names == names
-    # One finding, and it is the distance one: the "cannot predict 8 of 8" sentence is true for
-    # this list and deliberately suppressed, because a reader cannot act on it until the list is
-    # a roster - so printing both would dilute the one that names the fix.
+    # One finding, and it is the distance one: the "cannot predict any roster class" sentence is
+    # true for this list and deliberately suppressed, because a reader cannot act on it until the
+    # list is a roster - so printing both would dilute the one that names the fix.
     assert len(only.class_warnings) == 1
     assert "distance" in only.class_warnings[0]
     # Through the route the panel actually loads, not only the function: this is the difference

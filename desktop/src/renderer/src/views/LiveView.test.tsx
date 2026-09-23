@@ -342,7 +342,7 @@ describe('LiveView', () => {
       // One write, one description: the sidecar is the only process that has the loaded model's
       // class names, so a second wording here could only contradict it.
       const sentence =
-        'this model cannot predict 2 of the 8 roster classes: something only the sidecar knows'
+        'this model cannot predict 2 of the 8 v2 roster classes: something only the sidecar knows'
       const h = makeHarness()
       render(<LiveView port={8765} deps={h.deps} />)
 

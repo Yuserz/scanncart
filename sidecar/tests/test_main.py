@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 
 from tests import next_frame
 from app.main import build_app, AppState
-from app.roster import ROSTER
+from app.roster import V1_ROSTER, V2_ROSTER
 from app.schemas import Detection
 from app.settings import Settings
 
@@ -168,7 +168,7 @@ def test_the_class_list_reaches_a_client_that_is_already_watching():
     stats strip's class chip would populate only after a reload. This is the path the earlier "a
     clean list is not news" rule skipped, and it is exactly the healthy case the chip exists for.
     """
-    client, _ = _make_client(detector=_DetectorDeclaring(list(ROSTER)))
+    client, _ = _make_client(detector=_DetectorDeclaring(list(V2_ROSTER)))
 
     with client.websocket_connect("/ws/stream") as ws:
         assert ws.receive_json()["state"] == "idle"
@@ -182,7 +182,7 @@ def test_the_class_list_reaches_a_client_that_is_already_watching():
                 reported = msg
                 break
         assert reported is not None, "no status message carried the class list"
-        assert reported["class_names"] == sorted(ROSTER)
+        assert reported["class_names"] == sorted(V2_ROSTER)
         # Reported with an empty verdict, which is the whole point: the count is the news.
         assert reported["class_warnings"] == []
     client.post("/api/capture/stop")
@@ -267,17 +267,50 @@ def test_a_clean_class_list_reports_its_names_and_no_warnings():
     earlier "a clean list is not news" rule was written when the warning banner was the only
     consumer, and it would leave the count at zero on exactly the captures that are fine.
     """
-    client, state = _make_client(detector=_DetectorDeclaring(list(ROSTER)))
+    client, state = _make_client(detector=_DetectorDeclaring(list(V2_ROSTER)))
 
     assert client.post("/api/capture/start").json()["state"] == "running"
-    assert state.class_names == sorted(ROSTER)
+    assert state.class_names == sorted(V2_ROSTER)
     assert state.class_warnings == []
 
     with client.websocket_connect("/ws/stream") as ws:
         snapshot = ws.receive_json()
 
-    assert snapshot["class_names"] == sorted(ROSTER)
+    assert snapshot["class_names"] == sorted(V2_ROSTER)
     assert snapshot["class_warnings"] == []
+    client.post("/api/capture/stop")
+
+
+def test_the_running_weights_recorded_generation_decides_its_roster(monkeypatch):
+    """The wiring the per-generation split hangs on, at the point it matters: the *runtime* judge
+    consults the record.
+
+    A v2 head that lost Palmolive declares exactly v1's seven names, so its vocabulary alone
+    cannot say whether the missing class is a fault or the correct list for the generation - the
+    record is the only side that knows (`roster.resolve_roster`). Here a detector declares v1's
+    seven and the record claims v2, which is that head exactly: the finding has to appear.
+    Monkeypatched rather than read off disk, because the real `models/` directory is state this
+    suite must not assume.
+    """
+    monkeypatch.setattr("app.main.generation_for", lambda *a, **k: "v2")
+    client, state = _make_client(detector=_DetectorDeclaring(list(V1_ROSTER)))
+
+    assert client.post("/api/capture/start").json()["state"] == "running"
+    assert state.class_names == sorted(V1_ROSTER)
+    (warning,) = state.class_warnings
+    assert "cannot predict 1 of the 8 v2 roster classes" in warning
+    assert "Palmolive Naturals Bar Soap 85g" in warning
+
+
+def test_a_v1_weights_own_record_leaves_its_seven_classes_alone():
+    """The same wiring, the other way - and the case the app is actually in: the installed v1
+    weight's record says `generation: v1`, so its seven names are judged against v1's roster and
+    nothing is reported. Held to v2 it produced a Palmolive finding on every capture."""
+    client, state = _make_client(detector=_DetectorDeclaring(list(V1_ROSTER)))
+
+    assert client.post("/api/capture/start").json()["state"] == "running"
+    assert state.class_names == sorted(V1_ROSTER)
+    assert state.class_warnings == []
     client.post("/api/capture/stop")
 
 

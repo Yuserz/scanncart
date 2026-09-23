@@ -1587,7 +1587,7 @@ describe('AdminPanel', () => {
       // One write, one description: the sidecar is the only process that has the model's own class
       // list, so the panel must not paraphrase it into a second, possibly contradicting, claim.
       const sentence =
-        'this model cannot predict 2 of the 8 roster classes: something the panel cannot know'
+        'this model cannot predict 2 of the 8 v2 roster classes: something the panel cannot know'
       await testConnection(weights(['milo'], [sentence]))
 
       expect(await screen.findByTestId('probe-class-warning')).toHaveTextContent(sentence)
