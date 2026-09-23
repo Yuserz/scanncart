@@ -44,7 +44,13 @@ labels. `parse_labels` below handles both forms, and the tests pin both.
 Two sweeps, for the two ways a miss can be an inference setting rather than a model gap:
 
     --conf-sweep    a miss ranked *below* conf is a threshold, and `conf_threshold` is
-                    hot-reloadable - so the finding is a slider, not a retrain.
+                    hot-reloadable - so the finding is a slider, not a retrain. It reports
+                    what each threshold costs on *both* sides, because recall alone can only
+                    ever improve as the threshold falls: alongside the instance counts it
+                    prints `extra`, the predictions that matched no label. Both are split by
+                    crowding and, when the generation has a distance axis, by distance - a
+                    threshold that buys `far` while costing `close` is a different decision
+                    from one that buys both.
     --iou-sweep     two tins side by side overlap; NMS at its default 0.7 merges boxes that
                     overlap more than that, so a genuinely detected second tin is discarded
                     inside the model before anything sees it.
@@ -76,6 +82,11 @@ from pathlib import Path
 import resources  # must precede numpy/torch: sets OMP/MKL thread limits
 from generations import DEFAULT, GENERATIONS, Generation
 from generations import get as generation_for
+# The distance join and its ordering are imported rather than re-derived: `train_model` already
+# reads the manifest on filenames (`distance_map`) and owns `DISTANCE_ORDER`, and a second copy is
+# how the two tools' `far` comes to mean different files. It is a light module - `httpx` and these
+# same helpers, nothing that loads a model - so importing it costs this tool nothing at start-up.
+from train_model import DISTANCE_ORDER, distance_map
 from workspace import SIDECAR_ROOT
 
 DEFAULT_SPLIT = "test"
@@ -141,6 +152,11 @@ class FrameRecord:
     # Predicted class names this generation does not declare. A weight whose head has more
     # outputs than the dataset it is audited against shows up here.
     off_roster: tuple[str, ...] = ()
+    # Which capture distance this frame came from, or "" when it carries none. Read from the
+    # manifest, because a YOLO export keeps no tags and the distance is a Roboflow tag - the same
+    # join `train_model.distance_map` does for `--val`. Empty is a real answer here: it is what a
+    # generation with no distance axis gives every frame.
+    distance: str = ""
 
 
 @dataclass(frozen=True)
@@ -150,11 +166,21 @@ class Match:
     matched_truth: tuple[int, ...]
     missed_truth: tuple[int, ...]
     matched_pred: tuple[int, ...]
+    # How many predictions were offered to the match at all. Carried because `spurious` below is a
+    # subtraction, and the leftovers are not derivable from the ones that were paired.
+    predictions: int = 0
 
     @property
     def spurious(self) -> int:
-        """Predictions left over: matched nothing, so they are false positives."""
-        return len(self.matched_pred)
+        """Predictions left over: matched nothing, so they are false positives.
+
+        Counted rather than assumed, and the count is what a threshold decision needs: a miss and
+        a false positive are the two costs of `conf_threshold` and only one of them was visible
+        before. A box of the *wrong* class counts here as well as a box on nothing, since
+        `match_instances` only ever pairs equal classes - so one detection on the wrong item is
+        one miss and one false positive, which is the honest reading of it.
+        """
+        return self.predictions - len(self.matched_pred)
 
 
 # ---------------------------------------------------------------------------
@@ -269,6 +295,7 @@ def match_instances(
         matched_truth=tuple(sorted(used_t)),
         missed_truth=tuple(i for i in range(len(truth)) if i not in used_t),
         matched_pred=tuple(sorted(used_p)),
+        predictions=len(preds),
     )
 
 
@@ -332,12 +359,20 @@ class RecallReport:
     iou_match: float = DEFAULT_IOU_MATCH
     per_class: dict[int, ClassTally] = field(default_factory=dict)
     buckets: dict[str, BucketTally] = field(default_factory=dict)
+    # The same accounting, keyed by capture distance. A third axis rather than a relabelling of the
+    # crowding one: `--val` reports the per-class split by distance, and crowding is the axis the
+    # misses turned out to live on, so a threshold that moves one and not the other is the finding.
+    by_distance: dict[str, BucketTally] = field(default_factory=dict)
     off_roster: Counter[str] = field(default_factory=Counter)
     frames: int = 0
+    # Predictions that matched no label at this threshold - the other cost of `conf_threshold`,
+    # and the one a recall figure cannot show, since raising the threshold only ever removes boxes.
+    spurious: int = 0
 
     def __post_init__(self) -> None:
         self.per_class = {i: ClassTally() for i in range(len(self.classes))}
         self.buckets = {name: BucketTally() for name in BUCKETS}
+        self.by_distance = {name: BucketTally() for name in DISTANCE_ORDER}
 
     def add(self, record: FrameRecord) -> Match:
         """Fold one frame in, and return what matched - so a caller can inspect a frame.
@@ -351,12 +386,20 @@ class RecallReport:
         match = match_instances(record.truth, preds, self.iou_match)
 
         self.frames += 1
-        bucket = self.buckets[SINGLE if len(record.truth) == 1 else MULTI]
-        bucket.frames += 1
-        bucket.labelled += len(record.truth)
-        bucket.found += len(match.matched_truth)
-        if not match.missed_truth:
-            bucket.frames_clean += 1
+        self.spurious += match.spurious
+        # One fold over the one match, applied to whichever tallies this frame belongs to. Written
+        # as a shared loop rather than two copies so the crowding and distance axes cannot come to
+        # count `frames_clean` differently - a frame neither of them disagrees about would then
+        # read as complete on one axis and incomplete on the other, with nothing to say which.
+        tallies = [self.buckets[SINGLE if len(record.truth) == 1 else MULTI]]
+        if record.distance:
+            tallies.append(self.by_distance[record.distance])
+        for tally in tallies:
+            tally.frames += 1
+            tally.labelled += len(record.truth)
+            tally.found += len(match.matched_truth)
+            if not match.missed_truth:
+                tally.frames_clean += 1
 
         hit = set(match.matched_truth)
         for i, instance in enumerate(record.truth):
@@ -382,6 +425,11 @@ class RecallReport:
     @property
     def recall(self) -> float:
         return self.found / self.instances if self.instances else 0.0
+
+    @property
+    def distances(self) -> list[str]:
+        """The distances this split actually held frames for, in the canonical order."""
+        return [name for name in DISTANCE_ORDER if self.by_distance[name].labelled]
 
     @property
     def below_floor(self) -> list[str]:
@@ -482,6 +530,9 @@ def collect(
     model = YOLO(weights)
     wanted = {name: i for i, name in enumerate(generation.classes)}
     images, labels = split_dirs(generation, split)
+    # Joined on the export filename, the same key `train_model.images_by_distance` uses - the two
+    # would otherwise disagree about which image is `far` while both looking right.
+    distances = distance_map(generation.manifest)
     records: list[FrameRecord] = []
     for path in frame_paths(generation, split, limit):
         frame = cv2.imread(str(path))
@@ -512,7 +563,8 @@ def collect(
                     off.append(name)
         records.append(
             FrameRecord(truth=tuple(read_labels(labels / f"{path.stem}.txt")),
-                        preds=tuple(preds), off_roster=tuple(off))
+                        preds=tuple(preds), off_roster=tuple(off),
+                        distance=distances.get(path.name, ""))
         )
     return records
 
@@ -662,6 +714,54 @@ def report_lines(
     return out
 
 
+def sweep_confs(
+    operating: float, ladder: tuple[float, ...] = CONF_SWEEP
+) -> tuple[float, ...]:
+    """The ladder plus the threshold actually operating, sorted.
+
+    A table that omitted the row for the threshold in force could not justify it, only describe
+    its neighbours - and the threshold in force is the one a decision is about. Same reason
+    `clamp_probe.sweep_tolerances` folds its shipped tolerance in: the constant and this ladder are
+    edited by different people at different times, so "is my value in the table" cannot be left to
+    luck.
+    """
+    return tuple(sorted({*ladder, round(float(operating), 6)}))
+
+
+def distance_cell(tally: BucketTally) -> str:
+    """One distance's recall at one threshold, `-` when the split holds none of its frames,
+    `!` when it is under the floor.
+
+    The same three states `train_model`'s class x distance grid uses, for the same reason: a
+    distance the split never asked about and a distance that scored zero lead to opposite work,
+    and a `0.0%` would state the second while meaning the first.
+    """
+    if not tally.labelled:
+        return f"{'-':>9}"
+    return f"{tally.recall:8.1%}{'!' if tally.recall < RECALL_FLOOR else ' '}"
+
+
+def distance_note(generation: Generation, split: str, has_distance: bool) -> str:
+    """Why the per-distance columns are missing - two causes with opposite fixes.
+
+    `manifest is None` means *this generation was never tagged* and no amount of re-running finds
+    a distance for it; a manifest that matched nothing means the join failed and someone should
+    look. A single "no distances" sentence would hide the second behind the first, which is the
+    failure `train_model.distance_notes` already refuses on its side.
+    """
+    if has_distance:
+        return ""
+    if generation.manifest is None:
+        return (
+            f"  no per-distance columns: {generation.name} declares no distance axis, so its"
+            " frames were never tagged and there is nothing to break down"
+        )
+    return (
+        f"  no per-distance columns: the manifest matched none of the {split} frames - the"
+        " breakdown is skipped, not reported as clean"
+    )
+
+
 def crowding_verdict(report: RecallReport, minimum: int = MIN_BUCKET_INSTANCES) -> str:
     """The one-sentence read, which is the thing a number alone cannot give.
 
@@ -703,6 +803,70 @@ def crowding_verdict(report: RecallReport, minimum: int = MIN_BUCKET_INSTANCES) 
     )
 
 
+def conf_sweep_lines(
+    records: list[FrameRecord] | tuple[FrameRecord, ...],
+    generation: Generation,
+    split: str,
+    operating: float,
+    iou_match: float = DEFAULT_IOU_MATCH,
+) -> list[str]:
+    """The confidence sweep as lines: what each threshold costs, on both sides at once.
+
+    Its own function for exactly the reason `report_lines` is one - the CLI becomes a print and a
+    test can read the table with no weights, no dataset and no GPU. It matters more here than
+    there: the per-distance columns only exist for a generation that has a distance axis, and the
+    only generation that does has no export on this machine yet, so a table built inline in
+    `main()` would have its whole distance half unobservable until v2 is downloaded.
+
+    The two sides are the point. Recall alone can only improve as the threshold falls, so a sweep
+    of it recommends 0.0; `extra` is what the same move costs, and neither number is decisive
+    without the other.
+
+    The ladder is folded here rather than passed in, so a caller cannot hand this the plain
+    `CONF_SWEEP` and quietly render a table with no row for the threshold actually operating - the
+    bug the `sweep_confs` fold exists to prevent. Taking `operating` and deriving the rest makes
+    "the running threshold is in the table" a property of this function.
+    """
+    confs = sweep_confs(operating)
+    has_distance = any(record.distance for record in records)
+    out = [
+        "confidence sweep - what each threshold costs on the real frames:",
+        f"  `extra` is predictions that matched no label (false positives), `!` is below "
+        f"{RECALL_FLOOR}",
+    ]
+    head = f"{'conf':>6}{'instances':>12}{'recall':>9}{'single':>9}{'multi':>9}{'extra':>8}"
+    if has_distance:
+        head += "".join(f"{distance:>9}" for distance in DISTANCE_ORDER)
+    out.append(head)
+
+    for conf in confs:
+        report = measure(records, generation.classes, conf, iou_match)
+        row = (
+            f"{conf:6.2f}{report.found:6}/{report.instances:<5}{report.recall:9.3f}"
+            f"{report.buckets[SINGLE].recall:9.1%}{report.buckets[MULTI].recall:9.1%}"
+            f"{report.spurious:8}"
+        )
+        if has_distance:
+            row += "".join(
+                distance_cell(report.by_distance[distance]) for distance in DISTANCE_ORDER
+            )
+        if abs(conf - operating) < 1e-9:
+            row += "   <-- operating"
+        out.append(row)
+
+    out += [
+        "",
+        "A rise here means the misses are ranked below the threshold, and conf_threshold is",
+        "hot-reloadable - so that part of the recall is a setting, not the model. Read it against",
+        "`extra`, which is what the same move costs the other way: a threshold that buys recall by",
+        "admitting boxes on nothing is not a better operating point.",
+    ]
+    note = distance_note(generation, split, has_distance)
+    if note:
+        out.append(note)
+    return out
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(
         description="Per-instance recall for a trained weight, split by frame crowding."
@@ -728,7 +892,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--device", default="auto", help="auto / cuda / cpu")
     ap.add_argument("--limit", type=int, default=None, help="stop after N frames")
     ap.add_argument("--conf-sweep", action="store_true",
-                    help="report recall at several confidence thresholds")
+                    help="report recall and false positives at several confidence thresholds, "
+                         "split by crowding and (when the dataset has one) by distance")
     ap.add_argument("--iou-sweep", action="store_true",
                     help="re-run at several NMS IoUs, to tell a suppressed box from an unseen one")
     # The machine's share, in the same flags the other dataset tools use - see resources.py.
@@ -754,7 +919,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # One pass at the lowest threshold anyone asked about: every other conf is a filter over
     # these same records (see RecallReport.add). Only the NMS sweep needs its own pass.
-    lowest = min([args.conf, *(CONF_SWEEP if args.conf_sweep else ())])
+    lowest = min(sweep_confs(args.conf)) if args.conf_sweep else args.conf
     records = collect(
         generation, weights, args.split, lowest, args.imgsz, resize_mode, device, args.limit
     )
@@ -770,17 +935,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.conf_sweep:
         print()
-        print("confidence sweep (instances found / labelled, then the crowded bucket):")
-        print(f"{'conf':>6}{'instances':>12}{'recall':>9}{'single':>9}{'multi':>9}")
-        for conf in CONF_SWEEP:
-            r = measure(records, generation.classes, conf, args.iou_match)
-            print(
-                f"{conf:6.2f}{r.found:6}/{r.instances:<5}{r.recall:9.3f}"
-                f"{r.buckets[SINGLE].recall:9.1%}{r.buckets[MULTI].recall:9.1%}"
-            )
-        print()
-        print("A rise here means the misses are ranked below the threshold, and conf_threshold")
-        print("is hot-reloadable - so that part of the recall is a setting, not the model.")
+        for line in conf_sweep_lines(
+            records, generation, args.split, args.conf, args.iou_match
+        ):
+            print(line)
 
     if args.iou_sweep:
         print()

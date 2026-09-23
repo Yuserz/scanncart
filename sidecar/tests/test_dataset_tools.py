@@ -3258,6 +3258,257 @@ def test_match_instances_is_one_to_one():
     assert len(match.matched_pred) == 1
 
 
+def test_a_duplicate_box_is_a_false_positive_as_well_as_a_non_hit():
+    """The other half of the one-to-one rule, and the number a threshold decision needs.
+
+    The test above pins that a second box on one object is not a second *hit*. What it does not
+    say is that the second box still exists: it is a prediction that matched no label, so it is a
+    false positive, and `spurious` counts it. Dropping it silently would make a model that emits
+    two boxes per object look exactly as clean as one that emits one.
+
+    `predictions` is carried on the match because `spurious` is a subtraction - the leftovers are
+    not derivable from the pairs that were made.
+    """
+    truth = [_instance(0, BOXY)]
+    match = audit_recall.match_instances(
+        truth, [_pred(0, BOXY, 0.9), _pred(0, (0.11, 0.11, 0.31, 0.31), 0.8)], 0.5
+    )
+    assert match.predictions == 2
+    assert match.spurious == 1
+
+    # A frame where every prediction found its label has none, so this is not counting hits.
+    exact = audit_recall.match_instances(truth, [_pred(0, BOXY, 0.9)], 0.5)
+    assert exact.predictions == 1 and exact.spurious == 0
+    # The old, wrong reading of this property was `len(matched_pred)` - which on the frame above
+    # is 1, so it would report a false positive on a perfect prediction and count hits as errors.
+    assert exact.spurious != len(exact.matched_pred)
+
+
+def test_a_wrong_class_box_is_one_miss_and_one_false_positive():
+    """Not a hit and not nothing - the pair is what a confused model actually costs.
+
+    For a grocery basket this is the expensive shape: the tin is not logged under its own name and
+    a second row appears under a name that was never there.
+    """
+    match = audit_recall.match_instances([_instance(0, BOXY)], [_pred(1, BOXY)], 0.5)
+    assert match.missed_truth == (0,)
+    assert match.matched_pred == ()
+    assert match.spurious == 1
+
+
+def test_false_positives_are_counted_at_the_threshold_being_measured():
+    """What makes `--conf-sweep` able to price a threshold rather than only sell one.
+
+    Recall alone can only improve as the threshold falls, so a sweep of it recommends 0.0. The
+    duplicate here sits at 0.55: below the operating point it is a false positive, above it is
+    gone. Same records, two answers - which is the whole reason the records are kept raw and
+    re-filtered per conf.
+    """
+    records = [
+        audit_recall.FrameRecord(
+            truth=(_instance(0, BOXY),),
+            preds=(_pred(0, BOXY, 0.9), _pred(0, (0.11, 0.11, 0.31, 0.31), 0.55)),
+        )
+    ]
+    assert audit_recall.measure(records, ("tin",), conf=0.5).spurious == 1
+    assert audit_recall.measure(records, ("tin",), conf=0.7).spurious == 0
+    # And the hit is a hit either way, so the two readings differ only in the cost column.
+    assert audit_recall.measure(records, ("tin",), conf=0.5).found == 1
+    assert audit_recall.measure(records, ("tin",), conf=0.7).found == 1
+
+
+def test_the_report_splits_recall_by_distance_as_well_as_by_crowding():
+    """The axis the threshold question is asked on: does a move help `far` and cost `close`?
+
+    A third fold over the same match rather than a second pass, so the distance reading and the
+    crowding reading cannot disagree about a frame.
+    """
+    report = audit_recall.measure(
+        [_record(1, 1, distance="far"), _record(1, 0, distance="far"),
+         _record(1, 1, distance="close")],
+        ("tin",),
+    )
+    assert report.by_distance["far"].labelled == 2
+    assert report.by_distance["far"].found == 1
+    assert report.by_distance["far"].recall == pytest.approx(0.5)
+    assert report.by_distance["close"].recall == pytest.approx(1.0)
+    assert report.by_distance["mid"].labelled == 0
+    # The frame counts too: they are the "came back complete" half of the tally, and a distance
+    # bucket that counted instances but not frames would print a rate with no denominator behind
+    # it. One of the two `far` frames had its label found, the other did not.
+    assert report.by_distance["far"].frames == 2
+    assert report.by_distance["far"].frames_clean == 1
+    assert report.by_distance["close"].frames_clean == 1
+    # Canonical order, and only the distances that held frames.
+    assert report.distances == ["close", "far"]
+
+
+def test_a_frame_with_no_distance_folds_into_no_distance_bucket():
+    """v1's case, and the one that must not read as a clean bill of health.
+
+    An untagged frame contributes to the overall number and to no distance row, so every bucket
+    stays empty and `distances` is empty - which is what the tool turns into its "no such axis"
+    sentence rather than a zero.
+    """
+    report = audit_recall.measure([_record(1, 1)], ("tin",))
+    assert report.distances == []
+    assert all(tally.labelled == 0 for tally in report.by_distance.values())
+    assert report.found == 1  # still counted, just not attributed to a distance
+
+
+def test_a_distance_cell_reads_a_dash_a_percentage_or_a_flagged_percentage():
+    """Three states, because "this distance has none of that item" and "it missed all of them"
+    lead to opposite work - and a `0.0%` would state the second while meaning the first."""
+    unasked = audit_recall.BucketTally()
+    assert audit_recall.distance_cell(unasked) == "        -"
+
+    passing = audit_recall.BucketTally(labelled=10, found=9)
+    assert audit_recall.distance_cell(passing).strip() == "90.0%"
+
+    failing = audit_recall.BucketTally(labelled=10, found=4)
+    cell = audit_recall.distance_cell(failing)
+    assert cell.strip() == "40.0%!"
+    assert len(cell) == len(audit_recall.distance_cell(unasked))  # columns line up
+
+
+def test_the_distance_note_tells_apart_never_tagged_from_the_join_failing():
+    """Two causes with opposite fixes: v1 has no distance axis at all (`manifest is None`, so
+    re-running finds nothing) while a manifest that matched nothing is a broken join someone
+    should look at. One sentence for both would hide the second behind the first."""
+    v1 = generations.get("v1")
+    never = audit_recall.distance_note(v1, "test", has_distance=False)
+    assert "declares no distance axis" in never and "never tagged" in never
+
+    v2 = generations.get("v2")
+    failed = audit_recall.distance_note(v2, "test", has_distance=False)
+    assert "matched none of the test frames" in failed
+    assert "not reported as clean" in failed
+    assert never != failed
+
+    # And nothing at all when the columns are there, so a caller can print it unconditionally.
+    assert audit_recall.distance_note(v1, "test", has_distance=True) == ""
+
+
+def test_the_sweep_folds_in_the_threshold_that_is_actually_operating():
+    """A table that omits the row for the threshold in force describes its neighbours instead.
+
+    Same rule as `clamp_probe.sweep_tolerances`: the ladder and the running value are edited by
+    different people at different times, so the row a decision is about cannot be left to luck.
+    `--conf 0.7` is exactly the case - 0.7 is in no ladder, and without this the sweep would show
+    0.1/0.2/0.3/0.5 and no row for the threshold being reasoned about.
+    """
+    folded = audit_recall.sweep_confs(0.7)
+    assert 0.7 in folded
+    assert set(audit_recall.CONF_SWEEP) <= set(folded)
+    assert list(folded) == sorted(folded)
+    # The shipped operating point is already a candidate: folded in, not duplicated.
+    assert audit_recall.sweep_confs(0.5).count(0.5) == 1
+    assert list(audit_recall.sweep_confs(0.5)) == list(audit_recall.CONF_SWEEP)
+
+    # And the table is rendered from it, asserted as a row rather than as a substring: the fold is
+    # derived inside `conf_sweep_lines` and cannot be passed in, so a `--conf 0.7 --conf-sweep`
+    # run cannot print neighbours and no row for the threshold being reasoned about.
+    lines = audit_recall.conf_sweep_lines(
+        [_record(1, 1)], generations.get("v2"), "test", operating=0.7
+    )
+    rows = [line.lstrip() for line in lines if line.lstrip().startswith("0.")]
+    assert len(rows) == len(audit_recall.CONF_SWEEP) + 1
+    assert any(row.startswith("0.70") and "<-- operating" in row for row in rows)
+
+
+def test_the_sweep_table_gains_a_column_per_distance_and_marks_the_operating_row():
+    """The rendering, read as text - which is the only way to see the distance half today.
+
+    v2 is the one generation with a distance axis and its export has not been downloaded yet, so a
+    table built inline in `main()` would have this half unobservable until then. Every assertion
+    below is about the printed table rather than about the accumulator behind it.
+    """
+    records = [_record(1, 1, distance="far"), _record(1, 0, distance="far"),
+               _record(1, 1, distance="close")]
+    lines = audit_recall.conf_sweep_lines(records, generations.get("v2"), "test", operating=0.5)
+    head = next(line for line in lines if line.startswith("  conf"))
+    for distance in ("close", "mid", "far"):
+        assert distance in head
+    # `extra` is the other half of the decision, so it is in the header too.
+    assert "extra" in head
+
+    # The conf is right-aligned in a 6-wide column, so a data row is "  0.50" - matched on the
+    # stripped value rather than on a guess at the padding.
+    rows = [line for line in lines if line.lstrip().startswith("0.")]
+    assert len(rows) == len(audit_recall.CONF_SWEEP)  # 0.5 is already on the ladder
+    # Exactly one row is the operating one, and it is the 0.5.
+    marked = [row for row in rows if "<-- operating" in row]
+    assert len(marked) == 1 and marked[0].lstrip().startswith("0.50")
+    # A distance that held no frames reads as `-`, not as 0.0% - `mid` here.
+    assert "-" in marked[0]
+    # And with columns present the "no distance axis" note is not printed.
+    assert not any("no per-distance columns" in line for line in lines)
+    # Every data row is exactly as wide as the header, marker aside. Exact rather than "no wider
+    # than": the three-state cell puts a `!` *inside* its nine characters, so a flag that overflowed
+    # would shift every column after it - and a `!` in the middle (mid-distance under the floor) is
+    # the case that would collide with the next column's leading space.
+    assert {len(row.replace("   <-- operating", "")) for row in rows} == {len(head)}
+
+
+def test_the_sweep_table_omits_the_distance_columns_and_says_why_when_there_are_none():
+    """v1's case: a table with no distance columns has to say which of the two causes it is,
+    or a reader cannot tell "never tagged" from "the join broke"."""
+    records = [_record(1, 1), _record(1, 0)]
+    lines = audit_recall.conf_sweep_lines(records, generations.get("v1"), "test", operating=0.5)
+    head = next(line for line in lines if line.startswith("  conf"))
+    assert "far" not in head and "close" not in head
+    assert "extra" in head
+    # The row still marks the operating threshold, so the columns are absent, not the information.
+    assert any("<-- operating" in line for line in lines)
+    # Uniform rows, counted the same way as the distance case - and the header is narrower here,
+    # because three distance columns are missing rather than empty.
+    table = [line for line in lines if line.lstrip().startswith("0.")]
+    assert table
+    assert {len(row.replace("   <-- operating", "")) for row in table} == {len(head)}
+    assert len(head) == 80 - 27
+    note = next(line for line in lines if "no per-distance columns" in line)
+    assert "declares no distance axis" in note
+
+
+def test_the_training_doc_describes_the_columns_the_sweep_prints():
+    """The doc's `--conf-sweep` bullet is the only place the table is explained to a user.
+
+    It described a recall-only table, which is precisely the reading that recommends 0.0 - so the
+    two things a threshold decision needs are pinned: that `extra` exists and what it means, and
+    that the row for the running threshold is marked. Same shape as the guard that keeps
+    `spec_check.py` named in the acceptance section.
+    """
+    text = DOC.read_text(encoding="utf-8")
+    start = text.index("**`--conf-sweep`")
+    section = text[start : text.index("**`--iou-sweep`", start)]
+    assert "`extra`" in section
+    assert "<-- operating" in section
+    # And the distance columns, since they are the axis a v2 threshold decision is asked on.
+    assert "Distance columns" in section
+    # What the column *means*, not only that it exists: the table's own header also names `extra`,
+    # so a name-only assertion stays green while the definition is deleted - and the definition is
+    # the half a reader needs to read the number against recall.
+    assert "predictions that matched no label" in section
+
+
+def test_collect_joins_distance_on_the_export_filename_and_not_a_second_reader():
+    """The join is the trainer's, imported rather than re-derived.
+
+    A YOLO export carries no tags, so the distance comes from the workspace manifest keyed on the
+    export filename - and `train_model.distance_map` is where that rule already lives, for `--val`.
+    A second reader here could disagree with the trainer about which image is `far` while both
+    looked correct, which is the drift this repo keeps hand-mirrored contracts in tests for.
+    """
+    source = Path(audit_recall.__file__).read_text(encoding="utf-8")
+    assert re.search(
+        r"^from train_model import DISTANCE_ORDER, distance_map", source, re.MULTILINE
+    )
+    assert "distance_map(generation.manifest)" in source
+    assert 'distances.get(path.name, "")' in source
+    # No second copy of the ordering, and no second manifest parser.
+    assert "DISTANCE_ORDER = (" not in source
+
+
 def test_match_instances_gives_a_contested_prediction_to_the_better_label():
     """Best pair first, which is what makes the result independent of label order."""
     left = (0.1, 0.1, 0.3, 0.3)
@@ -3270,12 +3521,14 @@ def test_match_instances_gives_a_contested_prediction_to_the_better_label():
         assert match.matched_truth == (better,), "the closer label should win either order"
 
 
-def _record(n_labels: int, n_hits: int, conf: float = 0.9) -> audit_recall.FrameRecord:
+def _record(
+    n_labels: int, n_hits: int, conf: float = 0.9, distance: str = ""
+) -> audit_recall.FrameRecord:
     """A frame with `n_labels` boxes in a row, of which the first `n_hits` are predicted."""
     boxes = [(0.1 + 0.2 * i, 0.1, 0.25 + 0.2 * i, 0.25) for i in range(n_labels)]
     truth = tuple(_instance(0, b) for b in boxes)
     preds = tuple(_pred(0, b, conf) for b in boxes[:n_hits])
-    return audit_recall.FrameRecord(truth=truth, preds=preds)
+    return audit_recall.FrameRecord(truth=truth, preds=preds, distance=distance)
 
 
 def test_the_report_splits_recall_by_frame_crowding():

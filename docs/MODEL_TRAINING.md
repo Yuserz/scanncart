@@ -416,10 +416,36 @@ Five readings, and the last two are the ones that decide what to do:
 - **Distance is not the axis here; crowding is.** Distance is a Roboflow *tag* and needs a manifest
   (`--val`'s per-distance grid). Crowding comes free from any export's labels, so this works on v1,
   which predates the tagging entirely.
-- **`--conf-sweep` turns a miss into a slider.** A miss ranked below `conf` is not a model gap, and
-  `conf_threshold` is hot-reloadable — on v1 the crowded bucket reads 75.7% at the shipped 0.5 and
-  89.0% at 0.1, while the single bucket sits at 100.0% throughout. That is most of the gap turning
-  out to be a threshold rather than a capability, which `--val` cannot show at any setting.
+- **`--conf-sweep` turns a miss into a slider, and prices it on both sides.** A miss ranked below
+  `conf` is not a model gap, and `conf_threshold` is hot-reloadable — on v1 the crowded bucket
+  reads 75.7% at the shipped 0.5 and 89.0% at 0.1, while the single bucket sits at 100.0%
+  throughout. That is most of the gap turning out to be a threshold rather than a capability, which
+  `--val` cannot show at any setting. Recall alone, though, can only *improve* as the threshold
+  falls, so a sweep of it recommends 0.0; the table therefore also reports **`extra`**, the
+  predictions that matched no label, because that is what the same move costs the other way. Both,
+  on v1's 327 test frames (401 instances):
+
+  | conf | instances found | recall | `extra` |
+  |---|---|---|---|
+  | 0.1 | 386/401 | 0.963 | 46 |
+  | 0.2 | 380/401 | 0.948 | 19 |
+  | 0.3 | 373/401 | 0.930 | 11 |
+  | 0.5 | 368/401 | 0.918 | 9 |
+  | 0.7 | 366/401 | 0.913 | 6 |
+
+  So the whole 0.5 → 0.7 move gives up 2 instances and removes 3 boxes, while the 0.7 → 0.1 move
+  buys 20 instances for 40. A threshold that buys recall by admitting boxes on nothing is not a
+  better operating point, and neither column says that on its own. Worth knowing what the boxes
+  are: on v1 all of them are *duplicates on an item that was already found*, not wrong names and
+  not background — which is a row logged twice rather than a row logged wrong.
+- **The sweep is split by crowding and by distance, and marks the threshold in force.** The row for
+  `--conf`'s own value is always in the table — folded in and marked `<-- operating` — rather than
+  left to whichever ladder constants happen to contain it: `--conf 0.7 --conf-sweep` would otherwise
+  print its neighbours and no row for the threshold being reasoned about. Distance columns appear
+  only for a generation with a distance axis, and where they are missing the tool says *which* of
+  the two causes it is — v1 was never tagged and re-running finds nothing, while a manifest that
+  matched none of the split's frames is a broken join someone should look at. Absent columns and an
+  empty column mean opposite things, so neither is rendered as a zero.
 - **`--iou-sweep` tells a suppressed box from an unseen one.** Two tins side by side overlap, and
   ultralytics' NMS default (0.7) merges boxes overlapping more than that — so a *detected* second
   tin can be discarded inside the model. A large recovery at 0.9 means that share of the crowded
