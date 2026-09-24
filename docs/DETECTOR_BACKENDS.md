@@ -142,20 +142,25 @@ thread, JPEG preview encoding and the WebSocket all running.
 |------|---------:|-----------:|---------|---------|
 | `local_api` | — | ~100 ms / 9.5 fps | 7 grocery | ✅ needs a second process |
 | **custom ONNX, CPU** | 51 ms / 19.6 fps | **91 ms / 10.4 fps** | **7 grocery** | ✅ fully, one process |
-| **custom ONNX, CUDA** *(2026-09-04)* | **62 ms / ~16 fps** | ≈ isolated — inference leaves the CPU (see caveat 1) | **7 grocery** | ✅ fully, one process |
+| **custom ONNX, CUDA** *(2026-09-04)* | 17.8 ms / 56.2 fps *(2026-09-24 re-measure)* | **37.4 infer fps** *(2026-09-24)* | **7 grocery** | ✅ fully, one process |
+| **custom `.pt`, CUDA** — *the default* *(2026-09-24)* | **18.0 ms / 55.4 fps** | **39.5 infer fps** (max 50.4) | **7 grocery** | ✅ fully, one process |
 | `native` yolo11n `.pt`, CUDA | 38 ms / 26 fps | ~25 ms / 28.8 fps | 80 COCO — *not the grocery model* | ✅ fully |
 
 **The isolated 19.6 fps does not survive the real pipeline.** Preview encoding costs ~12 ms, but
 that only accounts for part of the gap: the rest is CPU contention. ONNX inference runs on the CPU,
 and so do frame capture, JPEG encode and the WebSocket — they fight for the same cores. The
 `.pt` + CUDA path does not have this problem, which is why it is the only one that gets near its
-isolated number. Moving the **custom ONNX** onto CUDA removes its inference from that fight too,
-so its in-app number should land near the 62 ms isolated one (not re-measured with a live camera
-on 2026-09-04 — the StreamCam's known frame-freeze interrupted that run; see the design doc's
-verification section).
+isolated number. Moving the **custom ONNX** onto CUDA removes its inference from that fight too.
 
-So the custom ONNX on CPU is **roughly level with `local_api` on speed**, not twice it — on
-CUDA it pulls ahead (~62 ms vs ~100 ms). Its actual advantages are different and still decisive:
+Head-to-head on this machine (2026-09-24, same camera, identical settings, `infer_frame_skip 0`):
+the trained **`.pt` on torch CUDA measured 18.0 ms isolated / 39.5 infer fps in-app**, and the
+**ONNX on `CUDAExecutionProvider` 17.8 ms / 37.4 infer fps** — a statistical wash. The old gap
+("`.pt` is the fast path, ONNX crawls on CPU") only existed while the ONNX ran on CPU; with
+`requirements-cuda.txt` installed that premise is gone. What still differentiates the `.pt`
+(default): letterbox-native preprocessing, half the file size, and — decisively — retrainability.
+
+So the custom ONNX on CPU is **roughly level with `local_api` on speed**, not twice it; on CUDA
+both grocery models pull ahead (~18 ms vs ~100 ms). Its actual advantages are different and still decisive:
 
 * **One process.** No inference server to remember to start, no Docker-free launcher, no HTTP hop.
 * **No network stack in the hot path** — nothing to time out, retry, or 503.
@@ -207,12 +212,14 @@ The way to actually go faster is a `.pt` on CUDA (see below), not tuning this.
 ### The clean long-term path
 
 `environment.json` also carries the **dataset export link**, and dataset export is free on any plan.
-Training `yolo11n` from it yields a real `.pt` that runs on torch + CUDA — the fastest option, no
-ONNX runtime, no preprocessing mismatch, and the model the PRD wants. See `MODEL_TRAINING.md §7`:
-any `models/*.pt` is already selectable with no code edits in either codebase, `resize_mode:
-"auto"` resolves to `letterbox` for it (ultralytics-native training), and `device: "auto"`
-resolves to CUDA. Ultralytics **cannot** export ONNX → `.pt` (PyTorch is the source format), so
-retraining from the dataset export is the only route to these weights.
+Training `yolo11n` from it yields a real `.pt` that runs on torch + CUDA — no ONNX runtime, no
+preprocessing mismatch, and the model the PRD wants. **That path was taken on 2026-09-24:**
+`models/scanncart-grocery.pt` (mAP50-95 0.944) is now the shipped default; see `MODEL_TRAINING.md
+§7` for the runbook and the measured `.pt`-vs-ONNX benchmark. Any other `models/*.pt` is equally
+selectable with no code edits in either codebase, `resize_mode: "auto"` resolves to `letterbox`
+for it (ultralytics-native training), and `device: "auto"` resolves to CUDA. Ultralytics
+**cannot** export ONNX → `.pt` (PyTorch is the source format), so retraining from the dataset
+export is the only route to these weights.
 
 
 ## 2. Non-goals

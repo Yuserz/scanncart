@@ -3,12 +3,14 @@ from dataclasses import dataclass
 
 @dataclass
 class Settings:
-    # The Roboflow-exported grocery model, run in-process. It is the only
-    # default that both detects the actual SKUs and keeps the PRD's offline
-    # promise: measured 51 ms on CPU alone vs ~100 ms for the same model over
-    # local_api, because that 100 ms is an HTTP round trip, not inference.
-    # See docs/DETECTOR_BACKENDS.md §1a for how the file gets to models/.
-    active_model: str = "models/scanncart-grocery.onnx"
+    # The locally trained grocery model (see docs/MODEL_TRAINING.md), run
+    # in-process. It is the only default that both detects the actual SKUs and
+    # keeps the PRD's offline promise. Trained 2026-09-24 from the dataset
+    # export to mAP50-95 0.944; measured level with the Roboflow ONNX export
+    # on CUDA (~18 ms isolated, ~40 fps in-app) while letterbox-native and
+    # retrainable. The ONNX export remains selectable (models/scanncart-grocery.onnx).
+    # See docs/DETECTOR_BACKENDS.md §1a for the backend comparison.
+    active_model: str = "models/scanncart-grocery.pt"
     camera_index: int = 0
     capture_width: int = 1280
     capture_height: int = 720

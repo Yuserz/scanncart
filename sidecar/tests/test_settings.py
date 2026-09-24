@@ -3,9 +3,9 @@ from app.settings import Settings, resolve_device
 
 def test_settings_defaults():
     s = Settings()
-    # The Roboflow-exported grocery model, run in-process — see
-    # docs/DETECTOR_BACKENDS.md §1a.
-    assert s.active_model == "models/scanncart-grocery.onnx"
+    # The locally trained grocery model, run in-process — see
+    # docs/MODEL_TRAINING.md and docs/DETECTOR_BACKENDS.md §1a.
+    assert s.active_model == "models/scanncart-grocery.pt"
     assert s.capture_width == 1280
     assert s.capture_height == 720
     assert s.capture_fps == 60
