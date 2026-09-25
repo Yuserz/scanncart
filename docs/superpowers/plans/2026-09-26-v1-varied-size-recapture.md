@@ -136,6 +136,25 @@ classes with **no instances in the far band at all**, which is the only defensib
 is a small addition to the audit toolchain (§8), and it is step one of the work rather than a
 prelude, because without it the shoot list is a guess.
 
+### Shoot 1 — what the first sitting contains
+
+The first session carries **both** tiers below, in one sitting and under one session tag (`v1s2`).
+They belong together because they are the same afternoon's work on the same rig, and because the
+negatives are the item that gets dropped when they are treated as a follow-up: a dropped negative
+set is invisible in every report, while the phantom row it exists to remove ships anyway (19 of 25
+empty-counter detections are clamped full-frame boxes against **0 of 60** real product frames).
+
+| In shoot 1 | Amount | Files under |
+|---|---|---|
+| **Tier 2** — crowded, occluded scenes | ~60–80 scenes per class, 4–6 items each | each product's folders |
+| **Tier 3a** — one roster product *plus* clutter | ~20–30 | that product's folders |
+| **Tier 3b** — pure empty counter | ~30, each **null-marked with `N`** | `NEGATIVES/` |
+
+Tier 3b is the only part of the whole set that is deliberately *not* drawn on, and the marking is
+not bookkeeping: an uploaded frame that is never marked is excluded from the version, so the whole
+bucket disappears without an error. Sort any new 3b frames **before** the version is generated (step
+8 of §5), not after.
+
 ### Tier 2 — crowded frames (the measured lever)
 
 The only bucket with a measured recall gap behind it. Target **~60–80 scenes per class**, and the
@@ -154,11 +173,10 @@ counts matter less than the composition:
 - **Mix bands within a frame** — some items near, some far. That is what the counter does.
 - Vary arrangement between shots: grid, pile, cluster, one rotated.
 
-### Tier 3 — hard negatives
+### Tier 3 — hard negatives (part of shoot 1)
 
-30–50 frames, and they must be **marked null with the annotator's `N` tool, never drawn on and
-never auto-labelled**: an uploaded frame that is left unannotated is *excluded* from the version,
-which is how a negative set disappears silently. Two shapes:
+30–50 frames, shot in the same sitting as Tier 2, and they must be **marked null with the
+annotator's `N` tool, never drawn on and never auto-labelled**. Two shapes:
 
 - **mostly one roster product + clutter** (a hand reaching in, a phone, a bag, a wallet) — no extra
   step beyond normal labelling;
@@ -183,7 +201,7 @@ explicitly on every call because the default is `snc-grocery`.
 |---|---|---|
 | 0 | `clean_v2.py sanity --project scanncart-grocery` | exit 0, no `[FAIL]`; **7** classes, and no class name carrying a distance. `[WARN] project is PUBLIC` is expected |
 | 1 | `clean_v2.py scaffold --root <v1-folder> --dry-run` then without it | folders created by the same `CLASS_MAP` the ingest uses; do not rename them afterwards |
-| 2 | shoot Tiers 1–3 | first frame of each cell checked against the Live `det-size` readout |
+| 2 | shoot **shoot 1** (§4): Tier 2 crowded scenes **and** Tier 3 hard negatives, in one sitting, one session tag | first frame of each cell checked against the Live `det-size` readout; the empty-counter frames shot with nothing on the counter, clutter included |
 | 3 | `clean_v2.py clean --src <v1-folder> --session v1s2 --out sidecar/data/datasets/cleaned-v1-s2` | `ingested N candidate images`, then the staged count is N minus dedup, with the REPORT's dedup table showing *where* frames were dropped; **0 images under a `[warn]` for an unmapped folder** (a typo lands in that report and nowhere else). Use a **new `--out`** — `clean` clears the class folders in its output, so pointing it at `cleaned-v2` wipes v2's staged set |
 | 4 | `clean_v2.py upload --out …/cleaned-v1-s2 --session v1s2 --project scanncart-grocery` | resumable via `upload_state.json`; batches are session-suffixed (`tuna_mid_v1s2`) |
 | 5 | `clean_v2.py retag --out …/cleaned-v1-s2 --session v1s2 --project scanncart-grocery` | reads the tags back and verifies the set it *wanted*, not the one it wrote |
@@ -244,13 +262,14 @@ node .claude/skills/run-desktop/driver.mjs v1
    It reads labels only — no weight, no GPU, no export download — and its shoot list is the tier
    plan's input. Re-run it with `--dataset-dir`/`--manifest` after a session lands to see the bands
    fill in.
-3. **Tier 2 before Tier 1 if time is short.** Crowding is the bucket with a measured 24-point gap
-   behind it; the distance tail is real but unmeasured on v1 until item 2 says where it is.
-4. **Tier 3 is ~30 frames and one keystroke each** — it fixes a phantom item-log row per session and
-   is the highest value per minute in the plan.
-5. Shoot, then §5 in order. The long pole is labelling, and `label_progress.py`'s
-   *largest-cell-first* order is the throughput plan.
-6. **Acceptance is §6's crowded bucket**, and it is only meaningful if the shoot happened on a
+3. **Shoot 1 (§4) is the crowded scenes *and* the null-marked negatives, one sitting, one session
+   tag.** Crowding carries it — it is the bucket with a measured 24-point gap behind it — and the
+   ~30 empty-counter frames cost one keystroke each in the annotator. Together they are what the
+   first session is for; splitting them is how the negatives end up as the thing nobody got to.
+4. **Then §5 in order.** Labelling is the long pole, and `label_progress.py`'s *largest-cell-first*
+   order is the throughput plan for it. Tier 1 (the distance tail) lands in a **second** session,
+   once step 2 has said which classes and bands are actually short.
+5. **Acceptance is §6's crowded bucket**, and it is only meaningful if the shoot happened on a
    different sitting than the frames the model was trained on.
 
 ## 8. Code work this plan needs (all small, all nameable)
