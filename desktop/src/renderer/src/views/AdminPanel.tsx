@@ -18,6 +18,7 @@ import {
   minTrackExpiryS,
   MODEL_SPEC_HINTS,
   REMOTE_BACKENDS,
+  RESIZE_MODE_LABELS,
   SETTINGS_FIELDS,
   SETTINGS_GROUPS,
   type FieldMeta
@@ -441,9 +442,11 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
           >
             {(field.key === 'active_model' ? modelOptions : (field.options ?? [])).map((opt) => (
               <option key={opt} value={opt}>
-                {EXPERIMENTAL_MODELS.includes(opt)
-                  ? `${opt} (experimental)`
-                  : (MODEL_LABELS[opt] ?? opt)}
+                {field.key === 'resize_mode'
+                  ? (RESIZE_MODE_LABELS[opt] ?? opt)
+                  : EXPERIMENTAL_MODELS.includes(opt)
+                    ? `${opt} (experimental)`
+                    : (MODEL_LABELS[opt] ?? opt)}
               </option>
             ))}
           </select>

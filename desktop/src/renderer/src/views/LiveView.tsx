@@ -406,7 +406,15 @@ export function LiveView({ port, deps }: LiveViewProps): JSX.Element {
                       }}
                     >
                       <span className="det-label">
-                        {d.cls} {Math.round(d.conf * 100)}%
+                        <span>
+                          {d.cls} {Math.round(d.conf * 100)}%
+                        </span>
+                        {frameSize && (
+                          <small className="det-size" data-testid="det-size">
+                            {Math.round((d.box[2] - d.box[0]) * frameSize.w)}×
+                            {Math.round((d.box[3] - d.box[1]) * frameSize.h)} px
+                          </small>
+                        )}
                       </span>
                     </div>
                   )

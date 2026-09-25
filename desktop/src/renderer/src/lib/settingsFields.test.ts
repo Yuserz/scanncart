@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest'
 import { DEFAULT_SETTINGS } from './settingsDefaults'
-import { SETTINGS_FIELDS, SETTINGS_GROUPS } from './settingsFields'
+import {
+  ALLOWED_RESIZE_MODES,
+  RESIZE_MODE_LABELS,
+  SETTINGS_FIELDS,
+  SETTINGS_GROUPS
+} from './settingsFields'
 
 //: Keys that render somewhere other than a `SETTINGS_GROUPS` group, on purpose, with where.
 //:
@@ -99,6 +104,15 @@ describe('field placement', () => {
   it('keeps the class allowlist in admin', () => {
     const liveKeys = SETTINGS_GROUPS.filter((g) => g.home === 'live').flatMap((g) => g.keys)
     expect(liveKeys).not.toContain('class_allowlist')
+  })
+
+  it('offers proportion-preserving letterbox and labels stretch as experimental', () => {
+    const fitting = SETTINGS_FIELDS.find((f) => f.key === 'resize_mode')
+    expect(DEFAULT_SETTINGS.resize_mode).toBe('auto')
+    expect(ALLOWED_RESIZE_MODES[0]).toBe('letterbox')
+    expect(RESIZE_MODE_LABELS.letterbox).toMatch(/proportions/i)
+    expect(RESIZE_MODE_LABELS.stretch).toMatch(/experimental/i)
+    expect(fitting?.hint).toMatch(/labeled checkout scenes/i)
   })
 
   it('warns about the exposure framerate trap in the hint', () => {

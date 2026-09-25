@@ -214,6 +214,41 @@ describe('LiveView', () => {
     expect(wrapper.style.getPropertyValue('--preview-h')).toBe('480')
   })
 
+  it('shows tracked box dimensions in decoded preview pixels', () => {
+    // The box is normalized (0-1) against the frame the detector saw; the
+    // decoded JPEG's natural size is what turns that into the pixel footprint
+    // an operator can compare against an item's real size.
+    const h = makeHarness()
+    render(<LiveView port={1} deps={h.deps} />)
+    act(() => {
+      h.opts().onFrame?.(
+        frameWith([{ track_id: 9, cls: '555 sardines', conf: 0.9, box: [0.1, 0.25, 0.6, 0.75] }])
+      )
+    })
+    const img = screen.getByAltText('live preview') as HTMLImageElement
+    Object.defineProperty(img, 'naturalWidth', { value: 640 })
+    Object.defineProperty(img, 'naturalHeight', { value: 480 })
+    fireEvent.load(img)
+
+    expect(screen.getByTestId('det-size')).toHaveTextContent('320×240 px')
+  })
+
+  it('omits the pixel size until the frame dimensions are known', () => {
+    // jsdom never reports natural dimensions until a load is fired, which is
+    // the same window a real browser has before the first JPEG decodes. A size
+    // computed from a zero would render a confident "0×0 px".
+    const h = makeHarness()
+    render(<LiveView port={1} deps={h.deps} />)
+    act(() => {
+      h.opts().onFrame?.(
+        frameWith([{ track_id: 9, cls: '555 sardines', conf: 0.9, box: [0.1, 0.25, 0.6, 0.75] }])
+      )
+    })
+
+    expect(screen.getByTestId('det-box')).toHaveTextContent('555 sardines 90%')
+    expect(screen.queryByTestId('det-size')).not.toBeInTheDocument()
+  })
+
   it('Start button calls the REST start endpoint', async () => {
     const h = makeHarness()
     render(<LiveView port={1} deps={h.deps} />)

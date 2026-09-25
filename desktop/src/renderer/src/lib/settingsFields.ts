@@ -33,8 +33,15 @@ export const ALLOWED_MODELS = [
   'yolo26s.pt',
   'yolo26m.pt'
 ] as const
-// Mirrors the sidecar's ALLOWED_RESIZE_MODES.
-export const ALLOWED_RESIZE_MODES = ['auto', 'letterbox', 'stretch'] as const
+// Mirrors the sidecar's ALLOWED_RESIZE_MODES. Put the aspect-preserving choice first,
+// but keep the v1 default as `auto` so recorded model training geometry remains honored.
+export const ALLOWED_RESIZE_MODES = ['letterbox', 'auto', 'stretch'] as const
+
+export const RESIZE_MODE_LABELS: Record<string, string> = {
+  letterbox: 'Letterbox (preserves proportions)',
+  auto: 'Auto (matches model training)',
+  stretch: 'Stretch (experimental A/B)'
+}
 
 export const ALLOWED_DEVICES = ['auto', 'cpu', 'cuda'] as const
 
@@ -197,7 +204,7 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
   {
     key: 'resize_mode',
     label: 'Frame fitting',
-    hint: "How each frame is fitted to the inference size — it must match how the model was trained. Ultralytics letterboxes (pads to square); Roboflow exports are trained on 'Stretch to'. Letterboxing a 1280x720 frame uses only 56% of the 640x640 canvas, shrinking every object well below its training scale. 'auto' uses the requirement recorded beside the selected weights, and falls back to stretch for a custom .onnx and letterbox otherwise — leave it on 'auto' unless you deliberately mean something else; the Model field above reports what it gives.",
+    hint: 'Letterbox preserves package proportions for the checkout view, but that alone does not prove better detection accuracy. Auto honors the recorded training geometry for the selected weights and remains the v1 default; for the Roboflow ONNX export it uses stretch. Use letterbox or explicit stretch for a controlled A/B comparison on the same labeled checkout scenes, and check the model requirement shown above before overriding it.',
     type: 'select',
     options: ALLOWED_RESIZE_MODES
   },

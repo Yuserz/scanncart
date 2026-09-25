@@ -74,6 +74,25 @@ describe('AdminPanel', () => {
     expect(screen.getByLabelText(/Model/i)).toHaveValue('yolo11n.pt')
   })
 
+  it('offers letterbox first and labels stretch as an experimental A/B mode', async () => {
+    // v1 keeps `auto` selected on purpose: it honours the geometry recorded
+    // beside the weights, which for the Roboflow ONNX is stretch. The list
+    // order still puts the proportion-preserving choice first, and stretch is
+    // flagged so nobody reaches for it as if it were the safe default.
+    const { deps } = makeDeps('idle')
+    render(<AdminPanel port={8765} deps={deps} />)
+
+    const fitting = await screen.findByLabelText(/Frame fitting/i)
+    expect(fitting).toHaveValue('auto')
+    expect(
+      within(fitting).getByRole('option', { name: /Letterbox \(preserves proportions\)/i })
+    ).toBeInTheDocument()
+    expect(
+      within(fitting).getByRole('option', { name: /Stretch \(experimental A\/B\)/i })
+    ).toBeInTheDocument()
+    expect(screen.getByText(/does not prove better detection accuracy/i)).toBeInTheDocument()
+  })
+
   it('renders the class allowlist as a text field in Admin and saves a parsed array', async () => {
     // This one lives in Admin only: the tuning card renders numeric sliders,
     // so a field placed on the live side gets a range input bound to a string
