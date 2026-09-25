@@ -197,12 +197,12 @@ def test_apply_preset_keeps_a_custom_model(tmp_path):
     """Presets pick a stock model size, which would silently swap a custom
     model for generic COCO weights — the whole point of the app."""
     client, state = _make_client(tmp_path)
-    state.settings.active_model = "models/scanncart-grocery.onnx"
+    state.settings.active_model = "models/scanncart-grocery.pt"
 
     r = client.post("/api/settings/preset", json={"name": "low_end"})
 
     assert r.status_code == 200
-    assert state.settings.active_model == "models/scanncart-grocery.onnx"
+    assert state.settings.active_model == "models/scanncart-grocery.pt"
     # ...while still tuning everything else the preset carries.
     assert state.settings.imgsz == PRESETS["low_end"].settings.get(
         "imgsz", state.settings.imgsz

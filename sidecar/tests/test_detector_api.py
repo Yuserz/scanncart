@@ -49,8 +49,26 @@ def test_native_backend_builds_a_yolo_detector(monkeypatch):
     monkeypatch.setattr(
         main, "YoloDetector", lambda *a, **k: built.setdefault("d", object())
     )
-    d = main._default_detector_factory(settings(detector_backend="native"), "cpu")
+    # A stock name (not a custom models/ file) so the missing-file preflight
+    # in the factory does not short-circuit on this machine.
+    d = main._default_detector_factory(
+        settings(detector_backend="native", active_model="yolo11n.pt"), "cpu"
+    )
     assert d is built["d"]
+
+
+def test_native_factory_rejects_a_missing_custom_model(monkeypatch):
+    """A custom models/ file that is not on disk fails with the action to
+    take, not a bare FileNotFoundError from ultralytics."""
+    monkeypatch.setattr("os.path.exists", lambda _p: False)
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as exc_info:
+        main._default_detector_factory(
+            settings(detector_backend="native", active_model="models/grocery.pt"), "cpu"
+        )
+    assert exc_info.value.status_code == 503
+    assert "sidecar/models/" in exc_info.value.detail
 
 
 @pytest.mark.parametrize("backend", ["local_api", "cloud_api"])
@@ -160,6 +178,28 @@ def test_probe_native_missing_weights_short_circuits_without_building(tmp_path, 
     )
     assert r["reachable"] is True
     assert "not on disk" in r["detail"]
+    assert built == []
+
+
+def test_probe_native_missing_custom_model_says_where_it_goes(tmp_path, monkeypatch):
+    """A missing custom models/ file is not "will download on first start" —
+    ultralytics only auto-downloads its stock weights, so the probe names the
+    directory the operator must put the file in."""
+    monkeypatch.setattr("os.path.exists", lambda _p: False)
+    built = []
+
+    def factory(settings, device):
+        built.append(1)
+        return FakeDetector()
+
+    r = (
+        client_for(tmp_path, factory, detector_backend="native")
+        .post("/api/detector/probe")
+        .json()
+    )
+    assert r["reachable"] is True
+    assert "sidecar/models/" in r["detail"]
+    assert "will download" not in r["detail"]
     assert built == []
 
 

@@ -5,16 +5,19 @@
 // hot-reloadable vs restart-required; this file only drives form rendering.
 import type { SettingsPayload } from './api'
 
-// The Roboflow-exported grocery model, run in-process. Listed first because
-// it is the default and the only model that detects the actual SKUs; the
-// stock YOLO weights below are generic COCO. Mirrors the sidecar's
-// CUSTOM_MODEL_DIR convention — any .onnx/.pt under sidecar/models/ is valid,
-// this is just the one we ship with.
-export const CUSTOM_MODEL = 'models/scanncart-grocery.onnx'
+// The locally trained grocery model, run in-process. Listed first because it
+// is the default and the only model that detects the actual SKUs; the stock
+// YOLO weights below are generic COCO. Mirrors the sidecar's CUSTOM_MODEL_DIR
+// convention — any .onnx/.pt under sidecar/models/ is valid, this is just the
+// one we ship with. (The Roboflow-exported ONNX,
+// models/scanncart-grocery.onnx, is the same architecture pre-retrain and
+// remains selectable.)
+export const CUSTOM_MODEL = 'models/scanncart-grocery.pt'
 
 // A raw path is not a label. Anything not listed falls back to its own name.
 export const MODEL_LABELS: Record<string, string> = {
-  [CUSTOM_MODEL]: 'SCANnCART grocery (custom, 7 SKUs)'
+  [CUSTOM_MODEL]: 'SCANnCART grocery (custom, 7 SKUs)',
+  'models/scanncart-grocery.onnx': 'SCANnCART grocery (Roboflow export)'
 }
 
 export const ALLOWED_MODELS = [

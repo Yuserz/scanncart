@@ -106,6 +106,22 @@ def backend_url(settings: Settings) -> str:
 
 def _default_detector_factory(settings: Settings, device: str):
     if settings.detector_backend == "native":
+        if is_custom_model(settings.active_model) and not os.path.exists(
+            settings.active_model
+        ):
+            # ultralytics would raise a bare FileNotFoundError here, or try to
+            # fetch the name as a URL. A custom model never auto-downloads — it
+            # is a file the operator must place — so fail with the action to
+            # take instead of a 500 traceback. Reached at capture start and via
+            # Test Connection; both surface the detail to the user.
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    f"{settings.active_model} is not on disk — capture cannot start. "
+                    "Copy the model file into sidecar/models/ (for the grocery model, "
+                    "see docs/DETECTOR_BACKENDS.md §1a), then retry Test Connection."
+                ),
+            )
         return YoloDetector(
             settings.active_model, device=device,
             conf=settings.conf_threshold, imgsz=settings.imgsz,
@@ -659,16 +675,25 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
         capture."""
         backend = state.settings.detector_backend
         if backend == "native":
-            import os
-
             model = state.settings.active_model
             if not os.path.exists(model):
                 # Keep the old cheap answer for the missing case: the probe
-                # must never trigger a download or a network hit.
+                # must never trigger a download or a network hit. Stock names
+                # (yolo11n.pt…) auto-download on first start; a custom model
+                # under models/ never does, so say where it goes instead.
+                if is_custom_model(model):
+                    detail = (
+                        f"{model} is not on disk. Copy the model file into sidecar/models/ "
+                        "(the Roboflow-exported grocery ONNX — see "
+                        "docs/DETECTOR_BACKENDS.md §1a), then probe again. Ultralytics "
+                        "only auto-downloads its own stock weights."
+                    )
+                else:
+                    detail = f"{model} not on disk; ultralytics will download it on first start."
                 return DetectorProbeResponse(
                     backend=backend,
                     reachable=True,
-                    detail=f"{model} not on disk; ultralytics will download it on first start.",
+                    detail=detail,
                 )
 
             def _run_native_probe():
@@ -778,8 +803,23 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
                     source_exc: BaseException | None = None
                     try:
                         source = state.source_factory(state.settings)
-                        if hasattr(source, "open"):
-                            source.open()
+                        if hasattr(source, "open") and source.open() is False:
+                            # CameraCapture.open() returns False — it does not
+                            # raise — when the device cannot be opened at all
+                            # (unplugged, claimed by another app, or a camera
+                            # index that points at nothing). Treat that as the
+                            # same failure as a raised exception: an actionable
+                            # error instead of reporting "running" with a feed
+                            # that never delivers a frame.
+                            source_exc = HTTPException(
+                                status_code=503,
+                                detail=(
+                                    f"Camera {state.settings.camera_index} could not be "
+                                    "opened. Check it is plugged in and not in use by "
+                                    "another app; if you have several cameras, try a "
+                                    "different camera_index in Admin → Settings."
+                                ),
+                            )
                     except BaseException as exc:  # noqa: BLE001 - re-raised below
                         source_exc = exc
                     # Always resolved, never abandoned: the pool's shutdown

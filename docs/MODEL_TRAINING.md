@@ -159,6 +159,12 @@ images of that item rather than tweaking hyperparameters.
 
 ## 7. Integrating the Trained Weights
 
+**`models/scanncart-grocery.pt` is the shipped default** (`Settings.active_model`, mirrored in
+`settingsDefaults.ts`): trained 2026-09-24 from the dataset export (yolo11n, 60 epochs, batch 4,
+imgsz 640, GTX 1050 Ti, ~1 h 45 m) to **mAP50 0.974 / mAP50-95 0.944**, and verified loading with
+all 7 class names embedded. The Roboflow-exported ONNX (`models/scanncart-grocery.onnx`) stays
+selectable — same architecture, pre-retrain.
+
 Custom weights are **first-class** — no whitelist edits needed. Any `.pt` (or `.onnx`) dropped
 into `sidecar/models/` is valid: `is_custom_model()` (`sidecar/app/settings_store.py`) accepts it,
 the `active_model` validator passes it, and the Admin Panel's Model picker offers it (the
@@ -184,9 +190,13 @@ Two things the old whitelist path silently decided for you:
   if you know the export trained stretched; see `resolve_resize_mode()` in
   `sidecar/app/settings_store.py`.
 - **GPU.** A `.pt` runs on torch directly, so `device: "auto"` resolving to `cuda` is the fast
-  path (docs measured ~25 ms/frame in-app on a GTX 1050 Ti, vs ~91 ms for the custom ONNX on
-  CPU). The CUDA requirement is on the torch install, not on onnxruntime — that only matters
+  path. The CUDA requirement is on the torch install, not on onnxruntime — that only matters
   for `.onnx` models (see `docs/DETECTOR_BACKENDS.md §1a` and `sidecar/requirements-cuda.txt`).
+  Measured head-to-head on the GTX 1050 Ti (2026-09-24, this repo's `YoloDetector`, synthetic
+  720p frames): `.pt` on torch CUDA **18.0 ms / 55.4 fps** vs the grocery ONNX on
+  `CUDAExecutionProvider` **17.8 ms / 56.2 fps** — a wash once the ONNX is on the GPU. In the
+  real pipeline (camera + preview + WebSocket, identical settings): **39.5 vs 37.4 infer fps**.
+  The `.pt`'s case is not raw speed — it is retrainability and letterbox-native preprocessing.
 
 ### Post-integration tuning
 
