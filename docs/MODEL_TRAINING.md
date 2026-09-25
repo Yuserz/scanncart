@@ -184,10 +184,11 @@ Checklist to wire in `best.pt`:
 
 Two things the old whitelist path silently decided for you:
 
-- **`resize_mode` is format-aware now.** `auto` resolves to `stretch` for a custom `.onnx` (a
-  Roboflow export, trained stretched) and to `letterbox` for a custom `.pt` (a locally trained
-  checkpoint — the output of this guide — trained letterboxed). Only force `stretch` for a `.pt`
-  if you know the export trained stretched; see `resolve_resize_mode()` in
+- **`resize_mode` prefers `letterbox`.** The checkout view contains packages whose familiar
+  proportions should be preserved, so letterbox is the default for every model. `auto` remains a
+  backwards-compatible alias for letterbox. `stretch` is still available as an explicitly selected
+  experimental A/B mode (the original Roboflow export was trained stretched), but validate it on
+  labeled camera scenes before relying on it; it distorts the view. See `resolve_resize_mode()` in
   `sidecar/app/settings_store.py`.
 - **GPU.** A `.pt` runs on torch directly, so `device: "auto"` resolving to `cuda` is the fast
   path. The CUDA requirement is on the torch install, not on onnxruntime — that only matters

@@ -101,6 +101,33 @@ describe('LiveView', () => {
     expect(screen.getByTestId('stat-tracked')).toHaveTextContent('1')
   })
 
+  it('keeps the most recent detection box visible briefly after an empty inference frame', () => {
+    vi.useFakeTimers()
+    try {
+      const h = makeHarness()
+      render(<LiveView port={8765} deps={h.deps} />)
+      act(() => {
+        h.opts().onFrame?.(
+          frameWith([{ track_id: null, cls: '555 sardines', conf: 0.2, box: [0, 0, 1, 1] }])
+        )
+      })
+      expect(screen.getByTestId('det-box')).toHaveTextContent('555 sardines 20%')
+      expect(screen.getByTestId('det-box').style.top).toBe('0%')
+
+      act(() => {
+        h.opts().onFrame?.(frameWith([]))
+      })
+      expect(screen.getByTestId('det-box')).toBeInTheDocument()
+
+      act(() => {
+        vi.advanceTimersByTime(751)
+      })
+      expect(screen.queryByTestId('det-box')).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('does not add a duplicate item-log row for a repeated track_id', () => {
     const h = makeHarness()
     render(<LiveView port={1} deps={h.deps} />)
@@ -138,6 +165,22 @@ describe('LiveView', () => {
 
     expect(wrapper.style.getPropertyValue('--preview-w')).toBe('640')
     expect(wrapper.style.getPropertyValue('--preview-h')).toBe('480')
+  })
+
+  it('shows tracked box dimensions in decoded preview pixels', () => {
+    const h = makeHarness()
+    render(<LiveView port={1} deps={h.deps} />)
+    act(() => {
+      h.opts().onFrame?.(
+        frameWith([{ track_id: 9, cls: 'sardines', conf: 0.9, box: [0.1, 0.25, 0.6, 0.75] }])
+      )
+    })
+    const img = screen.getByAltText('live preview') as HTMLImageElement
+    Object.defineProperty(img, 'naturalWidth', { value: 640 })
+    Object.defineProperty(img, 'naturalHeight', { value: 480 })
+    fireEvent.load(img)
+
+    expect(screen.getByTestId('det-size')).toHaveTextContent('320×240 px')
   })
 
   it('Start button calls the REST start endpoint', async () => {

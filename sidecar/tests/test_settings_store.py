@@ -143,14 +143,18 @@ def test_save_then_load_round_trips_experimental_model(tmp_path):
 # --- resolve_resize_mode -------------------------------------------------
 
 
-def test_auto_resolves_custom_onnx_to_stretch():
-    """A Roboflow export records "Stretch to" preprocessing."""
-    assert resolve_resize_mode("auto", "models/scanncart-grocery.onnx") == "stretch"
+def test_default_resize_mode_is_letterbox_even_for_custom_onnx():
+    """Stretch is experimental; selecting the model does not enable it."""
+    assert Settings().resize_mode == "letterbox"
+    assert resolve_resize_mode(Settings().resize_mode, "models/scanncart-grocery.onnx") == "letterbox"
+
+
+def test_auto_resolves_custom_onnx_to_letterbox():
+    """Auto is a backwards-compatible alias for the checkout default."""
+    assert resolve_resize_mode("auto", "models/scanncart-grocery.onnx") == "letterbox"
 
 
 def test_auto_resolves_custom_pt_to_letterbox():
-    """A locally trained .pt is letterbox-trained; stretching it would shrink
-    objects below their training scale. Design doc 2026-09-04 §C."""
     assert resolve_resize_mode("auto", "models/scanncart-grocery.pt") == "letterbox"
 
 
@@ -160,6 +164,7 @@ def test_auto_resolves_stock_weights_to_letterbox():
 
 def test_explicit_modes_win_over_auto():
     assert resolve_resize_mode("letterbox", "models/scanncart-grocery.onnx") == "letterbox"
+    assert resolve_resize_mode("stretch", "models/scanncart-grocery.pt") == "stretch"
     assert resolve_resize_mode("stretch", "yolo11n.pt") == "stretch"
 
 
@@ -214,34 +219,41 @@ def test_a_pt_model_never_triggers_the_onnx_warning(monkeypatch):
 # --- custom .pt + stretch warning ----------------------------------------
 
 
-def test_custom_pt_with_explicit_stretch_warns():
+def test_explicit_stretch_warns_that_it_is_experimental():
+    warnings = compute_warnings(Settings(resize_mode="stretch"), "idle")
+    assert any("experimental" in w and "Prefer letterbox" in w for w in warnings)
+
+
+def test_custom_pt_with_explicit_stretch_warns_about_training_mismatch():
     warnings = compute_warnings(
         Settings(active_model="models/scanncart-grocery.pt", resize_mode="stretch"), "idle"
     )
-    assert any("letterbox-trained" in w for w in warnings)
+    assert any("locally trained with letterbox" in w for w in warnings)
 
 
-def test_custom_pt_with_auto_does_not_warn():
+def test_legacy_auto_setting_resolves_to_letterbox_without_warning():
     warnings = compute_warnings(
         Settings(active_model="models/scanncart-grocery.pt", resize_mode="auto"), "idle"
     )
-    assert not any("letterbox-trained" in w for w in warnings)
+    assert resolve_resize_mode("auto", "models/scanncart-grocery.pt") == "letterbox"
+    assert not any("experimental" in w for w in warnings)
 
 
-def test_custom_onnx_with_stretch_does_not_warn():
-    """Stretch is exactly right for a Roboflow export."""
+def test_stretch_is_marked_experimental_even_for_roboflow_export():
+    """The export was trained stretched, but stretch stays an explicit experiment."""
     warnings = compute_warnings(
         Settings(active_model="models/scanncart-grocery.onnx", resize_mode="stretch"),
         "idle",
     )
-    assert not any("letterbox-trained" in w for w in warnings)
+    assert any("experimental" in w for w in warnings)
+    assert not any("locally trained" in w for w in warnings)
 
 
-def test_stock_weights_never_warn_about_stretch():
+def test_stretch_warning_recommends_letterbox_for_checkout():
     warnings = compute_warnings(
         Settings(active_model="yolo11n.pt", resize_mode="stretch"), "idle"
     )
-    assert not any("letterbox-trained" in w for w in warnings)
+    assert any("Prefer letterbox" in w for w in warnings)
 
 
 def test_valid_field_class_allowlist():

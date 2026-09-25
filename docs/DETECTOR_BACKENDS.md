@@ -186,28 +186,33 @@ The way to actually go faster is a `.pt` on CUDA (see below), not tuning this.
    before the session builds, so no CUDA toolkit install is needed. And because the native probe
    now reports the actual provider (§8), a silent CPU fallback is visible at Test Connection
    time instead of hiding in an ultralytics log line.
-2. **Preprocessing differs — now handled, see `resize_mode`.** `environment.json` records
-   `"resize": {"format": "Stretch to"}`: the model was trained on stretched 640x640, while
-   Ultralytics letterboxes by default. That is not cosmetic. Letterboxing a 1280x720 frame
-   produces 640x360 of content inside 640x640 with 140px bars — **56% of the canvas**, so every
-   object reaches the model at roughly half its training pixel area, which matters most for the
-   small SKUs (a 22 g Milo sachet).
+2. **Preprocessing differs — see `resize_mode`.** `environment.json` records
+   `"resize": {"format": "Stretch to"}`: the original Roboflow ONNX export was trained with
+   stretched 640x640 input. The locally trained `.pt` is letterbox-trained. That mismatch makes
+   preprocessing a model-quality choice, not just a display preference.
 
-   `Settings.resize_mode` (`auto` | `letterbox` | `stretch`) fixes this. `auto` is now
-   **format-aware**: `stretch` for a custom `.onnx` under `models/` (Roboflow exports are
-   stretch-trained) and `letterbox` for everything else — the stock YOLO weights, and a
-   locally-trained custom `.pt` (ultralytics trains letterboxed). In `stretch`, the detector
-   resizes the frame to `imgsz` x `imgsz` itself, so Ultralytics' letterbox pads nothing. A
-   custom `.pt` with an explicit `resize_mode: "stretch"` draws a `compute_warnings()` note —
-   it is only right for a Roboflow-exported `.pt` (Core-gated).
+   For SCANnCART's fixed checkout view, **letterbox is the preferred/default mode**: it preserves
+   the familiar proportions of grocery packages rather than geometrically warping their shapes,
+   and it matches the locally trained `.pt` shipped by default. Letterboxing a 1280x720 frame
+   produces 640x360 of content inside 640x640 with 140px bars, so objects occupy less of the model
+   canvas; that tradeoff is worth testing against real checkout scenes, especially for small SKUs.
 
-   No un-warping is needed on the way out: `normalize_detections` divides by the dimensions
-   actually fed to the model, and a per-axis scale cancels out of a normalized coordinate. It is
-   also slightly *faster* — one resize instead of the letterbox path (87.6 -> 72.4 ms).
+   `Settings.resize_mode` (`auto` | `letterbox` | `stretch`) makes the choice explicit. `auto` is
+   retained for old config files but now resolves to `letterbox` for every model, so model format
+   cannot silently select a geometry-warping mode. `stretch` remains available as an **experimental**
+   option for deliberate, labeled A/B comparisons (particularly with the stretch-trained Roboflow
+   ONNX export). It resizes the frame to `imgsz` x `imgsz` before inference, avoiding additional
+   Ultralytics letterbox padding; however, it can distort package proportions. Selecting it surfaces
+   a warning, and it intentionally mismatches the local `.pt` training geometry.
 
-   **Still unquantified:** how much this improves detection. Measuring that needs frames that
-   actually contain the SKUs; the test frames here had none, so both modes returned zero and the
-   argument above is geometric, not empirical. Worth confirming against a labelled clip.
+   Detection boxes are normalized against the dimensions actually fed to the model, so the renderer
+   can overlay either mode in the preview without a separate manual un-warping step. A prior local
+   benchmark found the stretch path slightly faster (87.6 → 72.4 ms), but speed alone does not
+   establish better checkout detection.
+
+   **Still unquantified:** which mode detects checkout items best in practice. Earlier test frames
+   contained no SKUs, so both modes returned zero; compare both against the same labeled camera
+   scenes before drawing a detection-quality conclusion.
 
 ### The clean long-term path
 
@@ -217,7 +222,7 @@ preprocessing mismatch, and the model the PRD wants. **That path was taken on 20
 `models/scanncart-grocery.pt` (mAP50-95 0.944) is now the shipped default; see `MODEL_TRAINING.md
 §7` for the runbook and the measured `.pt`-vs-ONNX benchmark. Any other `models/*.pt` is equally
 selectable with no code edits in either codebase, `resize_mode: "auto"` resolves to `letterbox`
-for it (ultralytics-native training), and `device: "auto"` resolves to CUDA. Ultralytics
+for every model, and `device: "auto"` resolves to CUDA. Ultralytics
 **cannot** export ONNX → `.pt` (PyTorch is the source format), so retraining from the dataset
 export is the only route to these weights.
 
@@ -414,7 +419,7 @@ handling entirely, and the sidecar stays independently runnable via `python run.
 | Remote backend, no API key | Will fail at capture start — set `ROBOFLOW_API_KEY` in `sidecar/.env`. |
 | `local_api` selected | Requires an inference server running on `local_api_url` (§7a — no Docker needed). |
 | `native` + `.onnx` + resolved `cuda`, but no CUDA EP in onnxruntime | Inference silently falls back to CPU — install `requirements-cuda.txt` (§1a caveat 1). |
-| custom `.pt` + explicit `resize_mode: "stretch"` | Only right for a Roboflow-exported `.pt`; a locally-trained `.pt` is letterbox-trained (§1a caveat 2). |
+| explicit `resize_mode: "stretch"` | Experimental for every model; prefer letterbox for checkout. A custom locally-trained `.pt` also mismatches its training geometry (§1a caveat 2). |
 
 `compute_warnings()` takes `api_key_present: bool | None` rather than reading the key itself, so
 settings tests never touch the filesystem; `AppState.api_key_probe` is the matching injection

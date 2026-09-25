@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { SETTINGS_FIELDS, SETTINGS_GROUPS } from './settingsFields'
+import {
+  ALLOWED_RESIZE_MODES,
+  RESIZE_MODE_LABELS,
+  SETTINGS_FIELDS,
+  SETTINGS_GROUPS
+} from './settingsFields'
+import { DEFAULT_SETTINGS } from './settingsDefaults'
 
 describe('field placement', () => {
   it('gives every group a home', () => {
@@ -56,6 +62,15 @@ describe('field placement', () => {
   it('keeps the class allowlist in admin', () => {
     const liveKeys = SETTINGS_GROUPS.filter((g) => g.home === 'live').flatMap((g) => g.keys)
     expect(liveKeys).not.toContain('class_allowlist')
+  })
+
+  it('prefers letterbox and marks stretch as experimental', () => {
+    const fitting = SETTINGS_FIELDS.find((f) => f.key === 'resize_mode')
+    expect(DEFAULT_SETTINGS.resize_mode).toBe('letterbox')
+    expect(ALLOWED_RESIZE_MODES[0]).toBe('letterbox')
+    expect(RESIZE_MODE_LABELS.stretch).toMatch(/experimental/i)
+    expect(RESIZE_MODE_LABELS.letterbox).toMatch(/recommended/i)
+    expect(fitting?.hint).toMatch(/experimental/i)
   })
 
   it('warns about the exposure framerate trap in the hint', () => {

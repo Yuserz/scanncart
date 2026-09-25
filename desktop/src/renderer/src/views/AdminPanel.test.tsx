@@ -64,6 +64,21 @@ describe('AdminPanel', () => {
     expect(screen.getByLabelText(/Model/i)).toHaveValue('yolo11n.pt')
   })
 
+  it('recommends letterbox and labels stretch as experimental', async () => {
+    const { deps } = makeDeps('idle')
+    render(<AdminPanel port={8765} deps={deps} />)
+
+    const field = await screen.findByLabelText(/Frame fitting/i)
+    expect(field).toHaveValue('letterbox')
+    expect(
+      within(field).getByRole('option', { name: /Letterbox \(recommended\)/i })
+    ).toBeInTheDocument()
+    expect(
+      within(field).getByRole('option', { name: /Stretch \(experimental\)/i })
+    ).toBeInTheDocument()
+    expect(screen.getByText(/Preferred for checkout detection/i)).toBeInTheDocument()
+  })
+
   it('renders the class allowlist as a text field in Admin and saves a parsed array', async () => {
     // This one lives in Admin only: the tuning card renders numeric sliders,
     // so a field placed on the live side gets a range input bound to a string

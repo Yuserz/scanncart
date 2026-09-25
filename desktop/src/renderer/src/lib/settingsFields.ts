@@ -32,7 +32,13 @@ export const ALLOWED_MODELS = [
   'yolo26m.pt'
 ] as const
 // Mirrors the sidecar's ALLOWED_RESIZE_MODES.
-export const ALLOWED_RESIZE_MODES = ['auto', 'letterbox', 'stretch'] as const
+export const ALLOWED_RESIZE_MODES = ['letterbox', 'auto', 'stretch'] as const
+
+export const RESIZE_MODE_LABELS: Record<string, string> = {
+  letterbox: 'Letterbox (recommended)',
+  auto: 'Auto (legacy → letterbox)',
+  stretch: 'Stretch (experimental)'
+}
 
 export const ALLOWED_DEVICES = ['auto', 'cpu', 'cuda'] as const
 
@@ -179,7 +185,7 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
   {
     key: 'resize_mode',
     label: 'Frame fitting',
-    hint: "How each frame is fitted to the inference size — it must match how the model was trained. Ultralytics letterboxes (pads to square); Roboflow exports are trained on 'Stretch to'. Letterboxing a 1280x720 frame uses only 56% of the 640x640 canvas, shrinking every object well below its training scale. 'auto' picks stretch for the custom model and letterbox for the stock YOLO weights.",
+    hint: 'Preferred for checkout detection: preserves item proportions and avoids warping familiar packages. Stretch (experimental) forces the whole frame into a square and may distort SKUs; use only for a deliberate A/B test against a labeled camera scene. Auto is retained for legacy configs and resolves to letterbox.',
     type: 'select',
     options: ALLOWED_RESIZE_MODES
   },

@@ -1,4 +1,5 @@
-import { useState, type CSSProperties, type JSX } from 'react'
+import { useEffect, useState, type CSSProperties, type JSX } from 'react'
+import type { Detection, FrameMessage } from '../lib/ws'
 import { useSidecarStream, type StreamDeps } from '../hooks/useSidecarStream'
 import { boxToPercent } from '../lib/overlay'
 import { Spinner } from '../components/Spinner'
@@ -9,6 +10,11 @@ export interface LiveViewProps {
   port: number
   deps?: StreamDeps
 }
+
+// How long the last non-empty detection set stays on the overlay after an empty
+// inference frame. Long enough to read a box off a sparse detection, short
+// enough that an item leaving the counter does not leave a box behind.
+const OVERLAY_HOLD_MS = 750
 
 export function LiveView({ port, deps }: LiveViewProps): JSX.Element {
   const { frame, statusState, connected, items, start, stop, error, clearError } = useSidecarStream(
@@ -22,6 +28,30 @@ export function LiveView({ port, deps }: LiveViewProps): JSX.Element {
   // aspect-ratio and fit-to-column sizing in CSS (falls back to 16/9
   // while idle). Same-value updates bail out, so per-frame loads are free.
   const [frameSize, setFrameSize] = useState<{ w: number; h: number } | null>(null)
+  // An inference hit can be followed by an empty result on the next frame, so a
+  // box drawn straight from the newest frame flashes for one inference tick and
+  // cannot be inspected. Hold the most recent non-empty set for a moment.
+  const [overlayDetections, setOverlayDetections] = useState<Detection[]>([])
+  const [lastFrame, setLastFrame] = useState<FrameMessage | null>(null)
+  // Adjusting state during render, which React documents for exactly this case
+  // ("storing information from previous renders"): the previous boxes have to
+  // survive the same render that first sees the empty frame, where an effect
+  // would paint the empty overlay and correct it a tick later — the flicker this
+  // exists to remove. Guarded on the frame object, so it runs once per message
+  // rather than once per render.
+  if (frame !== lastFrame) {
+    setLastFrame(frame)
+    if (frame?.detections.length) setOverlayDetections(frame.detections)
+  }
+  // The expiry is a timer, so it lives in an effect — and the cleanup is what
+  // makes a newer detection extend the hold instead of being cut short by the
+  // timer the previous one started. An empty `overlayDetections` schedules
+  // nothing, so an idle preview does not re-arm a timer every frame.
+  useEffect(() => {
+    if (!overlayDetections.length) return
+    const timer = setTimeout(() => setOverlayDetections([]), OVERLAY_HOLD_MS)
+    return () => clearTimeout(timer)
+  }, [overlayDetections])
   const previewStyle: CSSProperties | undefined = frameSize
     ? ({ '--preview-w': `${frameSize.w}`, '--preview-h': `${frameSize.h}` } as CSSProperties)
     : undefined
@@ -115,7 +145,7 @@ export function LiveView({ port, deps }: LiveViewProps): JSX.Element {
               </div>
             )}
             <div className="overlay" data-testid="overlay">
-              {frame?.detections
+              {overlayDetections
                 .filter((d) => d.box)
                 .map((d, i) => {
                   const p = boxToPercent(d.box)
@@ -133,7 +163,15 @@ export function LiveView({ port, deps }: LiveViewProps): JSX.Element {
                       }}
                     >
                       <span className="det-label">
-                        {d.cls} {Math.round(d.conf * 100)}%
+                        <span>
+                          {d.cls} {Math.round(d.conf * 100)}%
+                        </span>
+                        {frameSize && (
+                          <small className="det-size" data-testid="det-size">
+                            {Math.round((d.box[2] - d.box[0]) * frameSize.w)}×
+                            {Math.round((d.box[3] - d.box[1]) * frameSize.h)} px
+                          </small>
+                        )}
                       </span>
                     </div>
                   )

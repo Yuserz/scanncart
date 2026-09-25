@@ -13,7 +13,7 @@ export const DEFAULT_SETTINGS: SettingsPayload = {
   capture_fps: 30,
   conf_threshold: 0.5,
   imgsz: 640,
-  resize_mode: 'auto',
+  resize_mode: 'letterbox',
   infer_frame_skip: 0,
   device: 'auto',
   preview_height: 720,

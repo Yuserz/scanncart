@@ -51,21 +51,15 @@ def is_custom_model(value: str) -> bool:
 
 
 def resolve_resize_mode(mode: str, active_model: str) -> str:
-    """"auto" means: match how this model was trained.
+    """Resolve preprocessing while making aspect-preserving letterbox the default.
 
-    A custom .onnx under models/ is a Roboflow export, and Roboflow's default
-    preprocessing is "Stretch to". A custom .pt is a locally trained
-    checkpoint — ultralytics cannot export ONNX -> .pt and Roboflow .pt
-    exports are Core-gated, so local training is the only way to obtain one —
-    and ultralytics' own training pipeline letterboxes. The stock YOLO weights
-    are letterbox-trained too, so the split is: custom .onnx -> stretch,
-    everything else -> letterbox.
+    "stretch" remains an explicit experimental choice. "auto" is retained as
+    a backwards-compatible alias for letterbox; legacy model-format detection
+    must not silently opt an operator into a geometry-warping experiment.
     """
-    if mode != "auto":
-        return mode
-    if is_custom_model(active_model) and active_model.lower().endswith(".onnx"):
-        return "stretch"
-    return "letterbox"
+    if mode in {"auto", "letterbox"}:
+        return "letterbox"
+    return mode
 
 
 def is_allowed_model(value: object) -> bool:
@@ -324,17 +318,20 @@ def compute_warnings(
     if state == "running":
         locked = ", ".join(sorted(RESTART_REQUIRED_FIELDS))
         warnings.append(f"Capture is running — {locked} require stopping capture first.")
-    if (
-        is_custom_model(settings.active_model)
-        and settings.active_model.lower().endswith(".pt")
-        and settings.resize_mode == "stretch"
-    ):
+    if settings.resize_mode == "stretch":
         warnings.append(
-            "resize_mode=stretch with a custom .pt: a locally trained checkpoint "
-            "is letterbox-trained, so stretching shrinks objects below their "
-            "training scale. 'auto' resolves to letterbox for .pt — keep stretch "
-            "only for a Roboflow-exported model you know trained stretched."
+            "Stretch preprocessing is experimental: it warps the camera frame to a "
+            "square and can distort package proportions. Prefer letterbox for checkout "
+            "detection; keep stretch only after comparing it on labeled camera scenes."
         )
+        if (
+            is_custom_model(settings.active_model)
+            and settings.active_model.lower().endswith(".pt")
+        ):
+            warnings.append(
+                "The selected custom .pt was locally trained with letterbox preprocessing; "
+                "stretch deliberately mismatches its training geometry."
+            )
     if settings.imgsz > 960:
         warnings.append(
             "imgsz above 960 sharply raises inference latency; small/fast-moving "

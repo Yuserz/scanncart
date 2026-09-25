@@ -15,6 +15,7 @@ import {
   minTrackExpiryS,
   MODEL_SPEC_HINTS,
   REMOTE_BACKENDS,
+  RESIZE_MODE_LABELS,
   SETTINGS_FIELDS,
   SETTINGS_GROUPS,
   type FieldMeta
@@ -304,9 +305,7 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
           <input
             id={field.key}
             type="text"
-            value={
-              listText[field.key] ?? (Array.isArray(value) ? value.join(', ') : String(value))
-            }
+            value={listText[field.key] ?? (Array.isArray(value) ? value.join(', ') : String(value))}
             placeholder="e.g. bottle, cup"
             onChange={(e) => {
               setListText((prev) => ({ ...prev, [field.key]: e.target.value }))
@@ -321,9 +320,11 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
           >
             {field.options?.map((opt) => (
               <option key={opt} value={opt}>
-                {EXPERIMENTAL_MODELS.includes(opt)
-                  ? `${opt} (experimental)`
-                  : (MODEL_LABELS[opt] ?? opt)}
+                {field.key === 'resize_mode'
+                  ? (RESIZE_MODE_LABELS[opt] ?? opt)
+                  : EXPERIMENTAL_MODELS.includes(opt)
+                    ? `${opt} (experimental)`
+                    : (MODEL_LABELS[opt] ?? opt)}
               </option>
             ))}
           </select>
