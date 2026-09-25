@@ -4451,3 +4451,222 @@ def test_the_checklist_points_at_the_tool_that_produced_its_numbers():
     # `--conf 0.5`, so asserting on the flag alone would still pass with it removed from the
     # command it is supposed to be in.
     assert "clamp_probe.py --generation v1 --conf 0.5" in text
+
+
+# --- audit_recall: a refreshed dataset, and the labels' own size gap --------------------------
+
+
+def test_the_dataset_override_replaces_what_the_spec_names_and_keeps_its_identity():
+    """`replace()` on the frozen spec, not a second generation.
+
+    The name, the class list and the weight's filename have to survive an override: they are what
+    the record `--install` writes and what the app's roster check reads, so a "refreshed v1" that
+    changed any of them would not be a drop-in for the model it is meant to replace.
+    """
+    spec = generations.get("v1")
+    assert audit_recall.resolve_dataset(spec) is spec  # no flags, no copy
+    moved = audit_recall.resolve_dataset(spec, "D:/scanncart/export-v1-s2")
+    assert moved.export_dir == Path("D:/scanncart/export-v1-s2")
+    # The manifest was not overridden, so it stays what the spec declared - `None` for v1.
+    assert moved.manifest is None
+    assert (moved.name, moved.classes, moved.weight_name) == (
+        spec.name,
+        spec.classes,
+        spec.weight_name,
+    )
+
+
+def test_the_manifest_override_moves_v1_off_the_never_tagged_sentence():
+    """The flag's whole effect on what a reader is told, which is why it is not the same flag.
+
+    `distance_note` separates two causes because their fixes are opposite: a generation with no
+    distance axis is one nobody tagged and re-running finds nothing, while a manifest that matched
+    nothing is a broken join someone should look at. v1's spec declares no axis, so this is the
+    pair of readings a refreshed set flips between.
+    """
+    v1 = generations.get("v1")
+    assert "declares no distance axis" in audit_recall.distance_note(v1, "test", False)
+
+    tagged = audit_recall.resolve_dataset(v1, "", "C:/w/cleaned-v1-s2/manifest.json")
+    note = audit_recall.distance_note(tagged, "test", False)
+    assert "declares no distance axis" not in note
+    assert "matched none of the test frames" in note
+
+
+def test_both_spellings_of_the_dataset_flag_reach_one_destination():
+    """The trainer's pair, spelled the same way on purpose.
+
+    The documents still call it `--export-dir`, and a command that reads a refreshed export in the
+    trainer has to read the same one here - a second spelling would be a second flag to keep in
+    step, which is how one tool ends up measuring the dataset the other did not train on.
+    """
+    for flag in ("--dataset-dir", "--export-dir"):
+        assert audit_recall.parse_args(["--generation", "v1", flag, "X"]).dataset_dir == "X"
+    default = audit_recall.parse_args(["--generation", "v1"])
+    assert (default.dataset_dir, default.manifest) == ("", "")
+
+
+def test_a_refreshed_export_is_measured_without_editing_the_spec(tmp_path):
+    """End to end through the filesystem, and both halves of the override: the header a reader
+    checks first, and the labels the number comes from."""
+    root = tmp_path / "export-v1-s2"
+    gen = audit_recall.resolve_dataset(generations.get("v1"), str(root))
+    images, labels = audit_recall.split_dirs(gen, "test")
+    images.mkdir(parents=True)
+    labels.mkdir(parents=True)
+    (images / "a.jpg").write_bytes(b"")
+    (labels / "a.txt").write_text("0 0.5 0.5 0.02 0.02\n", encoding="utf-8")
+
+    name = generations.V1.classes[0]
+    tallies = audit_recall.label_sizes(gen, "test", 1280)
+    assert set(tallies) == {name}
+    # 0.02 of a 1280-wide capture is 25.6 px - below the far band's own floor, hence `tiny`.
+    assert tallies[name].counts["tiny"] == 1
+    assert tallies[name].smallest == pytest.approx(25.6)
+
+    lines = audit_recall.report_lines(
+        audit_recall.measure([_record(1, 1)], gen.classes),
+        weights="w.pt",
+        generation=gen,
+        split="test",
+        resize_mode="stretch",
+        device="cpu",
+    )
+    assert f"dataset    {root}" in lines
+
+
+def test_the_size_bands_are_the_recapture_plans_bands_at_their_boundaries():
+    """The plan's three shoot bands, plus the tail below the far one.
+
+    The lower edge is inclusive, and that is the only thing here that can be got wrong silently: a
+    table that disagreed with the tape marks by a pixel would be a shooting instruction nobody
+    could follow.
+    """
+    assert audit_recall.SIZE_BANDS == ("large", "medium", "small", "tiny")
+    assert [audit_recall.band_for(w) for w in (300, 299.9, 120, 119.9, 40, 39.9)] == [
+        "large",
+        "medium",
+        "medium",
+        "small",
+        "small",
+        "tiny",
+    ]
+
+
+def test_a_box_is_measured_as_a_share_of_frame_width():
+    """Why the reading is relative at all, and what `--capture-width` is for.
+
+    `stretch` scales x and y by different factors, and both an export's labels and the app's own
+    detections are stored as a share of the frame - where a per-axis scale cancels out. The flag
+    converts that share back to the pixels an operator reads off the overlay, so a wrong value
+    moves every row together and can reorder nothing.
+    """
+    assert audit_recall.box_width_px((0.1, 0.0, 0.6, 0.5), 1280) == pytest.approx(640)
+    assert audit_recall.box_width_px((0.1, 0.0, 0.6, 0.5), 640) == pytest.approx(320)
+    half = audit_recall.box_width_px((0.1, 0.0, 0.6, 0.5), 1280)
+    assert audit_recall.band_for(half) == "large"
+
+
+def test_an_instance_below_the_far_band_is_counted_rather_than_folded_into_it():
+    """`tiny` is its own band on purpose: a 25 px sachet and a 100 px tin are the same problem to
+    a threshold and different ones to a shoot list, and folding them together hides the tail that
+    a shoot list exists to name."""
+    tally = audit_recall.SizeTally()
+    for width in (25.6, 60.0, 150.0, 400.0):
+        tally.add(width)
+    assert tally.counts == {"large": 1, "medium": 1, "small": 1, "tiny": 1}
+    assert tally.instances == 4 and tally.smallest == 25.6
+
+
+def test_a_class_the_split_never_labelled_is_short_in_every_band():
+    """A class with no instances has no measured cell, and a row of zeros is exactly the reading
+    that looks like a covered dataset."""
+    tally = audit_recall.SizeTally()
+    assert (tally.instances, tally.smallest) == (0, 0.0)
+    assert tally.thin(1) == audit_recall.SIZE_BANDS
+
+    lines = audit_recall.size_lines({"tuna": tally}, target=1)
+    row = next(line for line in lines if line.startswith("tuna"))
+    assert row.count("!") == len(audit_recall.SIZE_BANDS)
+    assert row.rstrip().endswith("-")  # nothing to print as a smallest
+
+
+def test_the_shoot_list_leads_with_the_class_short_in_the_most_bands():
+    """Gap order, decided by the tool rather than by the reader.
+
+    v1 has a class whose name starts with a digit, so an alphabetised table would lead with the
+    one ordering that answers no question at all - and the list is a worklist, so the class
+    missing the most bands is the one to shoot first.
+    """
+    thin = audit_recall.SizeTally()
+    thin.add(500)
+    thin.add(60)  # large and small only: four thin bands against the other class's none
+    roomy = audit_recall.SizeTally()
+    for _ in range(3):
+        for width in (500, 150, 60, 25):
+            roomy.add(width)
+
+    lines = audit_recall.size_lines({"555 sardines": thin, "milo": roomy}, target=2)
+    start = lines.index("shoot list - bands under the 2-instance target, worst first:")
+    shoot = [line for line in lines[start + 1 :] if line.startswith("  ")]
+    assert shoot[0].strip().startswith("555 sardines")
+    assert "medium 0/2" in shoot[0] and "large 1/2" in shoot[0]
+    # A class that clears the target in every band is not on the list at all.
+    assert not any("milo" in line for line in shoot)
+    # The table above it is in the same order, so the list and the histogram cannot disagree.
+    table = [line for line in lines if line.startswith(("555", "milo"))]
+    assert table[0].startswith("555")
+
+
+def test_the_shoot_list_says_so_when_every_band_is_covered():
+    """An empty shoot list has to read as an answer, not as a list that failed to print."""
+    tally = audit_recall.SizeTally()
+    for width in (500, 150, 60, 25):
+        tally.add(width)
+    lines = audit_recall.size_lines({"milo": tally}, target=1)
+    assert any("every class clears 1 instance(s) in every band" in line for line in lines)
+
+
+def test_the_histogram_says_so_when_the_split_holds_no_labels():
+    """An empty split is the way this run goes wrong - a `--split train` against an export that
+    only shipped `test` - so it is stated rather than rendered as a blank table."""
+    lines = audit_recall.size_lines({})
+    assert any("no labelled instances" in line for line in lines)
+
+
+def test_the_size_histogram_runs_before_the_weight_is_resolved(tmp_path, capsys):
+    """The mode answers "what do I shoot next", which is asked *before* a refreshed weight exists,
+    so it must not go looking for one. `models/scanncart-grocery-v1.pt` is exactly the file that
+    is not on this machine, which is what makes this an assertion about ordering rather than
+    about a fixture."""
+    gen = _fake_generation(tmp_path)
+    images, labels = audit_recall.split_dirs(gen, "test")
+    images.mkdir(parents=True)
+    labels.mkdir(parents=True)
+    (images / "a.jpg").write_bytes(b"")
+    (labels / "a.txt").write_text("0 0.5 0.5 0.02 0.02\n", encoding="utf-8")
+
+    code = audit_recall.main(
+        ["--generation", "v1", "--dataset-dir", str(tmp_path), "--size-histogram"]
+    )
+    assert code == 0
+    printed = capsys.readouterr().out
+    assert f"dataset {tmp_path}" in printed
+    assert "label widths, per class" in printed
+    assert "shoot list" in printed
+
+
+def test_the_recapture_plan_and_the_tool_agree_on_the_bands():
+    """The bands are the plan's, quoted rather than re-derived by whoever reads the tool next.
+
+    The plan states them in the unit an operator can read off the Live overlay, and the tool
+    converts the same pixels at the capture width - so the two have to be edited together, or the
+    shoot list starts recommending sizes the tape marks do not produce.
+    """
+    text = (
+        REPO_ROOT / "docs/superpowers/plans/2026-09-26-v1-varied-size-recapture.md"
+    ).read_text(encoding="utf-8")
+    for band in ("≥ 300 px", "120–300 px", "40–120 px"):
+        assert band in text
+    # And the two overrides section 8 asks for, named the way the tool spells them.
+    assert "--dataset-dir" in text and "--manifest" in text

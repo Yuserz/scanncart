@@ -67,8 +67,32 @@ thousands of 12 MP frames.
     python sidecar/tools/audit_recall.py --generation v1
     python sidecar/tools/audit_recall.py --generation v1 --conf-sweep --iou-sweep
     python sidecar/tools/audit_recall.py --weights runs/scanncart-grocery-v2/weights/best.pt
+    # a refreshed dataset, measured beside the frozen export it was built on
+    python sidecar/tools/audit_recall.py --generation v1 \\
+        --dataset-dir sidecar/data/datasets/export-v1-s2 \\
+        --manifest sidecar/data/datasets/cleaned-v1-s2/manifest.json
+    # the labels' own size distribution - no weights, no GPU, no model download
+    python sidecar/tools/audit_recall.py --generation v1 --size-histogram
 
 Reads the ignored dataset workspace; needs no camera, no network and no API key.
+
+**Two of this tool's inputs are per-dataset rather than per-weight** - the export the labels are
+read from, and the manifest each frame's distance is joined on - and both are named by the
+*generation spec*. That is right for the generation the app ships and wrong for the one being
+built: a refresh of v1's set is staged and exported *beside* the frozen `scanncart-grocery-v1/`
+export, which has to stay untouched as the "before" baseline. Without an override the tool that
+decides acceptance could only read the dataset the spec names, so the after number would be
+unmeasurable - and, with v1's manifest pinned to `None`, the per-distance columns would vanish
+from the comparison that the recapture work exists to produce. `--dataset-dir` and `--manifest`
+are the pair `train_model.py` already takes, spelled the same way on purpose, so one command line
+transfers between the two tools.
+
+**`--size-histogram` is the one mode here that reads the labels rather than the weights.** It
+histograms every labelled box's width per class and turns the result into a shoot list, and it
+exists because v1's set predates the distance tags (`generations.V1.manifest is None`): "which
+classes have no small instances" cannot be read off the tags, and a capture plan built from folder
+names is a guess. It resolves no weight at all - the question is what to shoot next, which is
+asked before there is a refreshed weight to measure.
 """
 
 from __future__ import annotations
@@ -76,7 +100,7 @@ from __future__ import annotations
 import argparse
 import statistics
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import resources  # must precede numpy/torch: sets OMP/MKL thread limits
@@ -105,6 +129,32 @@ RECALL_FLOOR = 0.85
 # support. 20 is not derived from anything: it is large enough that one or two instances moving
 # cannot flip the comparison.
 MIN_BUCKET_INSTANCES = 20
+
+# The size bands, in pixels of the capture preview - the unit the Live view's `det-size` readout
+# prints, so an operator can check the first frame of a cell against this table while shooting.
+# The thresholds are the recapture plan's shoot bands
+# (`docs/superpowers/plans/2026-09-26-v1-varied-size-recapture.md` section 4): at the rig's
+# 1280-wide capture they are the close / mid / far positions the tape marks stand for. A box is
+# measured as a *share* of frame width and multiplied back by the capture width, which is what
+# makes the reading resolution-independent - a wrong `--capture-width` scales every row together
+# and can reorder nothing.
+CLOSE_MIN_PX = 300
+MID_MIN_PX = 120
+FAR_MIN_PX = 40
+DEFAULT_CAPTURE_WIDTH = 1280
+# Below FAR_MIN_PX is counted, and as its own band rather than folded into `small`. A 30 px sachet
+# and a 100 px tin are the same item to a threshold and different problems to a shoot list: one is
+# further away than the far mark, the other is a small package at it. Folding them together hides
+# the tail, which is the half a shoot list is for.
+SIZE_BANDS = ("large", "medium", "small", "tiny")
+# How many instances a class needs in a band before that band is covered. The recapture plan's
+# per-cell target, applied per class here: a floor for ordering a shoot list, not a claim that 40
+# images of an item is enough to learn it.
+DEFAULT_SIZE_TARGET = 40
+# Labels carrying a class index this generation does not declare - an export's head disagreeing
+# with the spec. Counted under this name rather than dropped, for the same reason
+# `FrameRecord.off_roster` exists: a mismatch that is invisible reads as a clean dataset.
+OFF_ROSTER_LABELS = "(labels beyond this generation's class list)"
 
 # The buckets every frame is sorted into. Named rather than a boolean because the report and
 # the tests both print them, and "single" / "multi" is what the finding is stated in.
@@ -241,6 +291,135 @@ def read_labels(path: Path) -> list[Instance]:
 def area(box: Box) -> float:
     """The box's area, in the same relative units the boxes are in."""
     return max(0.0, box[2] - box[0]) * max(0.0, box[3] - box[1])
+
+
+def box_width_px(box: Box, capture_width: int) -> float:
+    """One box's width in capture pixels, from its 0-1-relative x extent.
+
+    Relative is the right unit to start from: `stretch` scales x and y by different factors, and
+    both an export's labels and the app's own detections are stored as a share of the frame, where
+    a per-axis scale cancels out. Multiplying back by the capture width is what makes the number
+    in the table the number the operator can read off the Live overlay.
+    """
+    return (box[2] - box[0]) * capture_width
+
+
+def band_for(width_px: float) -> str:
+    """Which of `SIZE_BANDS` one labelled box falls in, by its width in capture pixels."""
+    if width_px >= CLOSE_MIN_PX:
+        return "large"
+    if width_px >= MID_MIN_PX:
+        return "medium"
+    if width_px >= FAR_MIN_PX:
+        return "small"
+    return "tiny"
+
+
+@dataclass
+class SizeTally:
+    """One class's labelled instances, counted into the size bands.
+
+    Labels only, deliberately: nothing here needs a weight, so a shoot list is available before
+    there is a model to audit - which is the order the recapture work happens in.
+    """
+
+    counts: dict[str, int] = field(default_factory=lambda: {band: 0 for band in SIZE_BANDS})
+    # The narrowest box seen, in capture pixels, or 0.0 when the class has none in this split.
+    smallest: float = 0.0
+
+    @property
+    def instances(self) -> int:
+        return sum(self.counts.values())
+
+    def add(self, width_px: float) -> None:
+        self.counts[band_for(width_px)] += 1
+        if not self.smallest or width_px < self.smallest:
+            self.smallest = width_px
+
+    def thin(self, target: int) -> tuple[str, ...]:
+        """The bands this class is short in, in `SIZE_BANDS` order.
+
+        A class with *no* instances at all in the split is short in every band, which is the
+        reading that matters most: its cells have never been measured, and a table that dropped
+        it would look like a covered dataset.
+        """
+        return tuple(band for band in SIZE_BANDS if self.counts[band] < target)
+
+
+def size_lines(
+    tallies: dict[str, SizeTally],
+    target: int = DEFAULT_SIZE_TARGET,
+    capture_width: int = DEFAULT_CAPTURE_WIDTH,
+) -> list[str]:
+    """The per-class width histogram and the shoot list it implies.
+
+    Pure and rendered as text in its own function, for the same reason `conf_sweep_lines` is: the
+    CLI becomes a print, so the table can be read by a test with no dataset on disk.
+
+    Ordered by *gap* rather than alphabetically or by size. The classes short in the most bands
+    come first because that is the shoot list's own order, and an alphabetical table would lead
+    with whichever product name starts with a digit (v1 has one) - the one ordering that answers
+    no question at all.
+    """
+    out = [
+        "label widths, per class, as the share of frame width the boxes occupy:",
+        f"  bands, in capture pixels at {capture_width} wide:  large >= {CLOSE_MIN_PX}"
+        f"   medium {MID_MIN_PX}-{CLOSE_MIN_PX}   small {FAR_MIN_PX}-{MID_MIN_PX}"
+        f"   tiny < {FAR_MIN_PX}",
+        "  `!` marks a band holding fewer instances than the target. `smallest` is the narrowest",
+        "  box the class has in this split, in the same pixels - the number the Live `det-size`",
+        "  readout prints while shooting.",
+        "",
+    ]
+    if not tallies:
+        out.append("  no labelled instances in this split (nothing to histogram)")
+        return out
+
+    ordered = sorted(
+        tallies,
+        key=lambda name: (
+            -len(tallies[name].thin(target)), -tallies[name].instances, name
+        ),
+    )
+    head = f"{'class':<38}{'instances':>10}" + "".join(f"{band:>9}" for band in SIZE_BANDS)
+    head += f"{'smallest':>10}"
+    out.append(head)
+    for name in ordered:
+        tally = tallies[name]
+        row = f"{name[:37]:<38}{tally.instances:>10}"
+        for band in SIZE_BANDS:
+            count = tally.counts[band]
+            row += f"{count:>8}{'!' if count < target else ' '}"
+        smallest = f"{tally.smallest:.0f}" if tally.smallest else "-"
+        out.append(row + f"{smallest:>10}")
+
+    # Already in `ordered`'s gap order, so the list and the table cannot disagree about which
+    # class is worst.
+    gaps: list[tuple[str, tuple[str, ...]]] = []
+    for name in ordered:
+        thin = tallies[name].thin(target)
+        if thin:
+            gaps.append((name, thin))
+    out += ["", f"shoot list - bands under the {target}-instance target, worst first:"]
+    if not gaps:
+        out.append(
+            f"  every class clears {target} instance(s) in every band "
+            f"({sum(t.instances for t in tallies.values())} labelled instance(s) in this split)"
+        )
+    for name, thin in gaps:
+        cells = "   ".join(
+            f"{band} {tallies[name].counts[band]}/{target}" for band in thin
+        )
+        out.append(f"  {name[:37]:<38}{cells}")
+
+    out += [
+        "",
+        "`small` is the band the recapture plan calls far, and `tiny` is beyond it: instances",
+        "below the far mark's size, which is either an item further away than the mark or a",
+        "smaller package at it. Shoot a class into the band it is short in, checked against the",
+        "Live readout rather than the folder name, and put the whole set in a new session.",
+    ]
+    return out
 
 
 def iou(a: Box, b: Box) -> float:
@@ -464,6 +643,29 @@ def measure(
 # ---------------------------------------------------------------------------
 
 
+def resolve_dataset(
+    generation: Generation, dataset_dir: str = "", manifest: str = ""
+) -> Generation:
+    """The generation with its dataset, and its distance join, pointed somewhere else.
+
+    `replace()` on the frozen spec rather than a second code path, exactly as `train_model` does
+    it: everything downstream reads `export_dir` and `manifest` off the generation, so an override
+    that reached only the frame reader would leave the distance join, the report's `dataset` line
+    and the "no such axis" sentence all describing the dataset that was *not* measured.
+
+    An absent flag leaves its field alone, which is why a `--manifest` is the whole of the fix for
+    a generation whose spec declares no distance axis: `distance_map(None)` answers `{}` and the
+    breakdown is skipped, while a path makes the join happen.
+    """
+    if not dataset_dir and not manifest:
+        return generation
+    return replace(
+        generation,
+        export_dir=Path(dataset_dir).expanduser() if dataset_dir else generation.export_dir,
+        manifest=Path(manifest).expanduser() if manifest else generation.manifest,
+    )
+
+
 def split_dirs(generation: Generation, split: str) -> tuple[Path, Path]:
     """Where one split's images and labels live in a YOLO export."""
     root = generation.export_dir / split
@@ -491,6 +693,33 @@ def load_records_only(
     out = []
     for path in frame_paths(generation, split, limit):
         out.append((path, tuple(read_labels(labels / f"{path.stem}.txt"))))
+    return out
+
+
+def label_sizes(
+    generation: Generation,
+    split: str,
+    capture_width: int = DEFAULT_CAPTURE_WIDTH,
+    limit: int | None = None,
+) -> dict[str, SizeTally]:
+    """Every labelled instance in the split, counted into its own class's size bands.
+
+    Built on `load_records_only` so the polygon-vs-box parsing is the *same* one the recall audit
+    uses. A second reader here is exactly how a dataset gets misdiagnosed: a polygon read as
+    `cx cy w h` yields boxes in the wrong place and, on centred objects, zero-width ones - which
+    in this table would read as a class that is only ever shot absurdly far away.
+    """
+    out: dict[str, SizeTally] = {}
+    for _path, instances in load_records_only(generation, split, limit):
+        for instance in instances:
+            name = (
+                generation.classes[instance.cls]
+                if 0 <= instance.cls < len(generation.classes)
+                else OFF_ROSTER_LABELS
+            )
+            out.setdefault(name, SizeTally()).add(
+                box_width_px(instance.box, capture_width)
+            )
     return out
 
 
@@ -880,6 +1109,43 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="default: models/<generation>.pt as installed; pass runs/<run>/weights/best.pt "
              "to measure a run that has not been installed",
     )
+    # The trainer's own spelling, so a command that reads a refreshed export there reads it here
+    # too. `--export-dir` is the name the documents still use; both reach one destination.
+    ap.add_argument(
+        "--dataset-dir",
+        "--export-dir",
+        dest="dataset_dir",
+        default="",
+        help="the export to read labels from (default: the generation's own)",
+    )
+    ap.add_argument(
+        "--manifest",
+        default="",
+        help=(
+            "the manifest to join each image's distance from (default: the generation's own, "
+            "which is None for a generation that was never tagged)"
+        ),
+    )
+    ap.add_argument(
+        "--size-histogram",
+        action="store_true",
+        help=(
+            "histogram every labelled box's width per class and print the shoot list; reads "
+            "labels only, so it runs with no weights"
+        ),
+    )
+    ap.add_argument(
+        "--capture-width",
+        type=int,
+        default=DEFAULT_CAPTURE_WIDTH,
+        help="the capture width the size bands are stated in (default %(default)s)",
+    )
+    ap.add_argument(
+        "--size-target",
+        type=int,
+        default=DEFAULT_SIZE_TARGET,
+        help="instances a class needs in a band before the band counts as covered (%(default)s)",
+    )
     ap.add_argument("--split", default=DEFAULT_SPLIT, help="train / valid / test")
     ap.add_argument("--conf", type=float, default=DEFAULT_CONF, help="operating confidence")
     ap.add_argument("--iou-match", type=float, default=DEFAULT_IOU_MATCH,
@@ -906,9 +1172,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    generation = generation_for(args.generation)
+    generation = resolve_dataset(
+        generation_for(args.generation), args.dataset_dir, args.manifest
+    )
     weights = args.weights or str(SIDECAR_ROOT / "models" / generation.weight_name)
     resize_mode = args.resize_mode or generation.resize_mode
+
+    # Before the weight is resolved, because this mode asks what to shoot next and that question
+    # comes before there is a refreshed weight to measure. Everything above it - the resource
+    # envelope included - belongs to inference, which this mode never does.
+    if args.size_histogram:
+        print(
+            f"generation {generation.name}   split {args.split}"
+            f"   dataset {generation.export_dir}"
+        )
+        tallies = label_sizes(generation, args.split, args.capture_width, args.limit)
+        for line in size_lines(tallies, args.size_target, args.capture_width):
+            print(line)
+        return 0
 
     if not Path(weights).exists():
         raise SystemExit(f"no such weight: {weights}")
