@@ -30,14 +30,19 @@ live frame stream, REST for start/stop/health/logs).
 
 ## Quick start
 
+**New to the project? Follow [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) — a
+step-by-step guide from clone to running app**, including prerequisites, the
+manual equivalent of every `make` target, GPU/Roboflow extras, and the env
+quirks that bite on a fresh machine.
+
 A root `Makefile` wraps both toolchains (requires GNU Make — on Windows use
 Git Bash/WSL, or `winget install GnuWin32.Make`). Run `make help` to list all
 targets.
 
 ```bash
 make install   # desktop npm install + sidecar venv setup
+make test      # desktop vitest + sidecar pytest (fakes only — no camera needed)
 make dev       # run the desktop app in dev mode (spawns the sidecar)
-make test      # desktop vitest + sidecar pytest
 make build     # typecheck + build the desktop app
 ```
 

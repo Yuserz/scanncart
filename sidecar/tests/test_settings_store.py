@@ -205,6 +205,11 @@ def test_onnx_on_cuda_without_the_gpu_runtime_warns(monkeypatch):
     the CPU wheel installed (the requirements.txt default) inference silently
     falls back to CPU with only an ultralytics log line."""
     monkeypatch.setattr("app.settings_store._cuda_provider_available", lambda: False)
+    # `device="cuda"` only reaches the warning when torch reports CUDA. A stock
+    # `requirements.txt` install pulls the CPU wheel, so the real torch would answer
+    # "cpu" and this test would pass for the wrong reason - or fail outright. Pin the
+    # resolution so the test is about the warning, not about the machine it runs on.
+    monkeypatch.setattr("app.settings_store.resolve_device", lambda _: "cuda")
     warnings = compute_warnings(
         Settings(detector_backend="native", active_model="models/scanncart-grocery.onnx",
                  device="cuda"),
@@ -215,6 +220,7 @@ def test_onnx_on_cuda_without_the_gpu_runtime_warns(monkeypatch):
 
 def test_onnx_on_cuda_with_the_gpu_runtime_does_not_warn(monkeypatch):
     monkeypatch.setattr("app.settings_store._cuda_provider_available", lambda: True)
+    monkeypatch.setattr("app.settings_store.resolve_device", lambda _: "cuda")
     warnings = compute_warnings(
         Settings(detector_backend="native", active_model="models/scanncart-grocery.onnx",
                  device="cuda"),

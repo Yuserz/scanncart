@@ -8,8 +8,8 @@
 ## Install GNU Make via `winget install GnuWin32.Make`, or run these targets
 ## from within WSL or a Git Bash shell that has `make` on PATH.
 ##
-## `test` is CI's target and stays fake-only, so it needs no data. `verify-clamp`
-## is the one target that does - see the note above it.
+## `test` is CI's target and stays fake-only, so it needs no data. `verify-clamp`,
+## `doctor` and `accept-v2` are the three that do - see the notes above them.
 ##
 
 SIDECAR_DIR := sidecar
@@ -23,8 +23,8 @@ endif
 
 .DEFAULT_GOAL := help
 
-.PHONY: help install dev test build lint format typecheck clean \
-        verify-clamp \
+.PHONY: help install dev test docs-check build lint format typecheck clean \
+        verify-clamp doctor annotate accept-v2 \
         sidecar-setup sidecar-run sidecar-test \
         desktop-install desktop-dev desktop-start desktop-test desktop-test-watch \
         desktop-build desktop-build-win desktop-build-mac desktop-build-linux \
@@ -36,7 +36,11 @@ help:
 	@echo "  install              install desktop deps + set up sidecar venv"
 	@echo "  dev                  run the desktop app in dev mode (spawns the sidecar)"
 	@echo "  test                 run desktop + sidecar test suites"
+	@echo "  docs-check           check that internal documentation links resolve"
 	@echo "  verify-clamp         re-check the frame-clamp claims (local data, not CI)"
+	@echo "  annotate             label a staged session locally in the browser (local data, not CI)"
+	@echo "  doctor               check the merged set before training it (local data, not CI)"
+	@echo "  accept-v2            measure v2 against v1 on the merged set's test split (local data, not CI)"
 	@echo "  build                typecheck + build the desktop app"
 	@echo "  lint                 lint the desktop app"
 	@echo "  format               format the desktop app"
@@ -68,6 +72,23 @@ dev: desktop-dev
 
 test: desktop-test sidecar-test
 
+## --- documentation ---
+
+# Every relative link between the tracked Markdown files must resolve, so a
+# rename or move cannot quietly leave a cross-reference dangling. Standard
+# library only, so it runs before anything is installed - but it still needs an
+# interpreter, and on Windows `python` is often absent, so the sidecar venv's is
+# used there (path is root-relative here, unlike SIDECAR_VENV_PY). CI runs the
+# script with its own python3 in the `docs-links` job. Not part of `test`.
+ifeq ($(OS),Windows_NT)
+  DOCS_PYTHON ?= $(SIDECAR_DIR)/.venv/Scripts/python.exe
+else
+  DOCS_PYTHON ?= python3
+endif
+
+docs-check:
+	$(DOCS_PYTHON) scripts/check_doc_links.py
+
 ## --- verification gates that need data the repo does not carry ---
 
 # The frame-clamp claims in docs/CAPTURE_CHECKLIST.md are measured against v1's installed weights
@@ -88,6 +109,54 @@ CLAMP_CONF ?= 0.5
 verify-clamp:
 	cd $(SIDECAR_DIR) && $(SIDECAR_VENV_PY) tools/clamp_probe.py \
 		--generation $(CLAMP_GEN) --conf $(CLAMP_CONF) --strict
+
+# The local labeler (`sidecar/annotate/`): a browser app over a staged set, writing into the
+# workspace's `annotations-v2/`. Its own `--out` default is `workspace.DEFAULT_OUT` (so
+# `SCANNCART_DATASET_ROOT` moves it with everything else), which is why this passes no path by
+# default - override the whole command line with `make annotate ANNOTATE_ARGS="--out … --hosted …"`.
+ANNOTATE_ARGS ?=
+
+annotate:
+	cd $(SIDECAR_DIR) && $(SIDECAR_VENV_PY) -m annotate.run $(ANNOTATE_ARGS)
+
+# Run before training, not after: the failures it looks for - a class list in the wrong order, a
+# label row nothing can read, a frame drawn under a class other than the one it was staged as, a test
+# frame that duplicates a train one, a merge report left over from an earlier build - all produce a
+# dataset that trains happily and measures the wrong thing. It also prints the v2 distance mix, and
+# warns when a distance the model would train on has no test frame (nothing can measure it) or when a
+# distance the plan follows is in no split at all (the capture gap). Also the
+# same local data `accept-v2` needs (the merged set), so it fails loudly when the set is absent rather
+# than reporting on nothing. Point it at another set or generation with
+# `make doctor DOCTOR_DATASET=... DOCTOR_GEN=v1`.
+#
+# This target is the reading, not the enforcement: `train_model.py --yes/--val` and `accept_v2.py`
+# run the same check inline and refuse a set that fails it, so a number cannot be produced over a set
+# nobody doctored. Run it by hand to see the whole report before spending GPU time.
+#
+# The generation is `auto`: the doctor reads it off the set (the merge report, then the order its own
+# `data.yaml` declares) rather than taking this target's word for it, so pointing the dataset at v1's
+# export without also naming v1 cannot fail the set for being in v1's order. Override with
+# `DOCTOR_GEN=v1` only to ask a deliberate what-if.
+DOCTOR_DATASET ?= data/datasets/merged-v2
+DOCTOR_GEN ?= auto
+
+doctor:
+	cd $(SIDECAR_DIR) && $(SIDECAR_VENV_PY) tools/dataset_doctor.py \
+		--dataset $(DOCTOR_DATASET) --generation $(DOCTOR_GEN)
+
+# The acceptance gate for v2: both weights measured on the merged set's own test split, per-class
+# against 6's floor, the crowded counter compared, and `machine_only` required to be zero in
+# valid/test. Needs the same local data CI does not carry (two installed weights and the merged
+# set), so it fails loudly rather than skipping - and it is a *verdict*: exit 1 with the reasons.
+# `ACCEPT_BASELINE`/`ACCEPT_CANDIDATE` point it at other generations.
+ACCEPT_BASELINE ?= models/scanncart-grocery-v1.pt
+ACCEPT_CANDIDATE ?= models/scanncart-grocery-v2.pt
+ACCEPT_SPLIT ?= test
+
+accept-v2:
+	cd $(SIDECAR_DIR) && $(SIDECAR_VENV_PY) tools/accept_v2.py \
+		--baseline $(ACCEPT_BASELINE) --candidate $(ACCEPT_CANDIDATE) \
+		--split $(ACCEPT_SPLIT) --iou-sweep
 
 build: desktop-build
 

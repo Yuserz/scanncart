@@ -56,3 +56,19 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  docs-links:
+    name: Doc link check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # Fails when a relative link between the tracked Markdown files points at a
+      # path that does not exist (a rename or move that left a cross-reference
+      # dangling). Standard library only, so it needs no dependency install.
+      - name: Check internal documentation links
+        run: python scripts/check_doc_links.py

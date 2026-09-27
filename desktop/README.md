@@ -5,6 +5,10 @@ Electron + React + TypeScript UI that spawns and supervises the Python
 detection box overlays, a start/stop control, a stats strip, and an in-memory item
 log. Scaffolded with electron-vite (React 19, Vite 7, Electron 39).
 
+> Setting up the whole project from a fresh clone? Start with the step-by-step
+> [development guide](../docs/DEVELOPMENT.md); this file covers desktop-specific
+> setup and its known env notes.
+
 ## Architecture
 
 - **Main** (`src/main/`): `SidecarSupervisor` spawns `sidecar/run.py`, reads the
