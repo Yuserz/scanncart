@@ -6,16 +6,20 @@ Four one-shot decisions meet here, and each one has already bitten this project:
 1. **Which generation this run is for.** `--generation` picks the dataset, the class list the
    export has to declare, the resize requirement, and the names of everything written - all
    from `generations.py`, because v1 and v2 differ in exactly the ways that matter and none of
-   them is a detail: seven classes against eight, no distance axis against three, a frozen
-   geometry requirement against one `generate_version.py` owns. Editing this file to train the
-   other one is what that spec exists to stop.
+   them is a detail: the same seven names declared by two different datasets, no distance axis
+   against three, a frozen geometry requirement against one `generate_version.py` owns. Editing
+   this file to train the other one is what that spec exists to stop.
 2. **The export's class list.** A trained model's output indices are whatever order the dataset
    declared. If the export's `names` disagree with what its generation expects, every box comes
    back under the wrong label - with no error, and with plausible-looking confidences. So the
    export is checked *before* anything is trained, and the check re-measures how the frames were
    resized too, since that is what the record will claim about them.
 3. **The training run.** Hyperparameters are `MODEL_TRAINING.md` 6's, in code, so the run that
-   produced a shipped model is reproducible from this file rather than from memory.
+   produced a shipped model is reproducible from this file rather than from memory - and the
+   augmentation is 4's table, written out for the same reason: ultralytics' defaults are *not*
+   that table (`degrees` 0.0, `mosaic` 1.0), so inheriting them would train a model the doc does
+   not describe. `--degrees`/`--scale` override the two that matter; the whole table is printed
+   before the run and recorded beside the weights.
 4. **The drop-in.** `models/scanncart-grocery-<generation>.pt` is the name the picker lists and
    the validator accepts. The previous generation's weights were never installed at all - there
    is no tracked `sidecar/models/` in this checkout - so the step that turns a good `best.pt`
@@ -70,9 +74,10 @@ comes back as an error body rather than a bad download, and `--format` retries i
     sidecar/.venv/Scripts/python.exe sidecar/tools/train_model.py --val
 
 v1 is the same four commands with `--generation v1`, and two differences follow from the spec
-rather than from a flag: its seven-class export is judged against *its* class list (v1 never had
-Palmolive, so judging it against v2's eight would refuse a correct set), and `--val` has no
-per-distance breakdown to run, because v1 predates the distance tags and its export carries none.
+rather than from a flag: its seven-class export is judged against *its* class list (the two lists
+are the same seven names today, but the per-generation check is what keeps them trainable when a
+later generation adds one), and `--val` has no per-distance breakdown to run, because v1 predates
+the distance tags and its export carries none.
 Its dataset directory is the hand-downloaded export ingested into the workspace:
 
     sidecar/.venv/Scripts/python.exe sidecar/tools/train_model.py --generation v1
@@ -111,8 +116,9 @@ import resources  # imported first: it sets OMP/MKL thread limits at import time
 # export URL the first time this ran live.
 from generations import DEFAULT as DEFAULT_GENERATION
 from generations import Generation
-from label_classes import distance_tokens_in, load_key
+from label_classes import DISTANCE_ORDER, SPLIT_NAMES, distance_tokens_in, load_key
 from label_classes import WORKSPACE as ROBOFLOW_WORKSPACE
+from workspace import DATA_YAML_NAME, MERGE_REPORT_NAME, SCANNCART_DATA_YAML_NAME
 from workspace import SIDECAR_ROOT
 from workspace import WORKSPACE as DATASET_ROOT
 
@@ -135,6 +141,37 @@ IMGSZ = 640
 BATCH = 16
 PATIENCE = 25
 
+# ---------------------------------------------------------------------------
+# Augmentation (MODEL_TRAINING.md 4's table). Written out rather than left to
+# ultralytics' defaults, because the defaults are not that table: `degrees` is
+# 0.0 (so no rotation at all) and `mosaic` is 1.0 (the "heavy mosaic" 4 says to
+# leave off). A run that silently disagrees with the doc is the kind of thing
+# this repo writes the value down for.
+# ---------------------------------------------------------------------------
+# Rotation, +-degrees. The one augmentation whose *absence* was measurable here: with no
+# rotation the model only ever sees a sachet at the angle it was shot at, and a hand-held
+# item at the counter arrives at any of them.
+DEGREES = 15.0
+# Scale jitter, +-fraction. Ultralytics' own default, named rather than inherited: it is the
+# augmentation that stands in for the distance axis on a set whose `far` cells are thin, and a
+# recorded value of 0.5 is a fact about the run rather than a coincidence.
+SCALE = 0.5
+# The rest of 4's table, in ultralytics' names. `flipud` and `mosaic`/`erasing` are the three
+# exclusions, kept as explicit zeros so the record says they were decided rather than forgotten:
+# the camera is fixed and items do not appear upside down, so a vertical flip or a mosaic of four
+# frames is augmentation the model can never be asked to undo at inference time.
+AUGMENTATION: dict[str, float] = {
+    "fliplr": 0.5,      # horizontal flip: on
+    "flipud": 0.0,      # vertical flip: off - items do not appear upside down
+    "translate": 0.1,   # +-10% translation, ultralytics' default
+    "hsv_v": 0.2,       # brightness/exposure: +-20%
+    "mosaic": 0.0,      # heavy mosaic: off - the camera is fixed, it only adds noise
+    "erasing": 0.0,     # cutout: off, same argument
+}
+# The keys of `AUGMENTATION` plus the two that have their own flags, i.e. everything the record
+# carries. One list, so the record and the values it is compared against cannot disagree.
+AUGMENTATION_KEYS: tuple[str, ...] = ("fliplr", "flipud", "degrees", "scale", "translate", "hsv_v", "mosaic", "erasing")
+
 # MODEL_TRAINING.md 6's acceptance table, minus the per-class rule. Only the two
 # aggregate numbers can be read out of a training run's own log; per-class recall
 # needs a validation pass, which is deliberately left to `--val` so this tool cannot
@@ -144,7 +181,6 @@ TARGETS: dict[str, float] = {
     "metrics/mAP50-95(B)": 0.65,
 }
 
-SPLITS = ("train", "valid", "test")
 IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
 
 # MODEL_TRAINING.md 6's per-class floor. Every class, not the average: the thing this
@@ -181,13 +217,12 @@ VAL_NAME_SUFFIX = "-val"
 VAL_METRICS_NAME = "val_metrics.json"
 
 # The three distances the set is staged in, in the order they are reported
-# (`clean_v2.DISTANCE_ORDER`, MODEL_TRAINING.md 8.3). **Not a class axis**: the class list is the
-# same 8 names at every distance, and a box drawn on a distant sachet is the same class as one
-# drawn on a near one. This exists because the per-class floor is computed over every distance
+# (`label_classes.DISTANCE_ORDER`, MODEL_TRAINING.md 8.3). **Not a class axis**: the class list is
+# the same names at every distance, and a box drawn on a distant sachet is the same class as one
+# drawn on a near one. This axis exists because the per-class floor is computed over every distance
 # mixed together, so a class whose test frames happen to be mostly `close` can clear 0.85 while
 # being unable to find the item at `far` - the bucket this dataset exists to fix. Splitting the
 # number by distance is what turns that from an argument into a measurement.
-DISTANCE_ORDER = ("close", "mid", "far")
 # Where the per-distance file lists and their yamls go: inside the run directory, beside the
 # numbers they produced, so a surprising row can be traced back to the exact image set it came
 # from instead of being a line in a log.
@@ -323,7 +358,7 @@ def find_split_dirs(export_dir: Path) -> dict[str, Path]:
     roots = [export_dir, *(p for p in sorted(export_dir.glob("*")) if p.is_dir())]
     found: dict[str, Path] = {}
     for root in roots:
-        for split in SPLITS:
+        for split in SPLIT_NAMES:
             images = root / split / "images"
             if images.is_dir() and split not in found:
                 found[split] = images
@@ -336,6 +371,27 @@ def count_images(directory: Path) -> int:
     return sum(1 for p in directory.iterdir() if p.suffix.lower() in IMAGE_SUFFIXES)
 
 
+def yaml_bodies(export_dir: Path):
+    """Every readable `data.yaml` under the export, in path order, as mappings.
+
+    One generator rather than one parse loop per reader: a built set carries two of these (the
+    dataset's own `data.yaml` and the normalized `data.scanncart.yaml` `write_data_yaml` writes),
+    and both `read_export_names` and `read_export_generation` walk them the same way - the first
+    candidate that carries the field wins, so neither reader has to know which file it landed in.
+    An unreadable or non-mapping candidate is skipped rather than raised: these are reads of
+    somebody else's export, and the callers report absence.
+    """
+    import yaml  # PyYAML ships with ultralytics; see requirements.txt
+
+    for candidate in sorted(export_dir.rglob(DATA_YAML_NAME)):
+        try:
+            body = yaml.safe_load(candidate.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if isinstance(body, dict):
+            yield body
+
+
 def read_export_names(export_dir: Path) -> list[str] | None:
     """The class names the export declares, in the order it indexes them.
 
@@ -343,18 +399,29 @@ def read_export_names(export_dir: Path) -> list[str] | None:
     order the trained model's outputs will be in. A missing or unreadable yaml returns
     `None` - a defect the caller reports, not a crash.
     """
-    import yaml  # PyYAML ships with ultralytics; see requirements.txt
-
-    for candidate in sorted(export_dir.rglob("data.yaml")):
-        try:
-            body = yaml.safe_load(candidate.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        names = (body or {}).get("names")
+    for body in yaml_bodies(export_dir):
+        names = body.get("names")
         if isinstance(names, dict):
             return [str(names[k]) for k in sorted(names, key=lambda x: int(x))]
         if isinstance(names, list):
             return [str(n) for n in names]
+    return None
+
+
+def read_export_generation(export_dir: Path) -> str | None:
+    """The generation an export says it indexes, when its `data.yaml` names a known one.
+
+    Written by `build_dataset.py` beside `names`, and read for the same reason it is written: the
+    names list is ordered, so it is only readable against a generation - and a set handed to
+    somebody else, or opened after the merge report has gone missing, should not have to be
+    identified by matching its order against every roster by hand. `None` means *not recorded*,
+    never a guess, and a value naming no generation this app has is treated as not recorded rather
+    than quoted as a fact about the labels.
+    """
+    for body in yaml_bodies(export_dir):
+        recorded = body.get("generation")
+        if isinstance(recorded, str) and recorded in generations.GENERATIONS:
+            return recorded
     return None
 
 
@@ -379,7 +446,7 @@ def frame_geometry(splits: dict[str, Path], sample: int = 12) -> list[str]:
     """
     images = [
         path
-        for split in SPLITS
+        for split in SPLIT_NAMES
         if (directory := splits.get(split)) is not None
         for path in sorted(directory.iterdir())
         if path.suffix.lower() in IMAGE_SUFFIXES
@@ -426,6 +493,41 @@ def frame_geometry(splits: dict[str, Path], sample: int = 12) -> list[str]:
     return [note]
 
 
+def pass_gate(dataset: Path) -> tuple[bool, list[str]]:
+    """Whether the human pass is finished for the set about to be trained or measured.
+
+    A weight's unread boxes in `valid`/`test` do not make the *training* wrong - they are the rows
+    the set is built from, read back off disk like any other. What they make wrong is every number
+    the run produces: `test` becomes a measurement of the annotator rather than of the model, and
+    `valid` is the split the run *selects* on, so the checkpoint that comes out was chosen against
+    an untrusted signal. That is already the acceptance gate's verdict; asking it here is asking the
+    same question before ~2 h of GPU instead of after it, because the run whose headline figure has
+    to be discarded is a run that has to be repeated.
+
+    The rule is `accept_v2`'s own - `machine_only_verdict`, both halves, so "is this set's number
+    quotable" has one owner and one wording - and it is imported here rather than at module scope
+    for the same reason the doctor below is: `accept_v2` imports *this* module (for `IMGSZ`), so a
+    module-level import is a cycle.
+
+    A set with no merge report is **not** gated, and says so: `merge_report.json` is what
+    `build_dataset.py` leaves beside a set it assembled, only a locally built set has machine-only
+    decisions to count, and the other documented route (a Roboflow version export, whose labels came
+    from that project's own annotator) has no provenance for this to read. Refusing there would
+    block a path that is not dirty, merely unanswerable - the difference `accept_v2` draws as
+    "cannot verify" and this one draws as "not this gate's set".
+    """
+    import accept_v2
+
+    report = accept_v2.read_report(dataset)
+    if not report:
+        return True, [
+            f"pass gate: {dataset} carries no {MERGE_REPORT_NAME}, so it is not a set "
+            "build_dataset.py assembled - there is no machine-only state to check (a Roboflow "
+            "export has none). Not gated."
+        ]
+    return accept_v2.machine_only_verdict(report)
+
+
 def check_export(
     export_dir: Path, generation: Generation = DEFAULT_GENERATION
 ) -> tuple[dict[str, Path], list[str]]:
@@ -434,17 +536,23 @@ def check_export(
     Runs before training on purpose: a class-list mismatch found after an hour of GPU time is an
     hour of GPU time, and found after deployment it is every box in the app.
 
-    Judged against the *generation's* class list rather than one shared roster, because the two
-    generations do not declare the same classes: v1 has seven and v2 has eight, and the eighth
-    (Palmolive) is the class v2 adds. A v1 export judged against v2's list would be refused for
-    being correct - and a check that cries wolf is how the real mismatch gets waved through.
+    Judged against the *generation's* class list rather than one shared roster: the two entries are
+    the same seven names today, but an export is judged against the list its own dataset declared,
+    and a per-generation list is what stops a future addition from refusing a correct v1 set (or
+    waving through a v2 head that lost a class). A check that cries wolf is how the real mismatch
+    gets waved through.
+
+    Note what this check does *not* do: it compares names by membership, so it cannot see a
+    mis-mapped class *index* in the labels. For a Roboflow export that never mattered (the export's
+    own order is the training order); for a locally built dataset it is the failure mode worth
+    guarding, which is why `build_dataset` remaps indices by name and prints a contact sheet.
     """
     problems: list[str] = []
     if not export_dir.is_dir():
         return {}, [f"no export at {export_dir}"]
 
     splits = find_split_dirs(export_dir)
-    for split in SPLITS:
+    for split in SPLIT_NAMES:
         if split not in splits:
             problems.append(f"no {split}/images directory in the export")
     for split, directory in splits.items():
@@ -522,13 +630,13 @@ def write_data_yaml(export_dir: Path, splits: dict[str, Path], path: Path | None
         "nc": len(names) if names else 0,
         "names": names or [],
     }
-    for split in SPLITS:
+    for split in SPLIT_NAMES:
         if split in splits:
             # Ultralytics resolves a relative entry against `path`; a bare directory
             # (not a glob) is what it expects for an image folder.
             body[split if split != "valid" else "val"] = str(splits[split].resolve())
 
-    target = path or (export_dir / "data.scanncart.yaml")
+    target = path or (export_dir / SCANNCART_DATA_YAML_NAME)
     target.write_text(yaml.safe_dump(body, sort_keys=False), encoding="utf-8")
     return target
 
@@ -622,11 +730,16 @@ def verdict(rows: list[dict[str, float]]) -> tuple[list[str], list[str]]:
 # ---------------------------------------------------------------------------
 
 
-def validation_kwargs(data_yaml: Path, split: str, project: Path, name: str) -> dict:
+def validation_kwargs(
+    data_yaml: Path, split: str, project: Path, name: str, imgsz: int = IMGSZ
+) -> dict:
     """The validation pass, as kwargs - one dict so the printed pass and the call agree.
 
     `imgsz` is pinned to the size the run trained at rather than inherited from the
-    checkpoint, so the two numbers being compared describe the same model.
+    checkpoint, so the two numbers being compared describe the same model. It is a parameter
+    rather than the constant because the constant is only right while nobody passes `--imgsz`:
+    a run trained at 960 and measured at 640 is a *different* configuration, and the number it
+    reports is not the trained model's (`main` feeds this the run's own `args.yaml`).
 
     `name` is a parameter because the per-distance passes are separate runs of it: they share
     one `project` directory, and without distinct names the last pass would overwrite the
@@ -636,7 +749,7 @@ def validation_kwargs(data_yaml: Path, split: str, project: Path, name: str) -> 
     return {
         "data": str(data_yaml),
         "split": split,
-        "imgsz": IMGSZ,
+        "imgsz": imgsz,
         "project": str(project),
         "name": name,
         # Re-runs reuse the directory. The plots are a reading aid; piling up `-val2`,
@@ -764,6 +877,7 @@ def validate(
     project: Path,
     name: str,
     yolo=None,
+    imgsz: int = IMGSZ,
 ):
     """Load `weights` and validate the split; returns ultralytics' metrics object.
 
@@ -772,7 +886,9 @@ def validate(
     """
     if yolo is None:
         yolo = ultralytics_yolo()
-    return yolo(str(weights)).val(**validation_kwargs(data_yaml, split, project, name))
+    return yolo(str(weights)).val(
+        **validation_kwargs(data_yaml, split, project, name, imgsz=imgsz)
+    )
 
 
 def weights_sha256(weights: Path) -> str:
@@ -884,37 +1000,93 @@ def write_val_metrics(path: Path, block: dict) -> None:
 # ---------------------------------------------------------------------------
 
 
-def distance_map(manifest: Path | None) -> dict[str, str]:
-    """`{export filename: distance}` from the dataset workspace's manifest.
+def recorded_distances(pairs) -> dict[str, str]:
+    """`{filename: distance}` from `(name, distance)` pairs, keeping only what the plan follows.
+
+    One rule for both places a run's distances can come from - a built set's own report and the
+    staged manifest - because two readers that disagree about what counts as a distance is how the
+    same frame ends up in two columns of one grid. A name nothing can use, or a distance outside
+    `DISTANCE_ORDER`, is dropped rather than carried: an unknown one would make `images_by_distance`
+    key on a column no pass is ever run for.
+    """
+    out: dict[str, str] = {}
+    for name, distance in pairs:
+        if isinstance(name, str) and name and distance in DISTANCE_ORDER:
+            out[name] = distance
+    return out
+
+
+def distances_in(body: object) -> dict[str, str]:
+    """`{filename: distance}` from either shape a record of them can take, else `{}`.
+
+    The *shape* is the only thing that ever differed between the two files that carry this fact:
+    a staged manifest is a list of entries whose `new_name` and `distance` are the pair, while a
+    built set's own `merge_report.json` already holds the mapping under `distances`. Both routes
+    end in `recorded_distances`, the one rule for what counts as a distance - a second reader that
+    validated differently is how the same frame ends up in two columns of one grid.
+
+    `{}` for anything else, including a body that is neither shape: this reads files written by
+    another program, and the caller's contract is a lost breakdown rather than an exception.
+    """
+    if isinstance(body, list):
+        return recorded_distances(
+            (entry.get("new_name"), entry.get("distance"))
+            for entry in body
+            if isinstance(entry, dict)
+        )
+    pairs = body.get("distances") if isinstance(body, dict) else None
+    if isinstance(pairs, dict):
+        return recorded_distances(pairs.items())
+    return {}
+
+
+def distance_map(path: Path | None) -> dict[str, str]:
+    """`{export filename: distance}` from any file that records them, else `{}`.
 
     The join happens on filenames because a **YOLO export carries no tags**: the distance is a
-    Roboflow tag, and a version export is images, labels and a yaml. The manifest the dataset
-    tooling writes is the only place on this machine where a filename is still joined to both
-    its class and its distance, so it is what this reads.
+    Roboflow tag, and a version export is images, labels and a yaml. Two files hold the joined
+    pair, and this reads both - the manifest the dataset tooling wrote, and the built set's own
+    `merge_report.json`, which `dataset_distances` prefers because the set is the artifact under
+    test: the staged directory it was built from can be moved, cleaned or on another machine
+    entirely by the time the grid runs.
 
     `None` means *this generation declares no distance axis* (`generations.Generation.manifest`),
     which is why it is not defaulted to a path here: v1 predates the tagging, so "no manifest"
     would be a lie about a file, and the caller gives that case its own sentence. Never raises,
-    and answers `{}` for a missing or unreadable file too: a run that cannot find distances
-    should lose the breakdown, not the validation.
+    and answers `{}` for a missing, unreadable or unrecognised file too: a run that cannot find
+    distances should lose the breakdown, not the validation.
     """
-    if manifest is None:
+    if path is None:
         return {}
     try:
-        body = json.loads(Path(manifest).read_text(encoding="utf-8"))
+        body = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
-    if not isinstance(body, list):
-        return {}
-    out: dict[str, str] = {}
-    for entry in body:
-        if not isinstance(entry, dict):
-            continue
-        name = entry.get("new_name")
-        distance = entry.get("distance")
-        if isinstance(name, str) and name and distance in DISTANCE_ORDER:
-            out[name] = str(distance)
-    return out
+    return distances_in(body)
+
+
+def dataset_distances(
+    dataset: Path | None, manifest: Path | None, explicit: bool = False
+) -> tuple[dict[str, str], str]:
+    """`({filename: distance}, where they came from)` for a run's per-distance passes.
+
+    The order is the point. A built set carries its own distances, and it is what `--val` measures:
+    preferring them means the grid runs wherever the set is, which is the difference between a
+    breakdown that exists and one that dies with a `cleaned-v2/` directory nobody kept. The staged
+    manifest is the fallback - an older build, or a run over a directory that is not a built set -
+    and `--manifest` named by hand answers first, because naming a file is a decision rather than a
+    default. An empty answer with an empty sentence is the third state: nothing recorded distances,
+    which the caller reports as a skipped breakdown instead of a clean one.
+    """
+    from_manifest = distance_map(manifest)
+    if explicit and from_manifest:
+        return from_manifest, f"from the manifest {manifest}"
+    report = dataset / MERGE_REPORT_NAME if dataset is not None else None
+    if found := distance_map(report):
+        return found, "from the set's own merge_report.json"
+    if from_manifest:
+        return from_manifest, f"from the manifest {manifest}"
+    return {}, ""
 
 
 def images_by_distance(
@@ -998,8 +1170,8 @@ def distance_breakdown(
     by_distance, unknown = images_by_distance(images_dir, distances)
     if not any(by_distance.values()):
         return [], [
-            f"no distances for the {split} split: {len(unknown)} image(s) and none matched"
-            " the manifest - the breakdown is skipped, not reported as clean"
+            f"no distances for the {split} split: {len(unknown)} image(s) and none carried a"
+            " recorded distance - the breakdown is skipped, not reported as clean"
         ]
 
     base = out_dir or (project / DISTANCE_DIR_NAME)
@@ -1125,6 +1297,9 @@ class Hyper:
     base_model: str = BASE_MODEL
     # "auto" resolves through `resources.resolve_device` - CUDA when it is real, else CPU.
     device: str = "auto"
+    # Augmentation, as the two flags that have one (`AUGMENTATION` carries the rest).
+    degrees: float = DEGREES
+    scale: float = SCALE
     # Dataloader processes. Left at 0, `derive_workers` answers from the CPU budget.
     workers: int = 0
 
@@ -1142,6 +1317,19 @@ def derive_workers(cpu_threads: int) -> int:
     return max(1, min(2, cpu_threads))
 
 
+def augmentation_kwargs(hyper: Hyper | None = None) -> dict[str, float]:
+    """4's table as ultralytics' hyperparameters, with this run's rotation and scale.
+
+    One function so the printed command, the call ultralytics gets and the record written beside
+    the weights are three readings of one dict - a run whose record disagreed with what trained
+    would be worse than no record, because it would be believed.
+    """
+    values = dict(AUGMENTATION)
+    values["degrees"] = DEGREES if hyper is None else hyper.degrees
+    values["scale"] = SCALE if hyper is None else hyper.scale
+    return {key: values[key] for key in AUGMENTATION_KEYS}
+
+
 def train_kwargs(
     data_yaml: Path, project: Path, run_name: str, hyper: Hyper, device: str
 ) -> dict:
@@ -1157,6 +1345,7 @@ def train_kwargs(
         "name": run_name,
         "device": device,
         "workers": hyper.workers,
+        **augmentation_kwargs(hyper),
     }
 
 
@@ -1165,6 +1354,7 @@ def command_line(data_yaml: Path, project: Path, run_name: str, hyper: Hyper, de
     return (
         f"yolo detect train model={hyper.base_model} data={data_yaml} epochs={kw['epochs']} "
         f"imgsz={kw['imgsz']} batch={kw['batch']} patience={kw['patience']} "
+        f"degrees={kw['degrees']:g} scale={kw['scale']:g} "
         f"project={project} name={run_name} device={device} workers={kw['workers']}"
     )
 
@@ -1185,6 +1375,49 @@ def find_best(run: Path) -> Path | None:
         if candidate.is_file():
             return candidate
     return None
+
+
+def run_args(run: Path) -> dict:
+    """The training arguments ultralytics saved into the run (`args.yaml`), or `{}`.
+
+    Read for the facts a *flag* cannot answer: `--val` and `--install` are separate commands from
+    `--yes` in the documented sequence, so their `--imgsz`/`--degrees` are whatever the caller
+    typed this time (or the module defaults) rather than what the run that produced these weights
+    used. Pinning a validation pass, or a record, to the wrong size is not a wrong number on
+    screen - it is a number about a different configuration, believed because it is written down.
+
+    Ultralytics writes the run's own arguments beside its weights, which makes them a measurement
+    of the run instead of a claim about it. Missing, unreadable and half-written all give `{}`,
+    and the caller keeps its own values: a run predating this read is not an error.
+
+    `yaml.YAMLError` rather than `ValueError`, which is not what a malformed document raises here:
+    PyYAML's parser and scanner errors derive from `Exception` directly, so the JSON-shaped
+    `except ValueError` this repo uses elsewhere would let a half-written file take the command
+    down - at the one moment it is reading a file to avoid a wrong *number*.
+    """
+    try:
+        import yaml
+    except ImportError:  # pragma: no cover - yaml ships with ultralytics
+        return {}
+    try:
+        body = yaml.safe_load((run / "args.yaml").read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return {}
+    return body if isinstance(body, dict) else {}
+
+
+def trained_value(args: dict, key: str, fallback: float) -> float:
+    """`args[key]` when it is a real number, else `fallback`.
+
+    `bool` is excluded even though it is an `int`: `True` would arrive as `1.0` and a record
+    saying `degrees: 1.0` is a wrong number rather than a missing one. A string ("640", which is
+    how a hand-edited yaml arrives) is a fallback too, deliberately: coercing it would mean
+    guessing a unit, and the fallback is at least the value this command was built with.
+    """
+    value = args.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return float(fallback)
+    return float(value)
 
 
 def latest_run(project: Path, run_name: str, val: str = "") -> Path | None:
@@ -1233,6 +1466,8 @@ def weight_record(
     project: str = "",
     validation: list[dict] | None = None,
     class_names: list[str] | None = None,
+    imgsz: int = 0,
+    augmentation: dict[str, float] | None = None,
 ) -> dict:
     """What travels with the weights, as a dict. Written beside them by `install()`.
 
@@ -1254,8 +1489,8 @@ already-generated version was made with (the measurement is in `generations.py`)
     `class_names` is the export's own class list, in the order the model indexes them, and it
     is recorded for the same reason: a class list is a property of the *weights* and nothing
     else keeps it. The export that produced it is gone by the time anyone runs it, so a model
-    trained from a project whose class list was split by distance - `palmolive close` /
-    `palmolive mid` / `palmolive far` instead of one `palmolive` - has 24 outputs, loads without
+    trained from a project whose class list was split by distance - `safeguard close` /
+    `safeguard mid` / `safeguard far` instead of one `safeguard` - has 21 outputs, loads without
     complaint, and logs one product under three labels with nothing erroring anywhere. Written
     down, the *listing* can catch that before those weights ever run, instead of leaving it to
     someone pressing Test connection (`app/roster.class_list_problems` judges the names; the
@@ -1280,6 +1515,18 @@ already-generated version was made with (the measurement is in `generations.py`)
     No `model` field: the record's own filename is the model, and a copy of it named to
     something else would then disagree with the file it sits beside - which is how a
     field-by-field record turns into a second, wrong answer to "which weights are these?".
+
+    `imgsz` is the size the run trained at, recorded for the mirror image of the `resize_mode`
+    problem: `Settings.imgsz` decides what the app resizes every frame to before detection, and
+    nothing relates that field to the weights - so a model trained at 960 runs at 640 by default
+    and the `far` detections come back weaker with no explanation anywhere. `resize_mode` was the
+    first half of "the app feeds the model the wrong geometry"; this is the second.
+
+    `augmentation` is what trained, not what this command's flags said - `main` reads it out of the
+    run's own `args.yaml`. It is evidence rather than an input: nothing in the app branches on it,
+    and it exists so "which run produced these weights" has an answer that survives the terminal,
+    for the one augmentation whose absence was measurable (rotation) and for the three exclusions
+    the doc names.
     """
     record = {
         "generation": generation.name,
@@ -1291,6 +1538,10 @@ already-generated version was made with (the measurement is in `generations.py`)
     }
     if class_names:
         record["class_names"] = [str(name) for name in class_names]
+    if imgsz:
+        record["imgsz"] = int(imgsz)
+    if augmentation:
+        record["augmentation"] = {key: float(augmentation[key]) for key in AUGMENTATION_KEYS if key in augmentation}
     if validation:
         record["validation"] = [
             {k: v for k, v in block.items() if k != "weights_sha256"} for block in validation
@@ -1480,7 +1731,8 @@ def main(argv: list[str] | None = None, yolo=None) -> int:
         default="",
         help=(
             "the dataset manifest to read each image's distance from (a tag a YOLO export loses); "
-            "defaults to the generation's own, and a generation with no distance axis has none"
+            "naming one answers first, otherwise the set's own merge_report.json is read and this "
+            "defaults to the generation's - a generation with no distance axis has neither"
         ),
     )
     ap.add_argument("--install", action="store_true", help="install best.pt under the generation's name, with the record --val wrote")
@@ -1495,6 +1747,18 @@ def main(argv: list[str] | None = None, yolo=None) -> int:
         help="the ceiling: the VRAM share may lower it, never raise it",
     )
     ap.add_argument("--patience", type=int, default=PATIENCE)
+    ap.add_argument(
+        "--degrees",
+        type=float,
+        default=DEGREES,
+        help="rotation augmentation, +-degrees (MODEL_TRAINING.md 4: 15)",
+    )
+    ap.add_argument(
+        "--scale",
+        type=float,
+        default=SCALE,
+        help="scale-jitter augmentation, +-fraction of the image (4's table uses ultralytics' 0.5)",
+    )
     ap.add_argument("--base-model", default=BASE_MODEL)
     ap.add_argument("--device", default="auto", help="auto | cpu | 0 | 0,1 ...")
     ap.add_argument(
@@ -1510,6 +1774,9 @@ def main(argv: list[str] | None = None, yolo=None) -> int:
     ap.add_argument("--json", action="store_true", help="emit the summary as JSON and exit")
     args = ap.parse_args(argv)
 
+    # Named once: it decides whether this command *acts* on the dataset (train, validate) or only
+    # describes what it would do, and the doctor gate below belongs on the first of those.
+    will_run = args.yes or args.val
 
     generation = generations.get(args.generation)
     if args.classes:
@@ -1574,10 +1841,59 @@ def main(argv: list[str] | None = None, yolo=None) -> int:
             print("classes and regenerate the version (MODEL_TRAINING.md 8.1).")
         return 2
 
+    if will_run:
+        # The human pass first: it is the cheapest question here and the one whose failure is most
+        # expensive to discover late - a box a weight drew and nobody read, in `valid` or `test`,
+        # makes the run's own numbers a measurement of the annotator, and finding that out after the
+        # GPU run costs the run. Printed rather than silent on the way *past* it too, because "the
+        # gate was asked and answered clean" is a fact about the set worth seeing once per run.
+        ok, gate_lines = pass_gate(export_dir)
+        summary["pass_gate"] = {"ok": ok, "lines": gate_lines}
+        print()
+        for line in gate_lines:
+            print(f"  {line}")
+        if not ok:
+            print()
+            print("Nothing was trained: the human pass is not finished for this set.")
+            print(
+                "  `make human-pass HUMAN_PASS_ARGS=--status` prints what is left in one line; work"
+                " it in the annotator, then rebuild the set with build_dataset.py - the counts in"
+                " the report are the ones from build time, so a finished pass still needs the"
+                " rebuild before this gate clears."
+            )
+            if args.json:
+                print(json.dumps(summary, indent=1))
+            return 2
+
+        # The doctor, before anything is trained or measured, because the failures it looks for are
+        # the ones that train happily and measure the wrong thing: a class list in the wrong order,
+        # a label row nothing can read, a frame drawn under a class other than the one it was
+        # staged as, a test frame that duplicates a train one. Gate rather than
+        # advice, so a run cannot be measured on a set nobody checked - `make doctor` is the same
+        # check on its own, and `accept_v2.py` refuses on the same verdict before it measures.
+        #
+        # Imported here, not at module scope: `dataset_doctor` imports *this* module (and
+        # `build_dataset`), so a module-level import would be a cycle - and this file is imported by
+        # tests and by `accept_v2` that must not pay for the doctor's dataset reads.
+        import dataset_doctor
+
+        print()
+        report = dataset_doctor.check_and_report(export_dir, generation, exports=(splits, problems))
+        summary["doctor"] = report
+        if report["errors"]:
+            print()
+            print("Nothing was trained: the set has to pass the doctor first.")
+            print(
+                "  `make doctor` runs that check on its own; a merged set is rebuilt with"
+                " build_dataset.py, which is also what drops duplicate test frames."
+            )
+            if args.json:
+                print(json.dumps(summary, indent=1))
+            return 2
+
     data_yaml = write_data_yaml(export_dir, splits)
     run = resolve_run(run_project, generation, args.run_dir, training=args.yes)
 
-    will_run = args.yes or args.val
     # Ultralytics is imported here, not at module level, so this file can be imported and tested
     # without torch - the same shape as app/hardware.py's lazy torch import and app/models.py's
     # "one directory read, no torch".
@@ -1619,6 +1935,8 @@ def main(argv: list[str] | None = None, yolo=None) -> int:
         base_model=args.base_model,
         device=device,
         workers=args.workers or derive_workers(budget.cpu_threads),
+        degrees=args.degrees,
+        scale=args.scale,
     )
 
     print()
@@ -1626,6 +1944,11 @@ def main(argv: list[str] | None = None, yolo=None) -> int:
     print()
     print("this run:")
     print(f"  {command_line(data_yaml, run_project, generation.run_name, hyper, device)}")
+    print(
+        "  augmentation: "
+        + ", ".join(f"{key}={value:g}" for key, value in augmentation_kwargs(hyper).items())
+        + "   (MODEL_TRAINING.md 4)"
+    )
     if will_run:
         print()
         print(budget.describe())
@@ -1639,6 +1962,19 @@ def main(argv: list[str] | None = None, yolo=None) -> int:
         "base_model": hyper.base_model,
         "device": device,
         "workers": hyper.workers,
+        **augmentation_kwargs(hyper),
+    }
+
+    # What the *run* trained with, where there is a run to ask. `--val` and `--install` are
+    # separate commands in the documented sequence, so this command's own `--imgsz`/`--degrees`
+    # are a fallback rather than a fact - and the difference only shows up as a number nobody
+    # can account for (measured at a size the run never used, or a record claiming an
+    # augmentation that was not applied). Ultralytics' `args.yaml` is the fact.
+    trained = run_args(run)
+    trained_imgsz = int(trained_value(trained, "imgsz", hyper.imgsz))
+    augmentation = {
+        key: trained_value(trained, key, augmentation_kwargs(hyper)[key])
+        for key in AUGMENTATION_KEYS
     }
 
     if not (args.yes or args.install or args.val):
@@ -1696,7 +2032,13 @@ def main(argv: list[str] | None = None, yolo=None) -> int:
     if args.val:
         print()
         print(f"validating {best} on the {args.split} split (floor {RECALL_FLOOR:.2f})")
-        metrics = validate(best, data_yaml, args.split, run_project, vname, yolo=yolo)
+        if trained_imgsz != hyper.imgsz:
+            # Named rather than silent: the run trained at one size and this command was built
+            # for another (`--imgsz`), and the pass follows the run.
+            print(f"  note: measured at {trained_imgsz}, the size this run trained at")
+        metrics = validate(
+            best, data_yaml, args.split, run_project, vname, yolo=yolo, imgsz=trained_imgsz
+        )
         rows = per_class_recall(metrics)
         passed, failed, unmeasured, values = recall_report(rows)
         aggregates = aggregate_metrics(metrics)
@@ -1710,9 +2052,8 @@ def main(argv: list[str] | None = None, yolo=None) -> int:
         # describe an older image set - the kind of mixture no reader could detect.
         per_distance: list[dict] = []
         distance_notes: list[str] = []
-        # `None` is the generation saying it has no distance axis - v1 predates the tags - which is
-        # not the same statement as a manifest that went missing, and gets its own sentence. A
-        # section that silently vanishes reads as "every distance passed".
+        # `None` means this generation has no distance axis - v1 predates the tags - which is not
+        # the same statement as a manifest that went missing. The printout below says which.
         manifest = Path(args.manifest).expanduser() if args.manifest else generation.manifest
         if manifest is None:
             print()
@@ -1720,15 +2061,20 @@ def main(argv: list[str] | None = None, yolo=None) -> int:
             print("        tags - so there is no per-distance breakdown to run. The per-class table")
             print("        above is the whole readout for this generation.")
         elif not args.no_per_distance:
+            distances, distance_source = dataset_distances(
+                export_dir, manifest, explicit=bool(args.manifest)
+            )
             print()
             print(f"splitting the {args.split} split by distance for three more passes")
+            if distance_source:
+                print(f"  distances: {len(distances)} frame(s) {distance_source}")
             per_distance, distance_notes = distance_breakdown(
                 best,
                 export_dir,
                 splits,
                 args.split,
                 run_project,
-                distance_map(manifest),
+                distances,
                 yolo=yolo,
                 out_dir=best.parent.parent / DISTANCE_DIR_NAME,
                 val=vname,
@@ -1812,6 +2158,8 @@ def main(argv: list[str] | None = None, yolo=None) -> int:
             project,
             validation=validation,
             class_names=read_export_names(export_dir),
+            imgsz=trained_imgsz,
+            augmentation=augmentation,
         )
         target = install(
             best, models_dir, name=generation.weight_name, force=args.force, record=record
