@@ -71,6 +71,45 @@ class Settings:
     # the hard negatives in it, at which point the phantoms stop and only that risk remains.
     # Hot-reloadable, so it can be turned off while watching the item log.
     suppress_clamped_detections: bool = True
+    # Drop a detection pinned to exactly three frame edges - the shape the all-four-edges rule
+    # leaves behind. A measured defect of the same weights, not a precaution: with nothing placed in
+    # front of the camera, 20 of 20 live frames returned one box covering ~96% of the image as Bear
+    # Brand at 0.90-0.94, pinned to the top, right and bottom edges and stopping ~5% short of the
+    # left - five times the tolerance the clamp rule above tests at.
+    #
+    # On by default, and the price is measured rather than left as a side effect. It costs real
+    # detections, because the two populations overlap: over the whole v1 export it also drops 252 of
+    # 2018 ground-truth-matched detections (~12%), and the closest of those to a phantom is a real
+    # `lucky_me_pancit_canton_calamansi_flavor` pouch at area 0.972 with three edges inside 1%,
+    # confidence 0.966, held right up to the lens - which is how this project's own capture
+    # protocol shoots a product. The cost is paid knowingly, in
+    # exchange for the defect: the phantom is what a fresh install shows the operator on an empty
+    # counter, item-log row and all, and a lever nobody flips is not a fix. The rule that removes it
+    # for good is the model's - train the staged hard negatives in, which is what v2 exists for -
+    # and this is the one that works until then, so it ships on.
+    #
+    # Hot-reloadable, so it can be turned off the moment an item held close stops registering -
+    # which is the failure mode to expect, and why the Live view's suppressed count is visible
+    # while it happens.
+    suppress_frame_filling_detections: bool = True
+    # Drop a frame-spanning box, or a wide band along a top/bottom edge, that the model is not
+    # confident about (`acceptance.is_unsure_phantom`, `PHANTOM_CONF_CEILING` 0.85). The two shape
+    # rules above are expressed in pinned frame edges, and the model has two more ways to say
+    # "something is here" on an empty counter that pin only one or two: a bottom band at 0.50-0.79
+    # (measured live: 862 detections over 1500 frames, and 10 item-log rows in 25 seconds) and, under
+    # the geometry v1's record requires, a frame-spanning box at 0.50-0.83 (1024 over 1500 frames).
+    # Neither is reachable by shape alone, because both shapes are also real products when the model
+    # is sure of them.
+    #
+    # On by default, and the price is measured: over the whole v1 export (2018 ground-truth-matched
+    # detections) it drops 6, or 0.30%, and every one of those is a large box at 0.719-0.839 - the
+    # rule's whole statement is that a big box the model is unsure about is not an item. That is
+    # cheaper than either shape rule above, 36 (1.8%) and 252 (12%) of the same 2018 matched, and it
+    # is what makes an empty counter actually log nothing.
+    #
+    # Hot-reloadable, for the same reason as the others: the failure mode is an item the operator
+    # can see and the model is unsure of, and the escape hatch has to work while capture runs.
+    suppress_unsure_phantoms: bool = True
     # Class names to KEEP (post-inference); empty list = keep everything.
     # Narrows detection to checkout-relevant classes; hot-reloadable.
     class_allowlist: list[str] = field(default_factory=list)

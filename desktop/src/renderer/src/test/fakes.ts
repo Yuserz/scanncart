@@ -186,6 +186,10 @@ export function baseSettings(overrides: Partial<SettingsResponse> = {}): Setting
     preview_max_fps: 30,
     preview_mirror: true,
     suppress_clamped_detections: true,
+    // On, like the sidecar's default: the phantom it targets is what an empty counter otherwise
+    // shows, and that default is what the panel tests read.
+    suppress_frame_filling_detections: true,
+    suppress_unsure_phantoms: true,
     track_expiry_s: 1.5,
     class_allowlist: [],
     detector_backend: 'ultralytics',

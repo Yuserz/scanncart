@@ -4,6 +4,15 @@ import time
 from typing import Callable
 import cv2
 import numpy as np
+# The accept/reject decision has one owner (`app/acceptance.py`). The rule names stay importable
+# from here because `tools/clamp_probe.py` and this module's own tests read them from it, and a
+# second definition of the rule is the drift that move removed.
+from app.acceptance import (  # noqa: F401  (re-exported for tools/clamp_probe.py and the tests)
+    CLAMPED_EDGE_TOLERANCE,
+    accept_detections,
+    drop_clamped_detections,
+    is_clamped_to_frame,
+)
 from app.schemas import Detection, Stats, FrameMessage
 
 
@@ -70,74 +79,6 @@ def render_preview(
         encode_preview_jpeg(render_frame(frame), target_height),
         mirrored_detections(detections),
     )
-
-
-#: How close to a frame edge, as a fraction of width/height, a box must sit on **all four** sides
-#: before it counts as a prediction the model wanted larger than the image.
-#:
-#: Chosen from measurement, not taste. Across the 25 detections the 50 empty-counter negatives
-#: produced and the 60 detections from labelled product frames - both at `conf_threshold` 0.5, and
-#: both re-runnable with `tools/clamp_probe.py --generation v1 --conf 0.5`, which re-checks the
-#: end-to-end behaviour too - the distance from the nearest edge on a box's *worst* side separated
-#: the two populations at this value:
-#:
-#:     worst edge      phantoms caught     real lost     training labels rejected
-#:     <= 0.002            19/25             0/60             0.82%
-#:     <= 0.010            19/25             0/60             1.43%
-#:     <= 0.020            23/25             1/60             1.70%
-#:
-#: 0.01 is the loosest value that loses **no** real detection: the tightest real one sits at
-#: 0.0109, so 0.02 would buy four more phantoms by dropping a real item. The six phantoms this
-#: still misses lie between 0.0124 and 0.0286 — *inside* the band real detections occupy — which is
-#: why the rule stops here rather than chasing them: past this point it stops being a phantom filter
-#: and starts being a frame-filling-object filter.
-#:
-#: The 1.43% is the honest cost. It is the share of v1's own training labels that touch all four
-#: edges, so an item that genuinely fills the frame edge-to-edge is the case this can mistake for a
-#: phantom — which is why the suppression is a setting with an off switch rather than a rule baked
-#: into the detector.
-#:
-#: Those counts move with `conf_threshold` and are quoted at its 0.5 default: a phantom is a
-#: *low-confidence* detection, so the same weights over the same 50 frames produce 25 of them at 0.5
-#: and 15 at 0.7. The rule holds at both - no real detection is inside it at either - but a number
-#: quoted without the threshold it was measured at is not reproducible, which is why the tool above
-#: prints the operating point and flags it when the running profile differs from the default.
-CLAMPED_EDGE_TOLERANCE = 0.01
-
-
-def is_clamped_to_frame(box, tolerance: float = CLAMPED_EDGE_TOLERANCE) -> bool:
-    """Whether a box is pinned to *all four* frame edges: a prediction larger than the image.
-
-    All four, not one or two. A real close-up overflows the frame on the sides the object leaves
-    through, so touching a single edge means nothing — v1's own labels show that, with 63% of Bear
-    Brand's training instances touching one. Touching *every* side is the shape a box takes when
-    the model wanted something bigger than the canvas and `normalize_detections` trimmed it, and
-    that is the signature the empty-counter false positive has: `x1 0.0000`, `y1 0.0001`,
-    `x2 0.9995`, `y2` exactly `1.0000`, held across 16 consecutive frames.
-
-    Pure and total, so the rule can be tested against synthetic boxes rather than a camera.
-    """
-    x1, y1, x2, y2 = box
-    return (
-        x1 <= tolerance
-        and y1 <= tolerance
-        and x2 >= 1.0 - tolerance
-        and y2 >= 1.0 - tolerance
-    )
-
-
-def drop_clamped_detections(
-    detections: list[Detection], tolerance: float = CLAMPED_EDGE_TOLERANCE
-) -> tuple[list[Detection], int]:
-    """The detections that are not frame-clamped, and how many were removed.
-
-    Returns the count as well as the list because a suppression nobody can see is the failure this
-    exists to avoid: the phantom is dropped from the overlay, the item log and the database, and
-    without a number travelling with it there is no evidence the rule did anything at all — the
-    operator simply sees a model that appears not to have this defect.
-    """
-    kept = [d for d in detections if not is_clamped_to_frame(d.box, tolerance)]
-    return kept, len(detections) - len(kept)
 
 
 def encode_preview_jpeg(frame: np.ndarray, target_height: int) -> str:
@@ -225,21 +166,24 @@ class Pipeline:
         t0 = time.time()
         detections = self._detector.infer(frame)
         self._report_class_list()
-        # Class allowlist (hot-reloaded): drop classes not on the list before
-        # tracking/logging/streaming, so overlay, item log, and DB all agree.
-        allow = self._settings.class_allowlist
-        if allow:
-            allowed = set(allow)
-            detections = [d for d in detections if d.cls in allowed]
-        # The frame-clamp filter, deliberately here rather than in the detector. `normalize_detections`
-        # is where the clamp *happens*, so that is the tempting place to undo it — but the detector is
-        # also what `tools/audit_recall.py` and `tools/spec_check.py` measure through, and a filter
-        # inside it would delete the very evidence those tools exist to count. This suppression is an
-        # app-level decision about what to *show and log*, so it sits with the other one
-        # (`class_allowlist`) and leaves the model's raw output intact for anything that asks.
-        suppressed = 0
-        if self._settings.suppress_clamped_detections:
-            detections, suppressed = drop_clamped_detections(detections)
+        # One owner for the accept/reject decision (`app/acceptance.py`), asked once, so the overlay,
+        # the item log and the store cannot disagree about what survived: the accepted list is the
+        # only thing that travels past this line, and everything declined is absent from all three
+        # rather than counted beside them. Deliberately here rather than in the detector -
+        # `normalize_detections` is where the clamp *happens*, so that is the tempting place to undo
+        # it, but the detector is also what `tools/audit_recall.py` and `tools/spec_check.py` measure
+        # through and a filter inside it would delete the very evidence those tools exist to count.
+        # This is an app-level decision about what to *show and log*, and it leaves the model's raw
+        # output intact for anything that asks.
+        decision = accept_detections(
+            detections,
+            class_allowlist=self._settings.class_allowlist,
+            suppress_clamped=self._settings.suppress_clamped_detections,
+            suppress_frame_filling=self._settings.suppress_frame_filling_detections,
+            suppress_unsure=self._settings.suppress_unsure_phantoms,
+        )
+        detections = decision.accepted
+        suppressed = decision.suppressed
         t1 = time.time()
 
         if self._last_infer_ts is not None:

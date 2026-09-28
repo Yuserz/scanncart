@@ -9,8 +9,8 @@
 ## from within WSL or a Git Bash shell that has `make` on PATH.
 ##
 ## `test` is CI's target and stays fake-only, so it needs no data. `verify-clamp`,
-## `annotate`, `human-pass`, `doctor` and `accept-v2` are the ones that do - see the
-## notes above them.
+## `verify-unsure`, `annotate`, `human-pass`, `doctor` and `accept-v2` are the ones that
+## do - see the notes above them.
 ##
 
 SIDECAR_DIR := sidecar
@@ -25,7 +25,7 @@ endif
 .DEFAULT_GOAL := help
 
 .PHONY: help install dev test docs-check docs-sync docs-sync-check build lint format typecheck clean \
-        verify-clamp doctor annotate human-pass accept-v2 \
+        verify-clamp verify-unsure doctor annotate human-pass accept-v2 \
         sidecar-setup sidecar-run sidecar-test \
         desktop-install desktop-dev desktop-start desktop-test desktop-test-watch \
         desktop-build desktop-build-win desktop-build-mac desktop-build-linux \
@@ -41,6 +41,7 @@ help:
 	@echo "  docs-sync            rewrite the numbers the docs state from the code that owns them"
 	@echo "  docs-sync-check      report doc numbers that no longer match the code (exit 1)"
 	@echo "  verify-clamp         re-check the frame-clamp claims (local data, not CI)"
+	@echo "  verify-unsure        re-measure the unsure-phantom rule's cost and coverage (local data, not CI)"
 	@echo "  annotate             label a staged session locally in the browser (local data, not CI)"
 	@echo "  human-pass           render the human pass's checklist from the annotator's store (local data, not CI)"
 	@echo "                       HUMAN_PASS_ARGS=--check verifies it, =--status exits nonzero while the gate is dirty"
@@ -135,6 +136,35 @@ CLAMP_CONF ?= 0.5
 verify-clamp:
 	cd $(SIDECAR_DIR) && $(SIDECAR_VENV_PY) tools/clamp_probe.py \
 		--generation $(CLAMP_GEN) --conf $(CLAMP_CONF) --strict
+
+# The unsure-phantom rule's own numbers, and the third rule in `app/acceptance.py` is the one that
+# made an empty counter log nothing - so it gets the same treatment `verify-clamp` gives the clamp
+# rule: one command that re-derives its cost against the labelled export under `audit_recall`'s
+# one-to-one matcher, its catch on the stored negatives, and its price on the 60-frame real product
+# control. `UNSURE_SECONDS` is the live empty-counter window through the app's own capture class,
+# which is the only source for the edge band. What that window produced is printed beside the
+# verdict either way, and the two contracts are separate: the default run fails the moment a
+# shaped detection the rule was built for escapes inside it, and passes on a quiet counter, because
+# a scene nothing is on is the rule working rather than the rule untested. The band family is the
+# one population a scene can fail to offer at all, so a run that has to *prove* it was exercised -
+# a release check, or a scene someone has just lit - passes `UNSURE_REQUIRE_BAND=1`.
+# Same data needs as `verify-clamp` (an installed weight and the staged negatives), plus a camera -
+# which is why it is out of `test` and out of CI.
+UNSURE_GEN ?= $(CLAMP_GEN)
+UNSURE_CONF ?= $(CLAMP_CONF)
+UNSURE_SECONDS ?= 30
+UNSURE_REQUIRE_BAND ?= 0
+
+ifeq ($(UNSURE_REQUIRE_BAND),1)
+  UNSURE_BAND_FLAG := --require-live-band
+else
+  UNSURE_BAND_FLAG :=
+endif
+
+verify-unsure:
+	cd $(SIDECAR_DIR) && $(SIDECAR_VENV_PY) tools/unsure_probe.py \
+		--generation $(UNSURE_GEN) --conf $(UNSURE_CONF) \
+		--live-seconds $(UNSURE_SECONDS) $(UNSURE_BAND_FLAG) --strict
 
 # The local labeler (`sidecar/annotate/`): a browser app over a staged set, writing into the
 # workspace's `annotations-v2/`. Its own `--out` default is `workspace.DEFAULT_OUT` (so

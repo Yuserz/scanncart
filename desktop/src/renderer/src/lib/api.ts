@@ -46,6 +46,15 @@ export interface SettingsPayload {
   // Mirrors sidecar/app/settings.py::suppress_clamped_detections. Drops detections pinned to all
   // four frame edges - the empty-counter false positive. Hot-reloadable.
   suppress_clamped_detections: boolean
+  // Mirrors sidecar/app/settings.py::suppress_frame_filling_detections. Drops detections pinned to
+  // exactly three frame edges - the shape the four-edge rule misses, and the one a live capture
+  // produced on every frame. On by default, like the rule above; it also drops real items held up
+  // to the lens, which is the measured price of that default. Hot-reloadable.
+  suppress_frame_filling_detections: boolean
+  // Mirrors sidecar/app/settings.py::suppress_unsure_phantoms. Drops a frame-spanning box, or a
+  // wide band along a top/bottom edge, that the model is not confident about - the two families the
+  // pinned-edge rules above cannot reach. On by default; hot-reloadable.
+  suppress_unsure_phantoms: boolean
   track_expiry_s: number
   class_allowlist: string[]
   detector_backend: string

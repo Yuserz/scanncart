@@ -174,7 +174,7 @@ for `curl` checks and the GPU/Roboflow extras.
 | `make lint` / `make format` / `make typecheck` | the desktop toolchain |
 | `make sidecar-run` / `make sidecar-test` | the sidecar alone |
 | `make docs-check` / `make docs-sync` / `make docs-sync-check` | documentation links and code-owned numbers |
-| `make doctor`, `make accept-v2`, `make verify-clamp`, `make annotate`, `make human-pass` | dataset/training gates that need local data the repo does not carry |
+| `make doctor`, `make accept-v2`, `make verify-clamp`, `make verify-unsure`, `make annotate`, `make human-pass` | dataset/training gates that need local data the repo does not carry |
 
 ## For agents
 

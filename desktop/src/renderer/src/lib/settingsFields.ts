@@ -195,6 +195,18 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
     type: 'boolean'
   },
   {
+    key: 'suppress_frame_filling_detections',
+    label: 'Drop whole-frame phantoms (three edges)',
+    hint: 'Ignores detections pinned to exactly three frame edges - the shape the four-edge rule above leaves behind, and the one a live capture returned as Bear Brand at 0.92 on 20 of 20 empty frames. On by default, because that phantom is what an empty counter otherwise shows you. It is not free: measured over the whole v1 export it also drops 252 of 2018 boxes that match their label (about 12%), and those are items held right up to the lens. Turn it off if a close-up item stops registering.',
+    type: 'boolean'
+  },
+  {
+    key: 'suppress_unsure_phantoms',
+    label: 'Drop big unsure boxes (the model is guessing)',
+    hint: 'Ignores a detection that covers most of the frame, or lies as a wide band along the top or bottom edge, when the model is under 85% confident about it — the two shapes it invents on an empty counter and the two the edge rules above miss. On by default and cheap: measured over the whole labelled dataset it costs 6 of 2018 real detections (0.30%), all of them large boxes the model was unsure of. Turn it off if an item you can see stops registering while the model reports it at low confidence; small low-confidence boxes are never touched by it.',
+    type: 'boolean'
+  },
+  {
     key: 'imgsz',
     label: 'Inference size (px)',
     hint: 'Size each frame is scaled to before detection (square, multiple of 32). Bigger sees small and fast-moving items better — the key lever for catching thrown objects — but raises latency. 640 is the default; 960 is a good accuracy step on a discrete GPU.',
@@ -402,7 +414,12 @@ export const SETTINGS_GROUPS: FieldGroup[] = [
   {
     label: 'Detection',
     home: 'live',
-    keys: ['conf_threshold', 'suppress_clamped_detections']
+    keys: [
+      'conf_threshold',
+      'suppress_clamped_detections',
+      'suppress_frame_filling_detections',
+      'suppress_unsure_phantoms'
+    ]
   },
   {
     label: 'Stream',

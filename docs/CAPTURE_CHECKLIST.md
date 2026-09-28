@@ -328,6 +328,29 @@ the app's own `Pipeline.process_once` with the filter off and on, so the table a
 figures come from one visit to each frame rather than two. It prints the five claims it stands
 behind and exits non-zero on `--strict` if any of them stops holding.
 
+The third rule in that pipeline — `suppress_unsure_phantoms`, which catches the shapes the pinned-
+edge rules cannot see — has its own gate over the same populations:
+
+```bash
+make verify-unsure
+```
+
+`tools/unsure_probe.py` prices its confidence ceiling against the **whole** export under
+`audit_recall`'s one-to-one matcher, its catch on these 50 stored negatives, and its price on the
+60-frame real product control, then opens a live empty-counter window for the edge band — the one
+family with no stored frames behind it.
+
+That window has two contracts. The run fails the moment a shaped detection under the ceiling escapes
+into what the pipeline kept, whatever the scene holds. It does *not* fail because the counter offered
+nothing — frames seen, detections, and the window's mean luminance are printed beside the verdict
+instead, so a quiet counter and a covered lens read differently. Shoot it on a **lit** counter, and
+for a run that has to prove the band family was exercised rather than merely not contradicted, insist
+on it:
+
+```bash
+make verify-unsure UNSURE_REQUIRE_BAND=1
+```
+
 **`--conf 0.5` is not decoration — it is what makes the table above reproducible.** A phantom is a
 *low-confidence* detection, so every counted population moves with `conf_threshold`: the same
 weights over the same 50 frames produce **25** clamped detections at `conf 0.5` and **15** at the

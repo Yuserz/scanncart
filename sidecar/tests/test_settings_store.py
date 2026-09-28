@@ -527,6 +527,66 @@ def test_save_then_load_round_trips_suppress_clamped_detections(tmp_path):
     assert load_settings(str(path)).suppress_clamped_detections is False
 
 
+def test_valid_field_suppress_frame_filling_detections():
+    assert _valid_field("suppress_frame_filling_detections", True)
+    assert _valid_field("suppress_frame_filling_detections", False)
+    assert not _valid_field("suppress_frame_filling_detections", 1)
+    assert not _valid_field("suppress_frame_filling_detections", "true")
+    assert not _valid_field("suppress_frame_filling_detections", None)
+
+
+def test_suppress_frame_filling_detections_is_hot_reloadable():
+    """Read per inference, like its sibling: the escape hatch has to work mid-capture.
+
+    That is not a convenience here. The rule is on by default and costs real detections, so the
+    only thing that makes the default defensible is that an operator who sees an item held close
+    stop registering can turn it off and watch the next frame - not stop and start the capture.
+    """
+    assert "suppress_frame_filling_detections" in HOT_RELOADABLE_FIELDS
+    assert "suppress_frame_filling_detections" not in RESTART_REQUIRED_FIELDS
+
+
+def test_save_then_load_round_trips_suppress_frame_filling_detections(tmp_path):
+    """An operator who turns the default off keeps it off across a restart."""
+    path = tmp_path / "settings.json"
+    save_settings(Settings(suppress_frame_filling_detections=False), str(path))
+    assert load_settings(str(path)).suppress_frame_filling_detections is False
+
+
+def test_a_settings_file_from_before_the_flip_loads_the_new_default(tmp_path):
+    """The upgrade path, which is the whole reason the flipped value lives in `Settings`.
+
+    Every install in the field already has a `settings.json`, and it cannot name a key that did not
+    exist when it was written. Those installs are the ones showing the phantom, so the default has
+    to be what they get - a migration that wrote the old value into the file would ship the fix to
+    precisely the new installs that never had the defect.
+    """
+    path = tmp_path / "settings.json"
+    path.write_text('{"conf_threshold": 0.5}', encoding="utf-8")
+    assert load_settings(str(path)).suppress_frame_filling_detections is True
+
+
+def test_valid_field_suppress_unsure_phantoms():
+    assert _valid_field("suppress_unsure_phantoms", True)
+    assert _valid_field("suppress_unsure_phantoms", False)
+    assert not _valid_field("suppress_unsure_phantoms", 1)
+    assert not _valid_field("suppress_unsure_phantoms", "true")
+    assert not _valid_field("suppress_unsure_phantoms", None)
+
+
+def test_suppress_unsure_phantoms_is_hot_reloadable():
+    """Read per inference, like its siblings - the rule reads confidence, so it is the one most
+    likely to need turning off while an operator watches an item the model is unsure of."""
+    assert "suppress_unsure_phantoms" in HOT_RELOADABLE_FIELDS
+    assert "suppress_unsure_phantoms" not in RESTART_REQUIRED_FIELDS
+
+
+def test_save_then_load_round_trips_suppress_unsure_phantoms(tmp_path):
+    path = tmp_path / "settings.json"
+    save_settings(Settings(suppress_unsure_phantoms=False), str(path))
+    assert load_settings(str(path)).suppress_unsure_phantoms is False
+
+
 def test_save_then_load_round_trips_class_allowlist(tmp_path):
     path = tmp_path / "settings.json"
     save_settings(Settings(class_allowlist=["bottle", "cup"]), str(path))

@@ -22,6 +22,14 @@ export const DEFAULT_SETTINGS: SettingsPayload = {
   preview_max_fps: 30,
   preview_mirror: true,
   suppress_clamped_detections: true,
+  // On, like the clamp rule above, and for the same measured reason: without it a fresh install
+  // logs Bear Brand on an empty counter. It costs real detections (measured 252 of the 2018 boxes
+  // that match their label across the whole v1 export, ~12%), which is the price of that default.
+  suppress_frame_filling_detections: true,
+  // On, and the cheapest of the three: it drops 6 of the export's 2018 matched detections (0.30%)
+  // where the two shape rules above cost 36 (1.8%) and 252 (~12%), and it is what stops an empty
+  // counter logging items.
+  suppress_unsure_phantoms: true,
   track_expiry_s: 1.5,
   class_allowlist: [],
   detector_backend: 'native',

@@ -42,12 +42,20 @@ rather than hiding behind a chosen value.
 inside `main()`, so the row the report marks is the rule that is running. A tool holding a second
 `0.01` would go on justifying a number nothing uses.
 
-**The two settings that would silently change the answer are forced.** `infer_frame_skip` is pinned
-to 0, because a profile with a skip set would have this visit every (skip+1)th frame and report the
-fraction of the frames it happened to look at. `class_allowlist` is emptied, because a profile
-narrowed to some classes would make the real population smaller than the frames it came from and
-turn a phantom of an excluded class into a non-observation. Both are stated here rather than
-inherited quietly: they are the difference between measuring the app and measuring a configuration.
+**The four settings that would silently change the answer are forced.** `infer_frame_skip` is
+pinned to 0, because a profile with a skip set would have this visit every (skip+1)th frame and
+report the fraction of the frames it happened to look at. `class_allowlist` is emptied, because a
+profile narrowed to some classes would make the real population smaller than the frames it came
+from and turn a phantom of an excluded class into a non-observation. And
+`suppress_frame_filling_detections` is turned off, because this tool's subject is the clamp rule:
+left on, the detections its sibling rule declines would be charged to the clamp rule's own cost
+below, and the 60-frame real control would lose one to a rule this report does not describe. That
+rule ships **on** in the app - the phantom it removes is what a fresh install otherwise shows on an
+empty counter - and its price is measured where it belongs, in `app/acceptance.py`. So is
+`suppress_unsure_phantoms`, for the same reason and with the same answer: it ships on, its cost is
+measured on the export in that module, and leaving it on here would let it take boxes off this
+tool's control population. All four are stated here rather than inherited quietly: they are the
+difference between measuring this rule and measuring a configuration.
 
 No camera, no network. Reads the ignored dataset workspace.
 """
@@ -654,11 +662,14 @@ def main(argv: list[str] | None = None) -> int:
     settings = load_settings(str(SETTINGS_PATH)) if SETTINGS_PATH.exists() else Settings()
     if args.conf is not None:
         settings.conf_threshold = args.conf
-    # Forced, for the two reasons the module docstring gives: a frame skip would report the
-    # fraction of frames this happened to look at, and an allowlist would shrink the real population
-    # by class - which turns a phantom of an excluded class into a non-observation.
+    # Forced, for the three reasons the module docstring gives: a frame skip would report the
+    # fraction of frames this happened to look at, an allowlist would shrink the real population by
+    # class - which turns a phantom of an excluded class into a non-observation - and the sibling
+    # frame-filling rule would charge its own drops to the clamp rule this report is about.
     settings.infer_frame_skip = 0
     settings.class_allowlist = []
+    settings.suppress_frame_filling_detections = False
+    settings.suppress_unsure_phantoms = False
 
     negatives = read_frames(negative_frames(Path(args.negatives)), cv2)
     real = read_frames(labelled_frames(generation, args.split, args.real_sample), cv2)

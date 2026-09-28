@@ -110,6 +110,8 @@ class SettingsPayload(BaseModel):
     preview_max_fps: int
     preview_mirror: bool
     suppress_clamped_detections: bool
+    suppress_frame_filling_detections: bool
+    suppress_unsure_phantoms: bool
     track_expiry_s: float
     class_allowlist: list[str]
     detector_backend: str
@@ -199,6 +201,8 @@ class SettingsUpdateRequest(BaseModel):
     preview_max_fps: int | None = Field(default=None, ge=0, le=120)
     preview_mirror: bool | None = None
     suppress_clamped_detections: bool | None = None
+    suppress_frame_filling_detections: bool | None = None
+    suppress_unsure_phantoms: bool | None = None
     track_expiry_s: float | None = Field(default=None, gt=0.0, le=30.0)
     class_allowlist: list[str] | None = None
     detector_backend: str | None = None

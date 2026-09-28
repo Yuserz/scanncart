@@ -159,6 +159,12 @@ HOT_RELOADABLE_FIELDS = {
     # Read per inference, alongside class_allowlist, so turning it off takes effect on the next
     # frame — which is when an operator watching a suppressed item would want to.
     "suppress_clamped_detections",
+    # Same reason as the clamp flag above: read per inference by the accept/reject decision
+    # (`app/acceptance.py`), so flipping it takes effect on the next frame.
+    "suppress_frame_filling_detections",
+    # Same route again: read per inference by `accept_detections`, so the operator can turn it off
+    # and watch the next frame.
+    "suppress_unsure_phantoms",
     "track_expiry_s",
     "class_allowlist",
     # Read per inference call (YoloDetector passes it to track(); the remote
@@ -247,6 +253,10 @@ def _valid_field(name: str, value: Any) -> bool:
         # explicit check is what stops 1/0 from JSON standing in for the two states.
         return isinstance(value, bool)
     if name == "suppress_clamped_detections":
+        return isinstance(value, bool)
+    if name == "suppress_frame_filling_detections":
+        return isinstance(value, bool)
+    if name == "suppress_unsure_phantoms":
         return isinstance(value, bool)
     if name == "track_expiry_s":
         return isinstance(value, (int, float)) and 0.0 < value <= 30.0
