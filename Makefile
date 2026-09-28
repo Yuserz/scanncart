@@ -9,7 +9,8 @@
 ## from within WSL or a Git Bash shell that has `make` on PATH.
 ##
 ## `test` is CI's target and stays fake-only, so it needs no data. `verify-clamp`,
-## `doctor` and `accept-v2` are the three that do - see the notes above them.
+## `annotate`, `human-pass`, `doctor` and `accept-v2` are the ones that do - see the
+## notes above them.
 ##
 
 SIDECAR_DIR := sidecar
@@ -24,7 +25,7 @@ endif
 .DEFAULT_GOAL := help
 
 .PHONY: help install dev test docs-check build lint format typecheck clean \
-        verify-clamp doctor annotate accept-v2 \
+        verify-clamp doctor annotate human-pass accept-v2 \
         sidecar-setup sidecar-run sidecar-test \
         desktop-install desktop-dev desktop-start desktop-test desktop-test-watch \
         desktop-build desktop-build-win desktop-build-mac desktop-build-linux \
@@ -39,6 +40,8 @@ help:
 	@echo "  docs-check           check that internal documentation links resolve"
 	@echo "  verify-clamp         re-check the frame-clamp claims (local data, not CI)"
 	@echo "  annotate             label a staged session locally in the browser (local data, not CI)"
+	@echo "  human-pass           render the human pass's checklist from the annotator's store (local data, not CI)"
+	@echo "                       HUMAN_PASS_ARGS=--check verifies it, =--status exits nonzero while the gate is dirty"
 	@echo "  doctor               check the merged set before training it (local data, not CI)"
 	@echo "  accept-v2            measure v2 against v1 on the merged set's test split (local data, not CI)"
 	@echo "  build                typecheck + build the desktop app"
@@ -118,6 +121,20 @@ ANNOTATE_ARGS ?=
 
 annotate:
 	cd $(SIDECAR_DIR) && $(SIDECAR_VENV_PY) -m annotate.run $(ANNOTATE_ARGS)
+
+# The human pass's checklist (`<workspace>/_human_pass.md`), *rendered* from the store rather than
+# kept by hand. Every number in it and every name in its three frame lists is read back off the
+# annotator's own selectors, so a copy that has stopped matching the set is detectable instead of
+# merely wrong: run this before sitting down to work the pass, and again after a session.
+# `make human-pass HUMAN_PASS_ARGS=--check` writes nothing and exits 1 with the diff when the file on
+# disk is no longer what the store says - the form anything scriptable wants.
+# `make human-pass HUMAN_PASS_ARGS=--status` is its sibling: the three sections' counts, and a
+# nonzero exit while `test`/`valid` still hold a machine-only decision - the acceptance gate asked as
+# a question. The tool exits 1; make reports any failed recipe as 2, so test for nonzero.
+HUMAN_PASS_ARGS ?=
+
+human-pass:
+	cd $(SIDECAR_DIR) && $(SIDECAR_VENV_PY) -m annotate.human_pass $(HUMAN_PASS_ARGS)
 
 # Run before training, not after: the failures it looks for - a class list in the wrong order, a
 # label row nothing can read, a frame drawn under a class other than the one it was staged as, a test

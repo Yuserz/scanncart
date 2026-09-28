@@ -1,0 +1,178 @@
+/* Deliberately plain: this is a workbench, and the only visual conventions that matter are the
+   ones an operator reads at a glance - which cell a frame belongs to, what state it is in, and
+   which boxes a machine drew rather than a person. Amber is reserved for machine-only work, the
+   same signal the app's own stats strip uses for a class-list finding. */
+
+:root {
+  --bg: #14161a;
+  --panel: #1c1f25;
+  --line: #2c313a;
+  --text: #e6e8ec;
+  --dim: #8d95a3;
+  --accent: #4c9aff;
+  --machine: #e0a33a;
+  --done: #3fb37f;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  height: 100vh;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.45 ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+}
+
+header, footer {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  padding: 8px 14px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+/* Five readouts now share the header, and the gate chip is the one worth wrapping rather than
+   squeezing: it is a number to drive down, and a clipped one is worse than a second line. */
+header { flex-wrap: wrap; }
+
+footer { border-top: 1px solid var(--line); border-bottom: none; flex-wrap: wrap; }
+
+h1 { font-size: 14px; margin: 0; letter-spacing: .04em; text-transform: uppercase; color: var(--dim); }
+#weight, #progress, #hosted { color: var(--dim); }
+#progress { color: var(--text); }
+
+/* Amber while something is unread in the measured splits, green once the gate is clear - the same
+   signal the machine-only rows and the app's stats strip use. It reads as a chip rather than a
+   button because it is also a number; the box is what says it can be pressed, and it is only there
+   while there is work behind it. */
+#gate {
+  padding: 2px 7px;
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--machine);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+#gate:hover:not(:disabled) { background: #232833; border-color: var(--machine); }
+#gate.clear { color: var(--done); border-color: transparent; cursor: default; }
+
+main { display: grid; grid-template-columns: 320px 1fr; min-height: 0; }
+
+/* The filters and the list are one column: the bar stays put while the list scrolls under it. */
+#sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--line);
+}
+
+#worklist { overflow-y: auto; flex: 1; }
+
+#filters {
+  display: flex;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+#filters select {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 3px 4px;
+  background: #232833;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--text);
+  font: inherit;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 8px;
+  width: 100%;
+  padding: 6px 10px;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--line);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+.row:hover { background: #22262e; }
+.row.active { background: #263143; }
+.row .cell { color: var(--dim); font-size: 11px; }
+.row.active .cell { color: var(--text); }
+.row .name { grid-column: 1 / -1; }
+.row.state-unlabeled .name { font-weight: 600; }
+.row.state-null .state { color: var(--dim); }
+.row.state-labeled .state { color: var(--done); }
+.row.machine .state { color: var(--machine); }
+
+#editor { display: flex; flex-direction: column; min-height: 0; padding: 14px; gap: 8px; }
+
+#stage { position: relative; align-self: center; max-width: 100%; max-height: 100%; }
+#image { display: block; max-width: 100%; max-height: 72vh; user-select: none; -webkit-user-drag: none; }
+#overlay { position: absolute; inset: 0; cursor: crosshair; }
+
+.box {
+  position: absolute;
+  border: 2px solid var(--accent);
+  border-radius: 2px;
+  pointer-events: none;
+}
+.box span {
+  position: absolute;
+  top: -18px;
+  left: -2px;
+  padding: 0 4px;
+  background: var(--accent);
+  color: #0b0d10;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.box.drawing { border-style: dashed; }
+
+/* One colour per class index, so two products in one frame are told apart by eye while labelling.
+   Seven entries because that is the roster; an index past the end falls back to the accent. */
+.box[data-cls="0"] { border-color: #4c9aff; }
+.box[data-cls="1"] { border-color: #3fb37f; }
+.box[data-cls="2"] { border-color: #e0a33a; }
+.box[data-cls="3"] { border-color: #d2748c; }
+.box[data-cls="4"] { border-color: #a48ce0; }
+.box[data-cls="5"] { border-color: #56c2d6; }
+.box[data-cls="6"] { border-color: #c9c26a; }
+.box[data-cls="0"] span { background: #4c9aff; }
+.box[data-cls="1"] span { background: #3fb37f; }
+.box[data-cls="2"] span { background: #e0a33a; }
+.box[data-cls="3"] span { background: #d2748c; }
+.box[data-cls="4"] span { background: #a48ce0; }
+.box[data-cls="5"] span { background: #56c2d6; }
+.box[data-cls="6"] span { background: #c9c26a; }
+
+#frame-info, #note { color: var(--dim); margin: 0; }
+
+#classes { display: flex; gap: 6px; flex-wrap: wrap; }
+#actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+button[data-testid^="class-"], #actions button {
+  background: #232833;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--text);
+  padding: 4px 8px;
+  cursor: pointer;
+  font: inherit;
+}
+button[data-testid^="class-"]:hover, #actions button:hover { background: #2b3140; }
+button.active { border-color: var(--accent); color: var(--accent); }
+#actions button[data-act="null"] { border-color: var(--machine); color: var(--machine); }
+#actions button[data-act="save"] { border-color: var(--done); }
