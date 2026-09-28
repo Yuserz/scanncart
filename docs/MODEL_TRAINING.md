@@ -138,10 +138,11 @@ Keep augmentation modest and physically plausible:
 
 1. **Use the real rig.** Record on the actual Logitech StreamCam, at the deployed mount height,
    at the sidecar's configured resolution. Defaults live in `sidecar/app/settings.py`:
-   `capture_width=1280`, `capture_height=720`, `capture_fps=60`.
+   `capture_width=640`, `capture_height=480`, `capture_fps=30` (the 640x480@30 mode that opens
+   reliably over USB 2.0; the StreamCam's 1080p60 needs USB 3.0 and can wedge MSMF without it).
    *Domain match beats volume — 200 images from the real rig outperform 1,000 web-scraped product photos.*
 2. **Record video, then extract frames at ~1 fps** — not 30. Consecutive frames are near-duplicates
-   that inflate your count and leak between train/val splits.
+   that inflate your count and leak between train/valid splits.
 3. **Dedup.** Run Roboflow's similarity/duplicate detection to catch stragglers.
 4. **Label boxes tight** to the object. Include partially visible items at frame edges — the app will
    see those constantly.
@@ -472,7 +473,7 @@ Five readings, and the last two are the ones that decide what to do:
 
 It reads the generation's dataset and class list from `generations.py`, so it cannot be pointed at
 one generation's images while judging the other's names, and it reports any predicted class that is
-not on that list — the same 24-output mistake the runtime catches, caught at the measuring step.
+not on that list — the same 21-output mistake the runtime catches, caught at the measuring step.
 
 One thing it has to get right that is easy to get wrong, and did: **a label line is one of two
 forms, told apart by field count.** `cls cx cy w h` is a box (centre plus size, five fields);
@@ -564,8 +565,8 @@ localise, while the smaller crowded-frame objects survive better (61% against 20
 
 The rule this leaves behind: **`imgsz` is a per-weight inference requirement, not a free knob.**
 Unlike `resize_mode` it is not recorded in `models/<stem>.json`, so a profile tuned to 960 — which
-v2's 8-class set may well want, for objects twice as far away — silently destroys a weight trained
-at 640, and the Admin panel has nothing to contradict. Until the record carries it, this tool is
+v2's seven-class set may well want, for objects twice as far away — silently destroys a weight
+trained at 640, and the Admin panel has nothing to contradict. Until the record carries it, this tool is
 what catches the pair, which is why the configuration line is printed rather than assumed.
 
 ---
@@ -671,7 +672,7 @@ Two things the old whitelist path silently decided for you:
 
 | Setting | Note |
 |---------|------|
-| `conf_threshold` (default `0.5`) | A custom 8-class model is usually more confident than the COCO baseline. Try `0.6` to cut flicker. Restart-required. |
+| `conf_threshold` (default `0.5`) | A custom seven-class model is usually more confident than the COCO baseline. Try `0.6` to cut flicker. Hot-reloadable. |
 | `track_expiry_s` (default `1.5`) | Raise if items briefly drop out and re-enter as a new `track_id` (causing duplicate log rows). Hot-reloadable. |
 | `infer_frame_skip` (default `0`) | Only touch if fps is short of target. Hot-reloadable. |
 
@@ -920,7 +921,7 @@ name the app's own roster does not contain — with no error anywhere, because n
 | `app/roster.py` (Test connection in the Admin Panel, **and the Live view while capture runs**) | the class list a **weight already predicts** | the last line, and the only one that can catch a model that arrived from somewhere else entirely. It warns rather than blocks — a loaded model cannot be argued with — and it is the only check that can run at all here, since a `.pt` records no roster and the export is gone |
 
 The last two rows are also demonstrable on demand rather than on trust: `node
-.claude/skills/run-desktop/driver.mjs classlist` builds a genuine 24-output scratch weight, reads the
+.claude/skills/run-desktop/driver.mjs classlist` builds a genuine 21-output scratch weight, reads the
 flag off the Admin listing and the sentence off the running app's banner and chip, then deletes the
 weight and puts the settings back (`RUN_SHEET.md` §8).
 
@@ -962,7 +963,8 @@ cannot disagree about the same name; the runtime copy is held to it by a drift g
 (`sidecar/tests/test_roster.py`). The runtime check is also the one that reports the *opposite*
 failure — a model that can only predict some of its roster's classes — because nothing it does
 predict is wrong, so nothing else would ever notice. Which roster that is comes from the weight:
-v1's seven, or v2's eight when the record says so or the class list is exactly v2's. It matches **whole tokens** against a fixed word list (`close`,
+v1's seven, or v2's seven when the record says so or the class list is exactly v2's — the same
+names today, so it is the record that settles the generation. It matches **whole tokens** against a fixed word list (`close`,
 `closeup`, `mid`, `middle`, `far`, `near`, `distance`), which is what keeps a legitimate name from
 tripping it: "Farmer's Choice" tokenises to `farmer`, not `far`. Each finding is phrased as the
 *fix* rather than the symptom — the offending classes have to be removed and their annotations
@@ -1272,7 +1274,7 @@ this section is the summary of what has to be true when you are done.
       weights nobody can say the geometry of)
 - [ ] The class-list guard demonstrated rather than assumed: `node
       .claude/skills/run-desktop/driver.mjs classlist` (app closed, camera free, `npm run build`
-      first) prints **13 `PASS` lines, exit 0** against a scratch 24-output weight — the Admin
+      first) prints **13 `PASS` lines, exit 0** against a scratch 21-output weight — the Admin
       listing flags it before it is selected, and the Live view names the distance while it runs —
       then removes the weight and restores the settings. That is what makes step 7's reading
       (*7 classes, no class warning*) a reading instead of a hope (`RUN_SHEET.md` §8)

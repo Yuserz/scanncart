@@ -463,9 +463,9 @@ node .claude/skills/run-desktop/driver.mjs classlist
 | Checkpoint | Expect |
 |---|---|
 | the run | **13 `PASS` lines, exit 0** — one per check, so a new check raises the number; any `FAIL` exits non-zero, which is what lets it gate a change |
-| the fixture | `scratch weight: <n> bytes` — a real `DetectionModel('yolo11n.yaml', nc=24)`, built and deleted by the mode itself |
-| Admin · *Weights on disk* | `… — 24 classes` with ⚠ `24 of 24 class name(s) carry a distance`, **before** the weight is selected |
-| Live · banner and chip | the same sentence in `live-class-warnings`, and `24` · `classes · 1 finding` in amber — from a running capture, not a fake status |
+| the fixture | `scratch weight: <n> bytes` — a real `DetectionModel('yolo11n.yaml', nc=21)` (one head output per product and distance, read from the roster), built and deleted by the mode itself |
+| Admin · *Weights on disk* | `… — 21 classes` with ⚠ `21 of 21 class name(s) carry a distance`, **before** the weight is selected |
+| Live · banner and chip | the same sentence in `live-class-warnings`, and `21` · `classes · 1 finding` in amber — from a running capture, not a fake status |
 | the banner is *painted* | `{"w":952,"h":200,"onScreen":true,"shown":true}`: a non-zero box inside the viewport, because `textContent` cannot tell a rendered element from a collapsed one |
 | cleanup | `scratch weight removed` and `settings put back` — both in a `finally`, so they run even when a check throws |
 

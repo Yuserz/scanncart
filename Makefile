@@ -24,7 +24,7 @@ endif
 
 .DEFAULT_GOAL := help
 
-.PHONY: help install dev test docs-check build lint format typecheck clean \
+.PHONY: help install dev test docs-check docs-sync docs-sync-check build lint format typecheck clean \
         verify-clamp doctor annotate human-pass accept-v2 \
         sidecar-setup sidecar-run sidecar-test \
         desktop-install desktop-dev desktop-start desktop-test desktop-test-watch \
@@ -38,6 +38,8 @@ help:
 	@echo "  dev                  run the desktop app in dev mode (spawns the sidecar)"
 	@echo "  test                 run desktop + sidecar test suites"
 	@echo "  docs-check           check that internal documentation links resolve"
+	@echo "  docs-sync            rewrite the numbers the docs state from the code that owns them"
+	@echo "  docs-sync-check      report doc numbers that no longer match the code (exit 1)"
 	@echo "  verify-clamp         re-check the frame-clamp claims (local data, not CI)"
 	@echo "  annotate             label a staged session locally in the browser (local data, not CI)"
 	@echo "  human-pass           render the human pass's checklist from the annotator's store (local data, not CI)"
@@ -91,6 +93,27 @@ endif
 
 docs-check:
 	$(DOCS_PYTHON) scripts/check_doc_links.py
+
+## --- the docs' own numbers, rendered from the code that owns them ---
+
+# `sidecar/tools/docs_sync.py` owns the sentences whose number is a code fact - a class count, a
+# settings default, the recall floor, the split ratio, the crowding margin, the augmentation table
+# the trainer prints, and the reload word in the tuning table - and rewrites each from its owner.
+# A deliberate change (a class added, the floor moved) is one `make docs-sync` away from being
+# consistent again, instead of a failing test and an edit by hand.
+#
+# It needs the sidecar venv, because the numbers live in the app and the dataset tooling, so it is
+# deliberately *not* part of `docs-check`: that target runs on a bare `python3` so CI's links job can
+# check a checkout with nothing installed. The same check runs under `make test` (`pytest -m docs`),
+# so a stale doc fails CI whether or not anyone remembers the target.
+#
+# `--write` refuses (exit 2, nothing written) when a site has no sentence to rewrite: that means a
+# doc stopped saying what the site claims, and writing the rest of it would be a half-synced file.
+docs-sync:
+	cd $(SIDECAR_DIR) && $(SIDECAR_VENV_PY) tools/docs_sync.py --write
+
+docs-sync-check:
+	cd $(SIDECAR_DIR) && $(SIDECAR_VENV_PY) tools/docs_sync.py --check
 
 ## --- verification gates that need data the repo does not carry ---
 

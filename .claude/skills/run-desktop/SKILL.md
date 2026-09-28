@@ -158,16 +158,18 @@ node .claude/skills/run-desktop/driver.mjs v1         # the v1 acceptance run: w
   one thing neither unit suite can do, since they can render the banner from a fake status or
   serve `/api/models` from a temp directory, but not put a real checkpoint through ultralytics in
   one process and read the real renderer's response to it. It **builds the scratch weight with
-  ultralytics itself** (`DetectionModel('yolo11n.yaml', nc=24)` + the 24 distance-split names),
+  ultralytics itself** (`DetectionModel('yolo11n.yaml', nc=21)` + the 21 distance-split names —
+  one head output per product and distance, built from the generation's own roster rather than
+  from a product list written out in this skill),
   because the failure is a *head* trained per product-and-distance: a stock `.pt` with a renamed
   class list would give the app class ids that do not resolve in the names dict it indexes by
   (`normalize_detections`), so the run would die on a `KeyError` instead of reporting a class
   list. The weights are untrained and that is fine — nothing here is about boxes. The record is
   written by the real `train_model.weight_record(class_names=…)`.
   It then checks both halves, in the order the app learns them: the **listing** (the sidecar's
-  `/api/models` flags it, and the Admin Panel's *Weights on disk* row shows `24 classes` plus the
+  `/api/models` flags it, and the Admin Panel's *Weights on disk* row shows `21 classes` plus the
   sidecar's own distance sentence) and the **running capture** (Start → the Live view's
-  `live-class-warnings` banner, and the `stat-classes` chip reading `24` / `1 finding` in amber).
+  `live-class-warnings` banner, and the `stat-classes` chip reading `21` / `1 finding` in amber).
   Both are also checked for being *painted* — non-zero box, inside the viewport, not hidden — since
   `textContent` cannot tell a rendered element from one with a zero-height box, and that is what
   the screenshots are there to corroborate by eye. Needs a **camera** that delivers frames (the
@@ -190,7 +192,8 @@ node .claude/skills/run-desktop/driver.mjs v1         # the v1 acceptance run: w
   plus the running model's verdict has to agree with the record's own finding count — for v1 that
   is **no** findings, since its seven names are complete for its own generation, so the chip must
   read `roster ok` and the banner must be absent — and never the `carry a distance` sentence,
-  which would mean a 24-output head. Last, the PRD's two live promises off the strip: >= 30 infer fps and
+  which would mean a head trained per product-and-distance. Last, the PRD's two live promises off
+  the strip: >= 30 infer fps and
   < 150 ms, which are the tiles that fall when `imgsz` is wrong. It leaves `imgsz` alone on purpose
   (that is the knob that broke this weight, so the fps check is how a wrong one shows up), and
   stops capture before restoring `active_model` + `resize_mode` in a `finally`, since both are
@@ -301,8 +304,9 @@ guessing) — both present only while capture runs, and mutually exclusive — t
 carrying its own `live-record-resize-mode` button and handing its slot to
 `live-recorded` once a write lands. Also present only while
 capture runs: `live-class-warnings` (the running model's class list judged against the roster of
-that weight's own generation — v1's seven or v2's eight, chosen by the record and then by the
-names themselves — in the sidecar's own sentences; a 24-class head is not an error state, so it
+that weight's own generation — v1's seven or v2's seven, the same names today, chosen by the
+record and then by the names themselves — in the sidecar's own sentences; a 21-class head is not
+an error state, so it
 is not error-styled), and inside the listing above it
 `installed-model-class-warning-<value>` for a weight whose *recorded* class list is wrong — the
 same verdict one step earlier, before the weight is selected. The weights

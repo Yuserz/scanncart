@@ -1098,13 +1098,15 @@ if (mode === 'classlist') {
   // status or serve `/api/models` from a temp directory, but not put a real non-roster checkpoint
   // through ultralytics in one process and read the real renderer's response to it.
   //
-  // The scratch weight is a **genuine 24-output checkpoint** built by ultralytics itself, not a
+  // The scratch weight is a **genuine non-roster checkpoint** built by ultralytics itself, not a
   // stock `.pt` with a renamed class list. That distinction is the whole point: the failure being
-  // verified is a *head* trained per product-and-distance, so the thing has to produce 24-output
-  // predictions whose indices resolve in the names dict the app indexes by class id
+  // verified is a *head* trained per product-and-distance, so the thing has to produce one output
+  // per product-and-distance, in a names dict the app indexes by class id
   // (`normalize_detections`), or the run would fail on a KeyError instead of reporting a class
-  // list. `DetectionModel(cfg, nc=24)` is the same constructor `yolo11n.pt` came from; the weights
-  // are untrained, which is fine — this check is about the vocabulary, not about boxes.
+  // list. `DetectionModel(cfg, nc=<products x distances>)` is the same constructor `yolo11n.pt`
+  // came from; the weights are untrained, which is fine — this check is about the vocabulary, not
+  // about boxes, and the expected count is read off the record this snippet writes rather than
+  // written down twice.
   const SIDECAR = path.join(REPO_ROOT, 'sidecar');
   const MODELS = path.join(SIDECAR, 'models');
   const python = process.env.SIDECAR_PYTHON || path.join(SIDECAR, '.venv', 'Scripts', 'python.exe');
@@ -1128,16 +1130,11 @@ if (mode === 'classlist') {
 from ultralytics.nn.tasks import DetectionModel
 import train_model, generations
 
-PRODUCTS = [
-    "Bear Brand Fortified Powdered Milk 33g",
-    "lucky_me_pancit_canton_calamansi_flavor",
-    "555 sardines 155grams",
-    "century_tuna_flakes_in_oil_155_grams",
-    "silver_swan_sukang_puti_200ML",
-    "Milo Chocolate Drink 22g Sachet",
-    "safeguard_pure_white_60g",
-    "Palmolive Naturals Bar Soap 85g",
-]
+# The roster comes from the generation spec rather than a list written out here: a hand-copied
+# product list is how this fixture kept building an eight-product head for a week after the
+# eighth class was dropped, and a fixture that describes a roster the app no longer has is the
+# one thing this mode cannot catch by running.
+PRODUCTS = list(generations.V2.classes)
 # One class per product *and distance* - the mistake MODEL_TRAINING 8.1 exists to prevent.
 names = [f"{p} {d}" for p in PRODUCTS for d in ("close", "mid", "far")]
 model = DetectionModel("yolo11n.yaml", nc=len(names), verbose=False)
@@ -1158,6 +1155,10 @@ print(json.dumps(train_model.weight_record(generations.V2, 2, "snc-grocery", cla
       '| record:',
       JSON.stringify({ class_names: record.class_names?.length, resize_mode: record.resize_mode })
     );
+    // The count on screen is the record's own, which the snippet above derived from the roster and
+    // the distance axis — so it is read here rather than written a second time. A literal is what
+    // this mode had, and it kept expecting an eight-product head after the eighth class was gone.
+    const expectedClasses = record.class_names?.length ?? 0;
 
     port = await page.evaluate(() => window.api.getSidecarPort());
     const api = (p, init) =>
@@ -1192,8 +1193,8 @@ print(json.dumps(train_model.weight_record(generations.V2, 2, "snc-grocery", cla
     check('the sidecar lists the scratch weight', !!mine, JSON.stringify(mine?.value));
     check(
       'with the class list recorded beside it',
-      mine?.class_names?.length === 24,
-      `class_names=${mine?.class_names?.length}`
+      mine?.class_names?.length === expectedClasses,
+      `class_names=${mine?.class_names?.length} (record says ${expectedClasses})`
     );
     check(
       'and the roster verdict judged from the listing, before it runs',
@@ -1217,7 +1218,7 @@ print(json.dumps(train_model.weight_record(generations.V2, 2, "snc-grocery", cla
     console.log('listing on screen:', JSON.stringify(listedOnScreen));
     check(
       'the panel shows the weight with its class count',
-      !!listedOnScreen && listedOnScreen.includes('24 classes'),
+      !!listedOnScreen && listedOnScreen.includes(`${expectedClasses} classes`),
       JSON.stringify(listedOnScreen)
     );
     check(
@@ -1309,12 +1310,17 @@ print(json.dumps(train_model.weight_record(generations.V2, 2, "snc-grocery", cla
       );
       check(
         'naming the distance the model was trained per product-and-distance',
-        !!banner && banner.includes('carry a distance') && banner.includes('24 of 24'),
+        !!banner &&
+          banner.includes('carry a distance') &&
+          banner.includes(`${expectedClasses} of ${expectedClasses}`),
         JSON.stringify(banner)
       );
       check(
         'and the stats strip carries the count the banner cannot show',
-        !!chip && chip.includes('24') && chip.includes('finding') && /\bwarn\b/.test(chipClass ?? ''),
+        !!chip &&
+          chip.includes(String(expectedClasses)) &&
+          chip.includes('finding') &&
+          /\bwarn\b/.test(chipClass ?? ''),
         JSON.stringify(chip)
       );
       await shot(page, 'classlist-03-banner-and-chip');
@@ -1568,7 +1574,8 @@ if (mode === 'v1') {
         // side off the stream, which is what makes this a comparison rather than a second copy.
         // For v1 the answer is `roster ok` — its seven classes are complete for its own generation,
         // so a finding here means the roster got applied to the wrong generation again, and
-        // `carry a distance` means a 24-output head, the failure the roster guard exists for. Both
+        // `carry a distance` means a head trained per product-and-distance, the failure the roster
+        // guard exists for. Both
         // are separations this assertion is the only place to make.
         const chip = (await statText('stat-classes')) ?? '';
         const banner = await readText('[data-testid="live-class-warnings"]');

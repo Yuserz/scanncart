@@ -129,7 +129,7 @@ Shoot it as its own session, not as an afterthought to solo work:
 - Mix distances inside the frame — some items near, some far. That is the real counter.
 - Vary arrangement between shots: grid, pile, cluster, one item rotated.
 
-Every object that belongs to the 8-class roster gets a box. That is what makes a scene count.
+Every object that belongs to the roster (§8.1) gets a box. That is what makes a scene count.
 
 ### Why this tier is load-bearing, measured rather than assumed
 
