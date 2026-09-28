@@ -94,19 +94,13 @@ from label_classes import (
     tag_mismatch,
 )
 from workspace import (
+    ANNOTATIONS_DIRNAME,
     DEFAULT_OUT,
     MANIFEST_NAME,
     PROVENANCE_NAME,
     SPLITS_NAME,
     resolve_extras,
 )  # workspace lives outside the repo tree
-
-# The directory the annotator writes its labels into, relative to the staged set. Mirrors
-# `annotate/store.ANNOTATIONS_DIRNAME` - the annotator's own spelling, used by both of its
-# entrypoints - so a run of either tool finds the other's work. Kept as a copy rather than
-# imported because this tool has to run on a checkout where the annotator package is not present
-# at all, and `tests/test_annotate_store.py` pins the two against each other in both directions.
-ANNOTATIONS_DIRNAME = "annotations-v2"
 
 
 def fetch_all(client: httpx.Client, key: str, project: str) -> dict[str, dict]:

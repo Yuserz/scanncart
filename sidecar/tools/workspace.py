@@ -43,6 +43,7 @@ with SCANNCART_DATASET_ROOT:
                                # the default is a second set rather than a fallback value
     workspace.ENV_PATH         # <workspace>/.env
     workspace.MANIFEST_NAME    # the artifact names more than one tool reads or writes
+    workspace.ANNOTATIONS_DIRNAME  # ...including the annotator's label tree, beside a staged set
 
 Note this `.env` is the *tools'* credentials file. The sidecar reads its own from
 `sidecar/.env` (see app/credentials.py) - they are separate files for separate
@@ -76,6 +77,13 @@ MERGE_REPORT_NAME = "merge_report.json"  # a built set's provenance, written by 
 DATA_YAML_NAME = "data.yaml"  # the dataset declaration ultralytics reads
 SCANNCART_DATA_YAML_NAME = "data.scanncart.yaml"  # the normalized one `train_model` writes
 PROVENANCE_NAME = "provenance.json"  # who drew each box, in the annotator's tree
+# The annotator's label tree, named relative to the staged set it describes (`annotate/` writes it,
+# `label_progress` and `import_labels` read it). It lives *here* rather than in the annotator
+# because the tools are what have to find it when the annotator package is not installed at all -
+# and a name one side writes and the other looks for is exactly what this module exists to hold
+# once: a disagreement is silent, since the annotator would fill a tree nothing reads and the
+# snapshot would report 0 decided over a set somebody has been labeling for a week.
+ANNOTATIONS_DIRNAME = "annotations-v2"
 
 # Staged sets that are part of v2 but do not live inside `cleaned-v2/`.
 #

@@ -56,7 +56,7 @@ from label_classes import (
     SLUG_TO_CLASS,
     SPLIT_NAMES,
 )
-from workspace import MANIFEST_NAME, PROVENANCE_NAME, SPLITS_NAME
+from workspace import ANNOTATIONS_DIRNAME, MANIFEST_NAME, PROVENANCE_NAME, SPLITS_NAME
 
 # The canonical class order. Index in this tuple is the `cls` column of every label row, so it is
 # also what `data.yaml`'s `names` has to be written in - an order mismatch here is the failure
@@ -66,16 +66,10 @@ CLASS_SLUGS: tuple[str, ...] = tuple(SLUG_TO_CLASS)
 SLUG_BY_NAME: dict[str, str] = {name: slug for slug, name in SLUG_TO_CLASS.items()}
 CLASS_INDEX: dict[str, int] = {slug: i for i, slug in enumerate(CLASS_SLUGS)}
 
-# Where the labels live, relative to the staged set: `<workspace>/annotations-v2`. **The one
-# spelling of it on this side.** `label_progress.py` and `import_labels.py` read the same tree from
-# `sidecar/tools/`, so the tools keep their own copy (`label_progress.ANNOTATIONS_DIRNAME`, spelled
-# there rather than imported because that tool has to run when the annotator package is not present
-# at all) - and a second literal in *this* package is how two tools stop finding each other's work:
-# the annotator writes a tree `label_progress` does not look in, `--source auto` answers "the
-# annotator has never been used against this set", and the snapshot reports 0 decided over a set
-# somebody has been labeling for a week. `tests/test_annotate_store.py` pins the pair and scans
-# this package for the literal, so there is exactly one here.
-ANNOTATIONS_DIRNAME = "annotations-v2"
+# The labels directory is `workspace`'s (`ANNOTATIONS_DIRNAME`, imported above) rather than this
+# package's, and that is a deliberate direction: `label_progress` and `import_labels` have to find
+# this tree on a checkout where the annotator is not installed at all, so the name belongs with the
+# other artifact names both sides already import instead of being a copy either one could edit.
 
 # The pseudo-class: a tag and a batch key with nothing to annotate. Its frames are the null
 # annotations, so they are the one "class" whose every label file must be empty.

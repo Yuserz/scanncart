@@ -110,9 +110,9 @@ from annotate.store import CLASS_NAMES, Box  # noqa: E402  (after the path fix a
 from build_dataset import DEFAULT_V2, read_v2  # noqa: E402
 from generations import V2  # noqa: E402
 from label_classes import load_key  # noqa: E402
-from label_progress import ANNOTATIONS_DIRNAME, fetch_all, state_of  # noqa: E402
+from label_progress import fetch_all, state_of  # noqa: E402
 from label_progress import WORKSPACE as ROBOFLOW_WORKSPACE  # noqa: E402
-from workspace import resolve_extras  # noqa: E402
+from workspace import ANNOTATIONS_DIRNAME, resolve_extras  # noqa: E402
 
 API = "https://api.roboflow.com"
 # How far two aspect ratios may differ and still be "the same frame". A uniform resize keeps the

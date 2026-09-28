@@ -571,46 +571,50 @@ def test_splits_are_read_when_they_exist_and_absent_is_not_an_error(tmp_path):
 # drift guards: the two names this package shares with sidecar/tools
 # --------------------------------------------------------------------------
 
-# Where the annotator's own source lives, for the "spelled once" scans below.
+# Where this package's and the tools' sources live, for the "spelled once" scans below.
 ANNOTATE_DIR = Path(__file__).resolve().parents[1] / "annotate"
+TOOLS_DIR = Path(__file__).resolve().parents[1] / "tools"
 
 
-def _annotate_source(name: str) -> str:
-    return (ANNOTATE_DIR / name).read_text(encoding="utf-8")
+def _spellings(source: Path, literal: str) -> int:
+    """How many times a Python source file spells `literal` as a string."""
+    return len(re.findall(rf"['\"]{re.escape(literal)}['\"]", source.read_text(encoding="utf-8")))
 
 
 @pytest.mark.mirror
-def test_the_labels_directory_is_one_name_on_both_sides():
+def test_the_labels_directory_has_one_owner_and_one_spelling():
     """`annotations-v2` is written by this package and read by `sidecar/tools`.
 
-    The tools keep their own copy deliberately (`label_progress` says why: it has to run when the
-    annotator package is not present at all), so nothing but this test stops the two from diverging
-    - and the failure is silent in the worse direction. The annotator would write a tree
-    `label_progress` never looks in, `--source auto` would answer "the annotator has not been used
-    against this set", and the snapshot the Admin Panel shows would report 0 decided over a set
-    somebody has been labeling for a week - a reading that looks like unfinished work rather than
-    like a broken lookup.
+    That started as a copy per side, because the tools have to find this tree on a checkout where
+    the annotator package is not installed at all - a real constraint, and one the guards here used
+    to pin by comparing the two copies. The constraint is satisfied by the shared module instead:
+    `workspace.py` is not the annotator (the annotator imports it, as does every other tool), so
+    the name lives there with the other artifact names, both sides import it, and there is no pair
+    left to compare.
 
-    The second half is the other way round: the literal is spelled *once* in this package, so the
-    two entrypoints cannot drift from the store. They used to carry their own copies, in an
-    argparse default and in that default's help text, which is three chances to disagree about
-    where the work lives.
+    What is still worth failing on is a *second spelling*, because the failure it causes is silent:
+    the annotator would fill a tree `label_progress` never looks in, `--source auto` would answer
+    "the annotator has not been used against this set", and the snapshot would report 0 decided
+    over a set somebody has been labeling for a week - a reading that looks like unfinished work
+    rather than like a broken lookup.
     """
-    from label_progress import ANNOTATIONS_DIRNAME as tools_dirname
+    import label_progress
+    import workspace
 
-    assert ANNOTATIONS_DIRNAME == tools_dirname, (
-        "the annotator writes its labels to "
-        f"{ANNOTATIONS_DIRNAME!r} and label_progress reads {tools_dirname!r} - one of the two "
-        "tools stopped finding the other's work"
+    assert ANNOTATIONS_DIRNAME is workspace.ANNOTATIONS_DIRNAME
+    assert label_progress.ANNOTATIONS_DIRNAME is workspace.ANNOTATIONS_DIRNAME, (
+        "label_progress no longer reads the name from `workspace` - it has its own copy again, and "
+        "nothing else would notice the two drifting apart"
     )
-    for name in ("store.py", "run.py", "human_pass.py"):
-        quoted = re.findall(r"['\"]annotations-v2['\"]", _annotate_source(name))
-        expected = 1 if name == "store.py" else 0
-        assert len(quoted) == expected, (
-            f"{name} spells the labels directory as a string literal ({len(quoted)} time(s), "
-            f"expected {expected}) - read `store.ANNOTATIONS_DIRNAME` instead, so there is one "
-            "copy of the name that matters"
-        )
+
+    spelled = {
+        path.name: _spellings(path, ANNOTATIONS_DIRNAME)
+        for path in (*ANNOTATE_DIR.glob("*.py"), *TOOLS_DIR.glob("*.py"))
+    }
+    assert {name: n for name, n in spelled.items() if n} == {"workspace.py": 1}, (
+        f"the labels directory is spelled outside `workspace.py`: {spelled} - read "
+        "`workspace.ANNOTATIONS_DIRNAME` instead, so one rename moves both sides"
+    )
 
 
 @pytest.mark.mirror

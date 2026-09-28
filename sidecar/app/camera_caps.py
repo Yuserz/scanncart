@@ -26,6 +26,12 @@ import numpy as np
 from app.camera_quality import BRIGHTNESS_TARGET, FOCUS_DRIFT_MAX, FPS_MIN, focus_drift, frame_quality
 from app.camera_search import SearchResult, search_for_peak, search_to_target
 
+# The bounds a swept value has to stay inside are `settings_store`'s, not this module's: they are
+# what the API accepts on a PATCH and what the panel's sliders offer, and a probe that walked past
+# one would spend its probes measuring a value `calibrate` could then recommend but nobody could
+# save. Imported rather than copied so the three readers cannot disagree.
+from app.settings_store import BRIGHTNESS_RANGE, EXPOSURE_RANGE, FOCUS_RANGE
+
 # A control must move mean brightness by at least this much to count. Below it
 # we cannot distinguish a real effect from sensor noise.
 EFFECT_THRESHOLD = 6.0
@@ -164,11 +170,6 @@ def _sharpness(read_frame: Callable[[], np.ndarray]) -> float | None:
     return frame_quality(frame).sharpness if frame is not None else None
 
 
-# Bounds mirror SettingsUpdateRequest's ge/le — a value outside them is
-# rejected by the API that would have to apply it.
-EXPOSURE_RANGE = (-13.0, 0.0)
-BRIGHTNESS_RANGE = (0.0, 255.0)
-FOCUS_RANGE = (0.0, 1023.0)
 # Focus to +/- one step of this. Finer buys nothing: depth of field on a
 # fixed counter camera is far wider than 16 units.
 FOCUS_STEP = 16.0

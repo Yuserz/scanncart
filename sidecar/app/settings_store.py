@@ -23,6 +23,18 @@ ALLOWED_MODELS = {
 ALLOWED_DEVICES = {"auto", "cpu", "cuda"}
 ALLOWED_RESIZE_MODES = {"auto", "letterbox", "stretch"}
 
+# The ranges the three numeric camera controls accept, as `(low, high)`. One owner for a fact that
+# three readers need and each used to spell: the API validates a PATCH against them
+# (`schemas.SettingsUpdateRequest`'s ge/le), the calibration probe has to stay *inside* them (a
+# recommendation the API would refuse is worse than no recommendation, since the operator is told to
+# save something that cannot be saved), and the panel offers them as slider bounds. They are
+# deliberately generous - the meaningful range is device-specific, so these exist to reject nonsense
+# rather than to encode one camera's scale.
+BRIGHTNESS_RANGE: tuple[float, float] = (0.0, 255.0)
+# Windows exposure is log2 seconds: -6 is 1/64 s, 0 is one full second.
+EXPOSURE_RANGE: tuple[float, float] = (-13.0, 0.0)
+FOCUS_RANGE: tuple[float, float] = (0.0, 1023.0)
+
 # A custom model is any weights file under sidecar/models/. That covers the
 # Roboflow-exported grocery model, whose .onnx the local inference server
 # caches and which `YOLO()` loads directly (see docs/DETECTOR_BACKENDS.md §1a).

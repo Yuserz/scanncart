@@ -6,7 +6,10 @@ from app.settings_store import (
     ALLOWED_DEVICES,
     ALLOWED_MODELS,
     ALLOWED_RESIZE_MODES,
+    BRIGHTNESS_RANGE,
     CUSTOM_MODEL_DIR,
+    EXPOSURE_RANGE,
+    FOCUS_RANGE,
     RESETTABLE_FIELDS,
     is_allowed_model,
     is_custom_model,
@@ -206,16 +209,18 @@ class SettingsUpdateRequest(BaseModel):
     remote_infer_size: int | None = Field(default=None, ge=128, le=1920)
     remote_timeout_s: float | None = Field(default=None, ge=0.1, le=60.0)
     remote_max_retries: int | None = Field(default=None, ge=0, le=5)
-    # Bounds mirror settingsFields.ts's min/max for these controls. They are
-    # generous because the meaningful range is device-specific; they exist to
-    # reject nonsense, not to encode one camera's scale. Note that calibration
-    # applies its recommendation through _apply_settings_patch directly and so
-    # is not validated here.
-    camera_brightness: float | None = Field(default=None, ge=0.0, le=255.0)
-    # Windows exposure is log2 seconds: -6 is 1/64 s, 0 is one full second.
-    camera_exposure: float | None = Field(default=None, ge=-13.0, le=0.0)
+    # The bounds come from `settings_store`, which is also where the calibration probe and the
+    # panel's sliders read them - one owner, so a probe cannot recommend a value this model would
+    # reject. Note that calibration applies its recommendation through _apply_settings_patch
+    # directly and so is not validated here.
+    camera_brightness: float | None = Field(
+        default=None, ge=BRIGHTNESS_RANGE[0], le=BRIGHTNESS_RANGE[1]
+    )
+    camera_exposure: float | None = Field(
+        default=None, ge=EXPOSURE_RANGE[0], le=EXPOSURE_RANGE[1]
+    )
     camera_autofocus: bool | None = None
-    camera_focus: float | None = Field(default=None, ge=0.0, le=1023.0)
+    camera_focus: float | None = Field(default=None, ge=FOCUS_RANGE[0], le=FOCUS_RANGE[1])
 
     # exclude_none=True means a patch can never send a field back to null, so
     # without this Revert cannot restore "leave the camera alone" — which is

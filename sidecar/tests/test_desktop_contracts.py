@@ -391,37 +391,25 @@ def test_the_panel_field_bounds_mirror_the_api():
     )
 
 
-def test_the_probe_control_ranges_mirror_the_api():
-    """The third copy of the same numbers: the range the calibration probe may write.
+def test_the_camera_control_ranges_have_one_owner():
+    """The probe must not declare its own copy of the bounds it has to stay inside.
 
-    `camera_caps.py` says its `*_RANGE` constants mirror `SettingsUpdateRequest`'s `ge`/`le`, and
-    the reason is concrete rather than tidy: a probe sweeping past a bound would spend its probes
-    measuring values the API refuses to apply, so `calibrate` could recommend a setting its own
-    PATCH cannot save.
-
-    Read out of the source instead of imported, deliberately: that module imports `cv2` and
-    `numpy` at the top, and the job these guards run in installs pytest alone (`pytest -m mirror`,
-    which is what keeps it seconds long rather than a second copy of the full run). Three
-    `NAME = (low, high)` lines are readable text; importing them would make six numbers depend on
-    the vision stack.
+    It used to: three `*_RANGE` constants in `camera_caps.py` mirroring `SettingsUpdateRequest`'s
+    `ge`/`le`, which the previous version of this file compared as text (the module imports `cv2`,
+    so the fast mirror job cannot import it). They live in `app/settings_store.py` now, where the
+    API's field bounds and the panel's slider bounds read them too - so the pair is gone rather
+    than checked, and the only thing left to fail on is a copy creeping back. That copy is worth
+    failing on because of what it costs: a probe sweeping past a bound spends its probes measuring
+    a value `calibrate` then recommends, which the operator's own save rejects.
     """
-    source = _read(CAMERA_CAPS_PY)
-    api = _api_numeric_bounds()
-    for name, field in (
-        ("EXPOSURE_RANGE", "camera_exposure"),
-        ("BRIGHTNESS_RANGE", "camera_brightness"),
-        ("FOCUS_RANGE", "camera_focus"),
-    ):
-        match = re.search(rf"^{name} = \((-?[\d.]+), (-?[\d.]+)\)$", source, re.MULTILINE)
-        assert match is not None, f"camera_caps.py no longer declares {name} as a (low, high) literal"
-        bound = api[field]
-        assert not bound["low_exclusive"] and not bound["high_exclusive"], (
-            f"{field} is bounded exclusively now, so {name} cannot be compared to it as a range"
-        )
-        assert (float(match.group(1)), float(match.group(2))) == (bound["low"], bound["high"]), (
-            f"{name} in camera_caps.py has drifted from SettingsUpdateRequest.{field}: "
-            f"probe={match.group(0)} api={bound['low']}..{bound['high']}"
-        )
+    redeclared = re.findall(
+        r"^(EXPOSURE|BRIGHTNESS|FOCUS)_RANGE\s*=", _read(CAMERA_CAPS_PY), re.MULTILINE
+    )
+    assert not redeclared, (
+        f"camera_caps.py declares {redeclared} again - import them from `app.settings_store` "
+        "(which is also where `SettingsUpdateRequest` and the panel get them) rather than "
+        "restating numbers the probe has to stay inside"
+    )
 
 
 def test_the_spawn_handshake_mirrors_the_sidecar():

@@ -152,6 +152,7 @@ from generations import V1, V2
 from label_classes import FIT_SPLITS, SPLIT_NAMES
 from train_model import read_export_names, write_data_yaml
 from workspace import (
+    ANNOTATIONS_DIRNAME,
     DATA_YAML_NAME,
     MANIFEST_NAME,
     MERGE_REPORT_NAME,
@@ -1133,7 +1134,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--annotations",
         default="",
-        help="where the v2 labels live (default: <v2>/../annotations-v2, as `make annotate` uses)",
+        help=f"where the v2 labels live (default: <v2>/../{ANNOTATIONS_DIRNAME}, as `make annotate` uses)",
     )
     ap.add_argument(
         "--extras",
@@ -1177,7 +1178,11 @@ def main(argv: list[str] | None = None) -> int:
     out = Path(args.out).expanduser()
     v1_dir = Path(args.v1).expanduser()
     v2_dir = Path(args.v2).expanduser()
-    annotations = Path(args.annotations).expanduser() if args.annotations else v2_dir.parent / "annotations-v2"
+    annotations = (
+        Path(args.annotations).expanduser()
+        if args.annotations
+        else v2_dir.parent / ANNOTATIONS_DIRNAME
+    )
     # Resolved after `--v2`, because the default is the set staged *beside* it - the same rule
     # `--annotations` follows, and what keeps a build of a set staged somewhere else from merging
     # this workspace's hard negatives into it (`workspace.resolve_extras`).
