@@ -695,7 +695,9 @@ describe('AdminPanel', () => {
       // a clean bill of health nobody measured - and it is exactly the gate the acceptance
       // number depends on.
       const { deps } = makeDeps('idle', {
-        getDatasetStatus: vi.fn(async () => datasetStatus({ source: 'roboflow', awaiting_review: null }))
+        getDatasetStatus: vi.fn(async () =>
+          datasetStatus({ source: 'roboflow', awaiting_review: null })
+        )
       })
       render(<AdminPanel port={8765} deps={deps} />)
 

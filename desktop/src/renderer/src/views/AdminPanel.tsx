@@ -855,8 +855,8 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
                 nobody verified. Zero is a real answer only when someone could have measured it. */}
             {dataset.status.awaiting_review === null ? (
               <p className="admin-hint" data-testid="dataset-review-unknown">
-                Review state unknown — this snapshot came from Roboflow, which records who
-                uploaded a frame rather than who drew its boxes. Run{' '}
+                Review state unknown — this snapshot came from Roboflow, which records who uploaded
+                a frame rather than who drew its boxes. Run{' '}
                 <code>label_progress.py --source local</code> to measure it.
               </p>
             ) : dataset.status.awaiting_review === 0 ? (
@@ -864,10 +864,7 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
                 Every decision is human work — nothing awaiting review.
               </p>
             ) : (
-              <p
-                className="admin-hint admin-dataset-review"
-                data-testid="dataset-awaiting-review"
-              >
+              <p className="admin-hint admin-dataset-review" data-testid="dataset-awaiting-review">
                 <strong>{dataset.status.awaiting_review}</strong> decision(s) awaiting review — a
                 weight drew these boxes and nobody has confirmed them
                 {unreviewedGate.length > 0 && (

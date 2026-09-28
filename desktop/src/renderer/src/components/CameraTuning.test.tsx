@@ -1021,9 +1021,7 @@ describe('the frame-edge phantom filter toggle', () => {
   it('shows a saved off state as unchecked', async () => {
     renderCard({ getSettings: async () => baseSettings({ suppress_clamped_detections: false }) })
 
-    await waitFor(() =>
-      expect(screen.getByLabelText('Drop frame-edge phantoms')).not.toBeChecked()
-    )
+    await waitFor(() => expect(screen.getByLabelText('Drop frame-edge phantoms')).not.toBeChecked())
   })
 
   it('writes the new value live, without persisting', async () => {
@@ -1042,9 +1040,7 @@ describe('the frame-edge phantom filter toggle', () => {
     await userEvent.click(screen.getByRole('button', { name: /Camera tuning/ }))
     await userEvent.click(screen.getByLabelText('Drop frame-edge phantoms'))
 
-    await waitFor(() =>
-      expect(patches).toContainEqual({ suppress_clamped_detections: false })
-    )
+    await waitFor(() => expect(patches).toContainEqual({ suppress_clamped_detections: false }))
     expect(persists).toEqual([false])
   })
 
