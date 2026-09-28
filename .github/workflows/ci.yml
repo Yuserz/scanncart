@@ -27,6 +27,34 @@ jobs:
       - name: Run tests
         run: python -m pytest -v
 
+  two-toolchain-mirrors:
+    name: Two-toolchain mirrors
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sidecar
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # Several contracts are restated by hand between the two toolchains - the `Settings`
+      # defaults and the picker's vocabularies in `desktop/.../settingsDefaults.ts` and
+      # `settingsFields.ts` - and nothing on the desktop side can import the sidecar to check
+      # them, so the guards live on this side and read the desktop files.
+      #
+      # Its own job rather than a step inside `sidecar-tests`, because a drift failure is read for
+      # the *pair* it broke: the job name and the test name say which of the two sides moved, and
+      # that is the whole diagnosis. `pytest` alone installs it: the guards import the settings
+      # modules, which are stdlib-only until `resolve_device` reaches for torch.
+      - name: Install pytest
+        run: pip install pytest
+
+      - name: The hand-mirrored settings contracts, both directions
+        run: python -m pytest tests/test_settings.py -q -k mirror
+
   desktop-tests:
     name: Desktop tests (Node)
     runs-on: ubuntu-latest
@@ -48,6 +76,9 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # `--max-warnings 0` (set in package.json) rather than a plain `eslint .`: a warning here is a
+      # prettier disagreement between two editors, and the way six of them accumulate is that none
+      # of them fails anything. Green means the tree is formatted the way the formatter wants it.
       - name: Lint
         run: npm run lint
 
