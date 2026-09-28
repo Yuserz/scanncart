@@ -3,6 +3,13 @@ from dataclasses import fields
 from pathlib import Path
 
 from app.settings import Settings, resolve_device
+from app.settings_store import (
+    ALLOWED_BACKENDS,
+    ALLOWED_DEVICES,
+    ALLOWED_MODELS,
+    ALLOWED_RESIZE_MODES,
+    REMOTE_BACKENDS,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DESKTOP_DEFAULTS = (
@@ -239,6 +246,163 @@ def test_resolve_device_forced_cuda_falls_back_when_unavailable(monkeypatch):
     _fake_torch(monkeypatch, cuda_available=False)
     assert resolve_device("cuda") == "cpu"
     assert resolve_device("auto") == "cpu"
+
+
+# --- the desktop mirror of the sidecar's vocabularies ----------------------
+#
+# `settingsDefaults.ts` is not the only file the desktop keeps in step by hand: `settingsFields.ts`
+# restates the model list, the three resize modes, the devices and the two backend sets, and the
+# picker renders straight from it. Nothing on the desktop side can import `settings_store.py` to
+# check any of that, so a value changed on one side and not the other lands silently — and this is
+# the surface a merge writes into from both directions at once, because the model default and the
+# resize vocabulary are each spelled twice.
+#
+# The guards live here, reading the desktop files, for the same reason the defaults mirror does:
+# the sidecar is the side that can see both.
+#
+# Two things they deliberately do *not* pin. The **field ranges** (`SETTINGS_FIELDS`' min/max):
+# drift there produces a rejected PATCH the operator sees, not a silently different configuration.
+# And `MODEL_LABELS`, which is prose about weights the sidecar has no opinion on.
+
+FIELDS_TS = REPO_ROOT / "desktop" / "src" / "renderer" / "src" / "lib" / "settingsFields.ts"
+
+
+def _ts_export_rhs(source: str, name: str) -> str:
+    """The right-hand side of `export const NAME = ...`, an array literal returned whole.
+
+    Whole, and with the type annotation and any trailing `as const` dropped, so a list written
+    across lines reads exactly like a one-line one. Failing loudly on an absent name is the point:
+    a guard that answered `""` would compare two empty sets and pass.
+    """
+    match = re.search(rf"^export const {re.escape(name)}\b[^=]*= *(.*)$", source, re.MULTILINE)
+    if match is None:
+        raise AssertionError(f"settingsFields.ts no longer exports {name!r}")
+    rhs = match.group(1)
+    if not rhs.startswith("["):
+        return rhs.strip()
+    tail = source[match.start(1) :]
+    depth = 0
+    for i, ch in enumerate(tail):
+        if ch == "[":
+            depth += 1
+        elif ch == "]":
+            depth -= 1
+            if depth == 0:
+                return tail[: i + 1]
+    raise AssertionError(f"{name!r} is an unterminated array literal")
+
+
+def _ts_array_items(source: str, name: str) -> list[str]:
+    """The items of `export const NAME = [...]`, in order and as written.
+
+    As written, because one of these lists holds an identifier (`CUSTOM_MODEL`) rather than a
+    literal; evaluating it here would mean re-implementing the file instead of reading it.
+    """
+    rhs = _ts_export_rhs(source, name)
+    if not (rhs.startswith("[") and rhs.endswith("]")):
+        raise AssertionError(f"{name!r} is not an array literal")
+    return [item.strip() for item in rhs[1:-1].split(",") if item.strip()]
+
+
+def _ts_entries(items: list[str]) -> tuple[set[str], set[str]]:
+    """`items` split into string literals (as Python values) and bare identifiers.
+
+    A third kind of entry raises rather than being dropped: an unrecognised item silently left out
+    of both sets is how a guard stops covering a line nobody looks at.
+    """
+    literals: set[str] = set()
+    names: set[str] = set()
+    for item in items:
+        if item[:1] in ("'", '"'):
+            literals.add(_ts_value(item))
+        elif re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", item):
+            names.add(item)
+        else:
+            raise AssertionError(f"an entry this guard cannot read: {item!r}")
+    return literals, names
+
+
+def test_the_desktop_model_list_mirror_matches_the_sidecar():
+    """The picker's list, the sidecar's validator, and the shipped default, as one fact.
+
+    The default is the load-bearing half: the desktop's constant and `Settings().active_model` are
+    the same name written twice, so a change that moved one without the other would render a picker
+    starting on a model the sidecar is not running. The stock names are compared as sets, so adding
+    or dropping a weight is caught from either side.
+    """
+    source = FIELDS_TS.read_text(encoding="utf-8")
+    custom = _ts_value(_ts_export_rhs(source, "CUSTOM_MODEL"))
+    items = _ts_array_items(source, "ALLOWED_MODELS")
+    literals, names = _ts_entries(items)
+
+    assert names == {"CUSTOM_MODEL"}, "the desktop list names the custom model by constant"
+    assert items[0] == "CUSTOM_MODEL", "the custom model is the default, so it stays first"
+    assert custom == Settings().active_model, (
+        f"the desktop's CUSTOM_MODEL is {custom!r} but the sidecar defaults to "
+        f"{Settings().active_model!r}"
+    )
+    assert literals - {custom} == set(ALLOWED_MODELS), (
+        "the desktop's model list and the sidecar's ALLOWED_MODELS have drifted: only in the "
+        f"desktop {sorted(literals - {custom} - set(ALLOWED_MODELS))}, only in the sidecar "
+        f"{sorted(set(ALLOWED_MODELS) - literals)}"
+    )
+
+
+def test_the_desktop_resize_vocabulary_mirror_matches_the_sidecar():
+    """The three modes, the order the picker offers them in, and the mode it starts on.
+
+    Ordering is a decision rather than a value: `letterbox` is listed first because it is what the
+    checkout view wants, while the default stays `auto` because that is what reads the requirement
+    recorded beside the weights. Both are asserted because collapsing them is the mistake this
+    pairing invites — and `auto` is the half a "prefer letterbox" tidy-up would quietly delete.
+    """
+    source = FIELDS_TS.read_text(encoding="utf-8")
+    items = _ts_array_items(source, "ALLOWED_RESIZE_MODES")
+    literals, names = _ts_entries(items)
+
+    assert not names, "every resize mode should be written as a literal"
+    assert literals == ALLOWED_RESIZE_MODES, (
+        f"the resize modes have drifted: desktop={sorted(literals)} "
+        f"sidecar={sorted(ALLOWED_RESIZE_MODES)}"
+    )
+    assert _ts_value(items[0]) == "letterbox", "the aspect-preserving choice is offered first"
+    assert Settings().resize_mode == "auto", (
+        "the default must stay `auto`: it is what reads the geometry recorded beside the weights, "
+        "and a fixed default runs a `Stretch to`-trained `.pt` at the wrong scale with no error"
+    )
+
+
+def test_the_desktop_device_and_backend_vocabularies_mirror_the_sidecar():
+    """Devices, backends, and which backends are remote.
+
+    The last one decides whether the UI offers the API-key field and the per-backend track-expiry
+    floor, so a backend that left that set on one side only would be rendered as a local one.
+    """
+    source = FIELDS_TS.read_text(encoding="utf-8")
+    for name, expected in (
+        ("ALLOWED_DEVICES", ALLOWED_DEVICES),
+        ("ALLOWED_BACKENDS", ALLOWED_BACKENDS),
+        ("REMOTE_BACKENDS", REMOTE_BACKENDS),
+    ):
+        literals, names = _ts_entries(_ts_array_items(source, name))
+        assert not names, f"{name} should be written as literals"
+        assert literals == expected, (
+            f"{name} has drifted from the sidecar: desktop={sorted(literals)} "
+            f"sidecar={sorted(expected)}"
+        )
+
+
+def test_the_vocabulary_parser_fails_loudly_on_a_renamed_export():
+    """The property that keeps these guards honest: a renamed or removed export has to fail as
+    "I cannot find it", never as "both lists are empty" — and an entry the parser does not
+    understand has to fail too, rather than being dropped out of the comparison."""
+    import pytest
+
+    source = FIELDS_TS.read_text(encoding="utf-8")
+    with pytest.raises(AssertionError, match="no longer exports"):
+        _ts_array_items(source, "ALLOWED_RESIZE_MODES_RENAMED")
+    with pytest.raises(AssertionError, match="cannot read"):
+        _ts_entries(["{ ...spread }"])
 
 
 def test_resolve_device_auto_falls_back_to_cpu(monkeypatch):
