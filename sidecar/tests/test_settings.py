@@ -199,7 +199,10 @@ def test_settings_defaults():
     assert s.capture_fps == 30
     assert s.conf_threshold == 0.5
     assert s.imgsz == 640
-    assert s.resize_mode == "letterbox"
+    # `auto`, not `letterbox`: it reads the requirement recorded beside the selected weights, which
+    # is the only thing that can tell a `.pt` trained on a `Stretch to` version from one trained
+    # letterboxed. See `resolve_resize_mode` / `resize_guess`.
+    assert s.resize_mode == "auto"
     assert s.infer_frame_skip == 0
     assert s.device == "auto"
     assert s.preview_height == 720

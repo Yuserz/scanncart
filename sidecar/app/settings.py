@@ -20,12 +20,22 @@ class Settings:
     capture_fps: int = 30
     conf_threshold: float = 0.5
     imgsz: int = 640
-    # Preserve grocery-item proportions in the checkout view. Stretch warps
-    # frames to a square and remains available only as an experimental A/B
-    # option; the source Roboflow export used that warp, so compare it against
-    # real camera scenes before choosing it. "auto" is retained for older config
-    # files and now resolves to this letterbox default too.
-    resize_mode: str = "letterbox"
+    # How a frame is fitted to `imgsz` before detection, and it must match how
+    # the model was trained. `auto` means "match how these weights were trained":
+    # it reads the requirement recorded beside them (`models/<stem>.json`, written
+    # by `train_model.py --install` or by the Admin Panel's record button) and only
+    # falls back to the format heuristic when nothing was recorded — `stretch` for
+    # a custom `.onnx` (a Roboflow export, which that export configures as "Stretch
+    # to"), `letterbox` for a custom `.pt`. That heuristic is a guess about weights
+    # nobody recorded anything about, and the app reports it as one
+    # (`SettingsResponse.unrecorded_resize_mode`); a recorded requirement is a fact
+    # and is used silently, which is what makes `auto` the right default rather
+    # than merely the safe-looking one. An explicit `letterbox`/`stretch` remains
+    # the operator overriding all of that, and is always honoured.
+    #
+    # The picker lists `letterbox` first and calls `stretch` experimental: preserving
+    # package proportions is the checkout default, and stretch warps the frame.
+    resize_mode: str = "auto"
     infer_frame_skip: int = 0
     device: str = "auto"
     preview_height: int = 720

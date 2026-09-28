@@ -13,7 +13,9 @@ export const DEFAULT_SETTINGS: SettingsPayload = {
   capture_fps: 30,
   conf_threshold: 0.5,
   imgsz: 640,
-  resize_mode: 'letterbox',
+  // `auto` reads the geometry recorded beside the selected weights; the picker lists
+  // `letterbox` first because that is what the checkout view wants. Mirrors settings.py.
+  resize_mode: 'auto',
   infer_frame_skip: 0,
   device: 'auto',
   preview_height: 720,
