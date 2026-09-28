@@ -20,6 +20,12 @@ export function datasetStatus(
     generated_at: '2026-09-22T04:35:09',
     age_seconds: 120,
     project: 'snc-grocery',
+    // The 2026-09-22 snapshot came from the Roboflow project, which is also the shape that
+    // carries no review state: it knows who uploaded a frame, not who drew its boxes. A test
+    // that wants the local annotator's answer overrides these three.
+    source: 'roboflow',
+    awaiting_review: null,
+    unreviewed_by_split: {},
     total: 1383,
     decided: 40,
     percent: 2.9,
@@ -139,6 +145,9 @@ export function datasetUnavailable(): DatasetStatusResponse {
     generated_at: null,
     age_seconds: null,
     project: null,
+    source: '',
+    awaiting_review: null,
+    unreviewed_by_split: {},
     total: 0,
     decided: 0,
     percent: 0,

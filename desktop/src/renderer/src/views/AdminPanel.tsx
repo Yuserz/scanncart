@@ -174,6 +174,14 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
   // this itself: the order is a claim about priority, and two places producing it is two
   // places that can disagree.
   const backlog = dataset.status?.labeling_backlog ?? []
+  // The splits where an unreviewed decision actually costs something. The gate is "no
+  // machine-only labels in valid or test": a weight's unread boxes in `train` are cheap, and
+  // the same boxes in `test` make the acceptance number a measurement of the annotator. Read
+  // in the gate's own order (valid, test) rather than the key order of a JSON object, because
+  // the split that matters most should not depend on how the file happened to be written.
+  const unreviewedGate = (['valid', 'test'] as const)
+    .map((split) => [split, dataset.status?.unreviewed_by_split?.[split] ?? 0] as const)
+    .filter(([, count]) => count > 0)
 
   if (loading && !settings) {
     return (
@@ -765,6 +773,7 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
             <p className="admin-hint" data-testid="dataset-freshness">
               snapshot from {dataset.status.generated_at ?? 'an unknown time'} (
               {describeAge(dataset.status.age_seconds)})
+              {dataset.status.source === 'local' && ` · from the local annotator`}
               {dataset.status.null_annotations > 0 &&
                 ` · ${dataset.status.null_annotations} null (background)`}
               {dataset.status.mismatches > 0 &&
@@ -838,6 +847,35 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
                 .map(([distance, counts]) => `${distance} ${counts[0]}/${counts[1]}`)
                 .join(' · ')}
             </p>
+            {/* How much of the *decided* work is a weight's boxes nobody has looked at. This is
+                the one thing a percentage of "decided" hides, and the acceptance gate reads it -
+                so it gets three states rather than a number. A local snapshot can measure it; a
+                Roboflow one cannot, because it records who uploaded a frame rather than who drew
+                its boxes, and reporting a confident 0 there would be a clean bill of health
+                nobody verified. Zero is a real answer only when someone could have measured it. */}
+            {dataset.status.awaiting_review === null ? (
+              <p className="admin-hint" data-testid="dataset-review-unknown">
+                Review state unknown — this snapshot came from Roboflow, which records who
+                uploaded a frame rather than who drew its boxes. Run{' '}
+                <code>label_progress.py --source local</code> to measure it.
+              </p>
+            ) : dataset.status.awaiting_review === 0 ? (
+              <p className="admin-hint" data-testid="dataset-review-clear">
+                Every decision is human work — nothing awaiting review.
+              </p>
+            ) : (
+              <p
+                className="admin-hint admin-dataset-review"
+                data-testid="dataset-awaiting-review"
+              >
+                <strong>{dataset.status.awaiting_review}</strong> decision(s) awaiting review — a
+                weight drew these boxes and nobody has confirmed them
+                {unreviewedGate.length > 0 && (
+                  <> ({unreviewedGate.map(([split, n]) => `${n} in ${split}`).join(', ')})</>
+                )}
+                . The acceptance gate wants none in valid or test.
+              </p>
+            )}
             {/* Which split each session's frames ended up in, because it decides how the
                 test number may be quoted. Hidden when the snapshot predates the field, so
                 an old snapshot renders as it did before rather than as an empty table. */}

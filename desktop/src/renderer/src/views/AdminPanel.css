@@ -622,6 +622,13 @@
   margin: 0;
 }
 
+/* Machine-drawn decisions nobody has reviewed. Marked rather than alarmed: it is a state to
+   work through, not a fault - but it is the one number a percentage of "decided" hides, and
+   the acceptance gate reads it (no machine-only labels in valid or test). */
+.admin-dataset-review {
+  color: #ffb020;
+}
+
 .admin-error {
   font-size: 12px;
   color: #ff6b6b;

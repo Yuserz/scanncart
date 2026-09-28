@@ -249,11 +249,26 @@ export interface DatasetStatusResponse {
   generated_at: string | null
   age_seconds: number | null
   project: string | null
+  // Which writer produced the snapshot: `roboflow` or `local` (the annotator at
+  // `sidecar/annotate/`). Empty for a snapshot written before the field existed. The two are
+  // not the same measurement — a frame the annotator has not reached is outstanding work
+  // locally, while a project cannot see a frame nobody uploaded — so the panel names the
+  // source rather than presenting both as one number.
+  source: string
   total: number
   decided: number
   percent: number
   null_annotations: number
   mismatches: number
+  // Decisions a weight made and nobody has looked at, and `null` when the snapshot's source
+  // cannot know: the Roboflow path records who uploaded a frame, not who drew its boxes. Not
+  // a 0, because "no evidence" and "nothing unreviewed" are opposite readings of the same
+  // acceptance gate ("no machine-only labels in valid/test").
+  awaiting_review: number | null
+  // Those decisions by split, so the panel can name the ones that matter. A machine's unread
+  // boxes in `train` are cheap; the same boxes in `test` make the acceptance number a
+  // measurement of the annotator. Empty when the source cannot say.
+  unreviewed_by_split: Record<string, number>
   classes: DatasetClassProgress[]
   // The worklist: the same counts as `classes`, ordered as work (most remaining first) with
   // finished cells dropped, and with a distance axis the per-class view cannot express. The

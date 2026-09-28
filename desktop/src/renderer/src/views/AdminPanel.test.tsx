@@ -689,6 +689,65 @@ describe('AdminPanel', () => {
       expect(screen.getAllByTestId('dataset-backlog-null')).toHaveLength(1)
     })
 
+    it('says the review state is unknown when the snapshot came from the project', async () => {
+      // Roboflow records who uploaded a frame, not who drew its boxes, so a project snapshot
+      // cannot say whether anything is unreviewed. Rendering "0 awaiting review" there would be
+      // a clean bill of health nobody measured - and it is exactly the gate the acceptance
+      // number depends on.
+      const { deps } = makeDeps('idle', {
+        getDatasetStatus: vi.fn(async () => datasetStatus({ source: 'roboflow', awaiting_review: null }))
+      })
+      render(<AdminPanel port={8765} deps={deps} />)
+
+      expect(await screen.findByTestId('dataset-review-unknown')).toHaveTextContent(
+        '--source local'
+      )
+      expect(screen.queryByTestId('dataset-awaiting-review')).toBeNull()
+      expect(screen.queryByTestId('dataset-review-clear')).toBeNull()
+    })
+
+    it('names the unreviewed decisions and the splits they landed in', async () => {
+      // The one number a percentage of "decided" hides: these frames count as finished work and
+      // are a weight's boxes nobody has confirmed. The split is carried because the gate is per
+      // split - unread boxes in `train` are cheap, and the same boxes in `test` make the
+      // acceptance number a measurement of the annotator.
+      const { deps } = makeDeps('idle', {
+        getDatasetStatus: vi.fn(async () =>
+          datasetStatus({
+            source: 'local',
+            awaiting_review: 12,
+            unreviewed_by_split: { train: 9, valid: 1, test: 2 }
+          })
+        )
+      })
+      render(<AdminPanel port={8765} deps={deps} />)
+
+      const line = await screen.findByTestId('dataset-awaiting-review')
+      expect(line).toHaveTextContent('12')
+      expect(line).toHaveTextContent('1 in valid, 2 in test')
+      // `train` is deliberately not listed: it is the one split where unreviewed work is cheap,
+      // and naming it would bury the two rows that decide whether the test number is usable.
+      expect(line).not.toHaveTextContent('9 in train')
+      // Which writer produced the numbers is part of the reading, not decoration.
+      expect(screen.getByTestId('dataset-freshness')).toHaveTextContent('from the local annotator')
+    })
+
+    it('reports a measured zero as a clean gate rather than as unknown', async () => {
+      // The other direction of the same three states: a local snapshot that measured nothing
+      // unreviewed is evidence, and the operator should be able to see the gate is satisfied.
+      const { deps } = makeDeps('idle', {
+        getDatasetStatus: vi.fn(async () =>
+          datasetStatus({ source: 'local', awaiting_review: 0, unreviewed_by_split: {} })
+        )
+      })
+      render(<AdminPanel port={8765} deps={deps} />)
+
+      expect(await screen.findByTestId('dataset-review-clear')).toHaveTextContent(
+        'nothing awaiting review'
+      )
+      expect(screen.queryByTestId('dataset-review-unknown')).toBeNull()
+    })
+
     it('says the worklist is empty once nothing is left to label', async () => {
       // A finished backlog must not render a stale list of 0-remaining rows, and must not
       // read as "the panel is broken" either.
