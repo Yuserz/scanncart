@@ -29,7 +29,7 @@ sidecar/.venv/Scripts/python.exe sidecar/tools/audit_v2.py     # -> sidecar/data
 | **B** | Bring `mid` up to 100 per class | ~202 | Mid is the axis v2 exists to fix, and it is still the smallest by a wide margin |
 | **C1** | Multi-item scenes | ~640 (80/class) | §2's highest value per label: one image feeds 4+ classes and it is what the app actually sees |
 | **C2** | Hard negatives | ~150–250 | Cheapest possible way to kill false positives — but read the caveat in §C2 first |
-| **D** | A held-out session for the acceptance number | ~360 | Nothing in A–C can fix this: while every batch is one session, `test` is held-out *frames* of a session `train` saw, so no split of this set can support an unseen-session claim. It comes last because it is a **re-shoot** — it can only be planned once A–C have put every cell in `train` |
+| **D** | A held-out session for the acceptance number | ~315 | Nothing in A–C can fix this: while every batch is one session, `test` is held-out *frames* of a session `train` saw, so no split of this set can support an unseen-session claim. It comes last because it is a **re-shoot** — it can only be planned once A–C have put every cell in `train` |
 
 Doing A + B takes the set to **1,838** images and lifts the distance spread from
 1,015/152/216 to **1,055/500/283** — mid goes from 11% of the set to 27%. That is the single
@@ -37,32 +37,35 @@ highest-leverage change available.
 
 ---
 
-## Tier A — the 8 cells that cannot be measured
+## Tier A — the 6 cells that cannot be measured
 
 Target 40 per cell. At 70/20/10 that puts ~8 in valid and ~4 in test: enough to see whether a
 class is failing at a distance, not enough for a tight estimate — which is the point. These are
-8 of the 21 populated cells; 12 are under 40, and none of the 24 is empty by accident — the three
-missing cells are exactly the three below.
+6 of the 21 cells; the rest are thin but populated, and only two are empty — `century-tuna` at mid
+and far, the two rows that lead this table.
 
 | Class | Distance | Have | Capture | Why |
 |-------|----------|-----:|--------:|-----|
 | `century-tuna` | mid | 0 | **40** | Empty cell — the class is invisible at mid distance |
 | `century-tuna` | far | 0 | **40** | Empty cell — likewise at far |
-| `palmolive` | close | 0 | **40** | Empty cell, and Palmolive is the one *new* class v2 adds |
 | `silver-swan-vinegar` | mid | 5 | **35** | Near-empty; the 5 that exist are one batch |
 | `lucky-me-pancit` | far | 13 | **27** | Second-largest class by close images (234 of 266) but almost nothing far |
-| `palmolive` | mid | 13 | **27** | New class, thin everywhere |
 | `555-sardines` | mid | 17 | **23** | One batch, and the class is small overall (79) |
 | `lucky-me-pancit` | mid | 19 | **21** | Same gap as its far cell |
 
-**Tier A total: 253 images.**
+**Tier A total: 186 images.**
+
+Tier A used to have two more rows, both Palmolive: `close` 40 and `mid` 27. The class was dropped,
+so its cells left with it — a target no session can fill is worse than a cell that is merely thin,
+because the coverage tables keep asking for it. `clean_v2.py drop --class palmolive` removes the
+remaining footprints (staged files, manifests, the class itself).
 
 ### Lay out the folders before you shoot, not after
 
 The product folders in the table above are the ingest contract: `clean_v2.py` maps a folder to a
 class by **exact name**, and a name it does not recognise is skipped with one `[warn]` line in a
-report nobody reads until after the session. The 8 cells live in 5 folders — `TUNA`,
-`PALMOLIVE`, `SARDINES`, `LUCKY ME` and `Silver Swan` — two of them two words, and one of those in
+report nobody reads until after the session. The 6 cells live in 4 folders — `TUNA`,
+`SARDINES`, `LUCKY ME` and `Silver Swan` — two of them two words, and one of those in
 mixed case while its siblings are all-caps, which is exactly where a hand-made tree goes wrong.
 `scaffold` emits the tree from the same `CLASS_MAP`/`DISTANCE_MAP` the ingest uses, so the folders
 it creates are by construction ones the ingest accepts:
@@ -78,17 +81,17 @@ It writes a `README.md` in that folder listing each cell's target image count an
 rename the folders afterwards.
 
 **The same gap is visible in the app**, so you do not need this file open while shooting. The
-Admin Panel's *Dataset labeling* section carries a **capture gap (Tier A)** block — `186 of 253
-images still to shoot across 8 cell(s)`, then one line per cell with what is left and its
+Admin Panel's *Dataset labeling* section carries a **capture gap (Tier A)** block — `132 of 186
+images still to shoot across 6 cell(s)`, then one line per cell with what is left and its
 `have/target` (`0/40` for the empty ones). It comes from `label_progress.py`, which reads these
 targets from the same table `scaffold` builds folders from, and it shrinks as a capture session
 lands. Its numbers are a snapshot of the last tool run, like the rest of that panel — re-run
 `label_progress.py` (and press *Refresh*) after uploading a session to see it move.
 
-Two of these deserve special care. `century-tuna` and `palmolive` have **no** mid *or* close
-reference at all in one direction, so shoot their missing cells first and in one sitting, at the
-same distances and lighting as the rest — a mid shot that doesn't match the existing mid
-distance is worse than no mid shot.
+One of these deserves special care. `century-tuna` has **no** mid *or* far reference at all in
+one direction, so shoot those two cells first and in one sitting, at the same distances and
+lighting as the rest — a mid shot that doesn't match the existing mid distance is worse than no
+mid shot.
 
 ---
 
@@ -363,15 +366,15 @@ cell s3-only and refuse a plan that is in fact fine:
 ```
 CANNOT hold out session s3: it is the only coverage of 2 cell(s), so holding it out leaves them
 with no train images and nothing for the model to learn:
+    century-tuna/far
     century-tuna/mid
-    palmolive/close
 ```
 
 That failure has exactly two fixes, and both are capture decisions rather than planning ones:
 shoot the named cells into an earlier session, or drop them from the held-out shoot. Until `s3`
 exists the same command says so and names the sessions it does know.
 
-**What to shoot: 15 per cell, across all 24 cells** — every product at every distance, so after
+**What to shoot: 15 per cell, across all 21 cells** — every product at every distance, so after
 Tier A the whole grid is covered. `scaffold --tier d` lays the tree out (and prints these exact
 commands in its README), so the folders cannot be mistyped:
 
@@ -381,13 +384,12 @@ sidecar/.venv/Scripts/python.exe sidecar/tools/clean_v2.py scaffold --tier d --r
 ```
 
 It also **answers the rule above before you shoot**, by reading the staged sets and naming the
-cells whose only coverage would be this session. Today, with 21 of the 24 cells covered:
+cells whose only coverage would be this session. Today, with 19 of the 21 cells covered:
 
 ```
-held-out coverage check: 3 of these 24 cell(s) have NO images outside s3, so shooting them
+held-out coverage check: 2 of these 21 cell(s) have NO images outside s3, so shooting them
 only into this session leaves them with no train images - `plan_split --holdout-session`
 will refuse the plan (exit 2):
-    palmolive/close
     century-tuna/far
     century-tuna/mid
   Shoot these into an earlier session (they are Tier A's own cells) or drop them from
@@ -403,7 +405,7 @@ further staged set, e.g. once Tier A's session is staged into `cleaned-v2-s2`.
 
 | | Cells | Per cell | Images |
 |---|---:|---:|---:|
-| close / mid / far × 8 classes | 24 | 15 | **360** |
+| close / mid / far × 7 classes | 21 | 15 | **315** |
 
 The 15 is chosen so the *aggregate* is quotable rather than the cell: it puts ~120 images on each
 distance, which is a per-distance reading you can defend, and ~10–15 per (class, distance) cell,
@@ -473,7 +475,6 @@ these exact names, or add to `CLASS_MAP`/`DISTANCE_MAP` in `sidecar/tools/clean_
     BEARBRAND/       CLOSE/  MID/  FAR/
     LUCKY ME/        CLOSE/  MID/  FAR/
     MILO/            CLOSE/  MID/  FAR/
-    PALMOLIVE/       CLOSE/  MID/  FAR/
     SAFEGUARD/       CLOSE/  MID/  FAR/     # close-up / Mid-shot / Far-shot also accepted
     SARDINES/        CLOSE/  MID/  FAR/
     Silver Swan/     CLOSE/  MID/  FAR/
@@ -626,10 +627,8 @@ for the weights says which of the two it is.
 - [ ] Create the Tier A folder tree: `clean_v2.py scaffold --root <capture-folder>` (do not rename
       the folders — a typo makes `clean` skip that product silently)
 - [ ] Tier A: `century-tuna` mid + far (40 each)
-- [ ] Tier A: `palmolive` close (40) — the new class, currently zero at close
 - [ ] Tier A: `silver-swan-vinegar` mid (35)
 - [ ] Tier A: `lucky-me-pancit` far (27) and mid (21)
-- [ ] Tier A: `palmolive` mid (27)
 - [ ] Tier A: `555-sardines` mid (23)
 - [ ] Tier B: `bear-brand-milk` mid (77), `milo` mid (66), `safeguard` mid (59)
 - [ ] Tier C1: multi-item scenes, 80 per class, with the similar-SKU pairs inside at least 20 of them

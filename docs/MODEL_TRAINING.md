@@ -46,7 +46,7 @@ Three honest tiers. **The middle one is the target for this capstone.**
 | 🎯 **Recommended** | **250–350** | **600–1000** | Reliable at a fixed checkout station. mAP50 ≈ 0.90+. |
 | Production-grade | 800–1500 | 3000+ | Ultralytics' official guidance. Overkill for a prototype. |
 
-> **Total target: ~2,000–2,800 raw images** across all 8 classes (§8.1).
+> **Total target: ~2,000–2,800 raw images** across all 7 classes (§8.1).
 
 ### Instances matter more than images
 
@@ -185,7 +185,7 @@ which *are* the hard-negative set, and the resulting count still looks plausible
 
 ### Train
 
-Start from **`yolo11s.pt`**, not `yolo11n.pt`. With only 8 classes and a few thousand images, `s`
+Start from **`yolo11s.pt`**, not `yolo11n.pt`. With only 7 classes and a few thousand images, `s`
 trains in roughly the same wall-clock time on a decent GPU and is noticeably better on small and
 occluded items. The sidecar's `mid_range` preset (`sidecar/app/presets.py`) already defaults to it.
 
@@ -240,10 +240,11 @@ sidecar/.venv/Scripts/python.exe sidecar/tools/train_model.py --generation v1 --
 Three things differ from v2, and none of them is a flag you have to remember — `generations.py`
 holds them per generation (§8.5):
 
-- **Seven classes, not eight.** v1's export is judged against *v1's* class list, so expect the check
-to print `note: 1 class(es) another generation declares are not in this one … Palmolive Naturals
-Bar Soap 85g`. That is the dataset described correctly, not a problem to fix here — v1 has no
-Palmolive (§8.1's table), and the app will say the same thing about the installed weight.
+- **Seven classes, and v2's seven.** v1's export is judged against *v1's* class list. That used to
+be where the two differed — v1 had no Palmolive — so the check used to print `note: 1 class(es)
+another generation declares are not in this one …`. With Palmolive dropped both generations
+declare the same names, so that note is silent, and silence here is the *correct* reading rather
+than a lost check: there is no class a v1 weight is missing that a v2 one knows.
 - **No per-distance grid.** Distance is a Roboflow tag, and v1's images predate the tagging, so
 `--val` reports the per-class table and says the breakdown does not apply. It is *not* a manifest
 that went missing, and the tool says which of the two it means.
@@ -298,6 +299,8 @@ yolo detect train \
   imgsz=640 \
   batch=16 \
   patience=25 \
+  degrees=15 \
+  scale=0.5 \
   project=runs/scanncart \
   name=scanncart-grocery-v2
 ```
@@ -307,7 +310,17 @@ yolo detect train \
 | `epochs` | 100 is a sane start. Watch for val loss plateau; `patience=25` early-stops for you. |
 | `imgsz` | 640 matches the 1280×720 capture well. Only raise to 960 if small items (sachets, sauce packets) are being missed. |
 | `batch` | 16 on ~8 GB VRAM; drop to 8 if you hit OOM. |
+| Augmentation | §4's table, in code: `±15°` rotation (`--degrees`), `±50%` scale jitter (`--scale`), horizontal flip on, `±20%` brightness. Vertical flip, mosaic and cutout are explicit **zeros** — ultralytics' defaults are not this table (`degrees=0.0`, `mosaic=1.0`), which is why the tool writes the values out instead of inheriting them. |
 | Transfer learning | Keep the COCO-pretrained backbone (the default). Do **not** train from scratch at this dataset size. |
+
+Augmentation is the one part of the run that leaves no trace in `results.csv`, so the tool prints
+the whole table before the run and records it beside the weights: the record also carries the
+`imgsz` the run trained at, because `Settings.imgsz` decides what the app resizes every frame to
+and nothing else relates that field to the model it feeds (a weight trained at 960 runs at 640 by
+default, with weaker `far` detections and no explanation anywhere). `--val` and `--install` read
+`imgsz` and the augmentation back out of the run's own `args.yaml` rather than from their own
+flags: they are separate commands from `--yes`, so a bare `--val` after `--imgsz 960 --yes` would
+otherwise measure a configuration the run never used.
 
 ### What "good" looks like
 
@@ -352,16 +365,17 @@ Two things about how it is measured, and one about what it means:
   *directory* or a **file of image paths**, so each distance is one pass over a list of the frames
   carrying that tag; the lists and their `data.yaml`s are written into `val-by-distance/` in the
   run directory, so a surprising row can be traced to the exact image set behind it.
-  `--no-per-distance` skips them, and a run whose manifest is missing says the breakdown was
+  `--no-per-distance` skips them, and a run where nothing recorded distances - neither the set's
+  own `merge_report.json`, which answers first, nor a staged manifest - says the breakdown was
   *skipped* rather than quietly reporting nothing.
 - **Each distance gets the same class list and the same dataset root**, written by the same
   function the run's own `data.yaml` comes from — a distance pass reading different `names` would
   score the model against labels it never trained on, and nothing in the output would look wrong.
-- **Distance is a tag, not a class.** The class list is the same eight names at every distance: a
-  `Palmolive Naturals Bar Soap 85g` box is that class whether the bar is 20 cm or 2 m from the
-  camera. Nothing here produces a `palmolive close` class, and the trained model has **eight**
-  outputs, not twenty-four. `Palmolive @ close` is a *cell* — a unit of coverage and of work — and
-  it is what the reports and the capture folders are organised by.
+- **Distance is a tag, not a class.** The class list is the same seven names at every distance: a
+  `555 sardines 155grams` tin is that class whether it is 20 cm or 2 m from the camera. Nothing
+  here produces a `555 sardines close` class, and the trained model has **seven** outputs, not
+  twenty-one. `555 sardines @ close` is a *cell* — a unit of coverage and of work — and it is what
+  the reports and the capture folders are organised by.
 
 The numbers are **written down, not just printed** — into `val_metrics.json` in the run, then
 into the weights' record by the following `--install` — and the Admin Panel's Model field shows
@@ -413,8 +427,9 @@ Five readings, and the last two are the ones that decide what to do:
 - **The area columns** separate "cannot see the object" from "cannot see the second one". A class
   whose missed instances are a fraction of the area of the ones it found has a small-object
   problem; equal areas on both sides means size is not what separates them.
-- **Distance is not the axis here; crowding is.** Distance is a Roboflow *tag* and needs a manifest
-  (`--val`'s per-distance grid). Crowding comes free from any export's labels, so this works on v1,
+- **Distance is not the axis here; crowding is.** Distance is a Roboflow *tag*, and the merged set
+  carries its own copy of it (`merge_report.json`; `--val`'s per-distance grid reads the set first
+  and the staged manifest second). Crowding comes free from any export's labels, so this works on v1,
   which predates the tagging entirely.
 - **`--conf-sweep` turns a miss into a slider, and prices it on both sides.** A miss ranked below
   `conf` is not a model gap, and `conf_threshold` is hot-reloadable — on v1 the crowded bucket
@@ -586,7 +601,7 @@ Checklist to wire in `best.pt`:
    requirement can come from: a `.pt` records the training run, not the dataset geometry, and the
    filename is a convention. The same file records the export's **`class_names`** — what these
    weights predict. A `.pt` keeps no label set, so a version generated from a distance-split class
-   list trains 24 outputs and nothing in the file says so; written down, the Model field's *Weights
+   list trains 21 outputs and nothing in the file says so; written down, the Model field's *Weights
    on disk* list flags it against the roster (§8.1) **before the weight is ever selected**. Pass
    `--version <n>` to the install so the record can also name the dataset version the weights came
    from.
@@ -598,7 +613,7 @@ Checklist to wire in `best.pt`:
    that `auto` uses it, so what is on disk and what each one expects are both visible before
    anything is selected — or, for a weight with no record, which way `auto` will guess. It shows
    how many classes each weight predicts, and flags any whose recorded class list is not the
-   8-name roster (§8.1) — the 24-class failure, from its listing rather than from a run. Under the
+   7-name roster (§8.1) — the 21-class failure, from its listing rather than from a run. Under the
    selected weight it also shows **what that model scored** (§6's per-class recall), read from the
    record rather than from a terminal you may not still have open.
 3. **Leave `resize_mode` on `auto`.** The record written in step 1 is what `auto` consults
@@ -731,11 +746,11 @@ The session defaults to `s1`, and a manifest written before sessions were record
 is an assumption rather than a fact, so `sanity` verifies it against the tags on the images —
 `[.ok.] capture session: s1`, or a warning naming the session tag that is missing.
 
-### 8.1 Class roster — 8 classes, defined once
+### 8.1 Class roster — 7 classes, defined once
 
 The class list is **project-wide**, not per version, and lives in the project's
 **Settings → Classes** tab. Set it before labeling starts, then turn on **Lock Classes** so a
-labeler cannot add a ninth by typing one. Renaming a class later rewrites every annotation that
+labeler cannot add an eighth by typing one. Renaming a class later rewrites every annotation that
 used it, and deleting one deletes those annotations — neither is reversible.
 
 | # | Class name (use exactly this) | v1 count | v2 upload tag | v2 images close / mid / far |
@@ -747,16 +762,21 @@ used it, and deleting one deletes those annotations — neither is reversible.
 | 5 | `silver_swan_sukang_puti_200ML` | 302 | `silver-swan-vinegar` | 242 / 5 / 35 |
 | 6 | `Milo Chocolate Drink 22g Sachet` | 68 | `milo` | 65 / 34 / 43 |
 | 7 | `safeguard_pure_white_60g` | 0 | `safeguard` | 184 / 41 / 54 |
-| 8 | `Palmolive Naturals Bar Soap 85g` *(new to v2)* | — | `palmolive` | 0 / 13 / 21 |
 
-Rows 1–7 are the **existing v1 class names, copied verbatim**. That is the whole point of the
+All seven are the **existing v1 class names, copied verbatim**. That is the whole point of the
 table: v1's 1,815 images and v2's are then the same classes, so the two sets can be merged or
-compared instead of forming two disjoint models. "v1 count" is Roboflow's per-class count in the
-`scanncart-grocery` project.
+compared instead of forming two disjoint models — and one merged dataset can train either
 
-Row 8 is genuinely new — v1 has no Palmolive — so there was no inherited name to reuse. It follows
-the same `<brand>_<product>_<size>` shape as row 7, so the roster reads as one list rather than
-seven inherited names plus an odd one out. It is also the class with no close-range images at all.
+generation's head. "v1 count" is Roboflow's per-class count in the `scanncart-grocery` project.
+
+**There was an eighth row, Palmolive Naturals Bar Soap 85g, and it was dropped.** It was the one
+class v1 has no name to inherit, and it had no close-range captures at all — 0 / 13 / 21, with its
+`close` cell a Tier A target of 40 that this rig was never going to shoot. A class one of whose
+three cells can never be filled is worse than a product the app does not know: the head is trained
+to be unsure about it, the coverage tables carry a target nobody can hit, and the export check
+reports a class the runtime roster does not have. Dropping it is what makes §8.5's two
+generations declare the same list, and `clean_v2.py drop --class palmolive` is the command that
+removed its remaining footprints (staged files, manifests, Tier A rows, the class itself).
 
 The **v2 upload tag** column is what each image actually carries in `snc-grocery`: its class tag
 plus one `close`/`mid`/`far` tag. Tags are metadata — they let you pull "every `bear-brand-milk`
@@ -767,7 +787,7 @@ image at mid distance" before labeling, and they drive the coverage checks in §
 > v1's names already contain spaces and are baked into 1,815 labeled images, so v2 keeps them
 > verbatim — continuity beats tidiness here.
 
-#### Auto Label descriptions — the prompt for each of the 8 classes
+#### Auto Label descriptions — the prompt for each of the 7 classes
 
 Auto Label (Roboflow's AI labeling) searches with a **description** and writes what it finds under
 the **class name**, so the two are separate fields and this table is the first of them. The
@@ -798,8 +818,7 @@ is green in 15/15 — the measurement is the backdrop and no colour claim is mad
 | `century_tuna_flakes_in_oil_155_grams` | `a flat round tin can of tuna flakes in oil with a yellow and blue label, CENTURY TUNA` | "Round" + "flakes in oil" against `555`'s oval sardine tin. Yellow/orange dominated these frames (12/15); confirm the label colour by eye |
 | `silver_swan_sukang_puti_200ML` | `a small plastic bottle of white vinegar with a SILVER SWAN label` | The only **bottle** in the roster, which is the whole discriminator. No colour word: this class's frames are green backdrop in 15/15, so packaging colour is unmeasurable from them |
 | `Milo Chocolate Drink 22g Sachet` | `a small foil sachet of chocolate malt drink mix, green MILO packaging` | Green in 14/15. "Chocolate malt drink mix" is the pair-breaker against `lucky_me` |
-| `safeguard_pure_white_60g` | `a white rectangular soap bar in a blue and white wrapper, SAFEGUARD` | Blue in 15/15, and "white bar" comes from the class name. Contrasts with `palmolive`, the other soap |
-| `Palmolive Naturals Bar Soap 85g` | `a rectangular bar of soap in a pink wrapper, PALMOLIVE Naturals` | The one line worth eyeballing: pink/purple led in 9/15 frames with orange in 6/15, so if your bar's wrapper is the orange variant, swap `pink` for `orange` |
+| `safeguard_pure_white_60g` | `a white rectangular soap bar in a blue and white wrapper, SAFEGUARD` | Blue in 15/15, and "white bar" comes from the class name. The only soap in the roster now that Palmolive is dropped, so it no longer has to be told apart from a second bar |
 
 **Do not give the `negative` batch a description.** It is a batch key rather than a labelable class
 (§8.1, `label_classes.PSEUDO_CLASS_SLUGS`): those frames are supposed to contain *no* roster object,
@@ -832,7 +851,21 @@ two hard limits shape what it can do:
   spaces, so the tags keep the short slug — which is also what keeps `tag:` filters and the batch
   keys working.
 - **A class's order, and Lock Classes, cannot be set by API.** Those live on the project's
-  Settings → Classes tab only, so the tool *emits* the list in the order to create it.
+  Settings → Classes tab only, so the tool *emits* the list in the order to create it — and that
+  order is load-bearing, not cosmetic: a version's export declares the classes in this project's
+  order, and a trained model's outputs are in its dataset's declared order, so a project holding the
+  right seven names in the wrong order trains a head whose indices mean a different product than the
+  roster says. Nothing downstream sees it (`check_export` compares names by *membership*), so
+  `generate_version.py` reads the project's class list **before** the POST and refuses that one case
+  — it prints both orders and sends the operator to this tab, because a version number cannot be
+  reused. A different *set* of names stays `label_classes.py`'s finding, and is *reported* by the
+  same readout rather than refused (an extra or missing class, named against the roster).
+
+  `--check` is that readout on its own: it prints the class list in order, the geometry being sent,
+  and how many images carry a decision — the size of the set a version would freeze — and spends
+  nothing, which is why it is the command to read before `--yes`. `--yes` prints the same block and
+  then posts; both run one code path, so a review cannot describe something the generation does not
+  send.
 
 Class *creation* is separate, and it does work by API — undocumented, but verified: annotating a
 throwaway image with an unknown class name registers that class, and the class survives deleting
@@ -848,21 +881,22 @@ sidecar/.venv/Scripts/python.exe sidecar/tools/label_classes.py           # repo
 sidecar/.venv/Scripts/python.exe sidecar/tools/label_classes.py --apply   # write the metadata
 ```
 
-Palmolive is the one class v2 adds, so it had no v1 name to inherit. Until the variant was
+Palmolive was the one class v2 added, so it had no v1 name to inherit: until its variant was
 confirmed its 34 images were deliberately left carrying only their `palmolive` slug rather than a
-placeholder — baking in a name that is about to change is worse than reporting a gap. It is now
-named (`Palmolive Naturals Bar Soap 85g`) and behaves like every other class: `--apply` writes it to
-those images and `--create-classes` creates it in the project.
+placeholder — baking in a name that is about to change is worse than reporting a gap. The class
+was then dropped rather than named (§8.1), so `NEW_CLASS_SLUGS` is empty again and
+`V2_ONLY_SLUGS` — the exemption that let one class skip the v1 continuity check — is empty with it.
+Both constants stay: the next new class needs exactly that treatment, and an empty dict that means
+"no class is waiting for a name" is a different statement from a deleted one.
 
 #### Distance words stay out of the class list — and the tools check
 
-The coverage tables write a cell as `Palmolive Naturals Bar Soap 85g @ close`, and the capture
-folders on disk are `PALMOLIVE/CLOSE/`. Neither is a class. Distance is a **tag** on the image
-(§8.3) and a **cell** in these reports; the class list is the 8 product names above and nothing
-else.
+The coverage tables write a cell as `555 sardines 155grams @ close`, and the capture folders on
+disk are `SARDINES/CLOSE/`. Neither is a class. Distance is a **tag** on the image (§8.3) and a
+**cell** in these reports; the class list is the 7 product names above and nothing else.
 
 Getting that wrong is quiet rather than loud. A project whose classes are `… close`, `… mid`,
-`… far` trains a head with 24 outputs instead of 8, and every box then comes back labelled with a
+`… far` trains a head with 21 outputs instead of 7, and every box then comes back labelled with a
 name the app's own roster does not contain — with no error anywhere, because nothing about a class
 *name* says what it is. So it is checked everywhere a class list is visible:
 
@@ -888,10 +922,10 @@ turns that into `class_warnings` on a `StatusMessage`: broadcast to whoever is w
 in the WebSocket **handshake** as well, so a renderer that reloads mid-capture learns it rather than
 having to infer a broken model from the labels going past. The Live view renders the sidecar's own
 sentences (`data-testid="live-class-warnings"`) — replaced on each status, never merged, and not
-styled as an error, because a capture running a 24-class weight is not failing, it is producing the
+styled as an error, because a capture running a 21-class weight is not failing, it is producing the
 wrong three rows for every item. Beside that banner the same strip carries the running model's class
 **count** in a chip of its own — `classes · roster ok`, or `classes · 1 finding` in amber — because the
-count is the one thing the banner cannot say, and it is what makes `24` where the model's own count
+count is the one thing the banner cannot say, and it is what makes `21` where the model's own count
 was expected legible as a number. The chip renders nothing until the sidecar has read a model's
 vocabulary: `0 classes` would be a claim about a head that has not spoken yet.
 
@@ -924,14 +958,14 @@ tripping it: "Farmer's Choice" tokenises to `farmer`, not `far`. Each finding is
 *fix* rather than the symptom — the offending classes have to be removed and their annotations
 moved onto the product class (a class-list edit alone orphans the boxes), then the version
 regenerated, since a version number cannot be reused (§8.2). A drift guard in
-`sidecar/tests/test_dataset_tools.py` keeps the word list covering every spelling
+`sidecar/tests/test_train_model_distances.py` keeps the word list covering every spelling
 `clean_v2.DISTANCE_MAP` accepts, so a new folder spelling without a matching guard entry fails the
 suite instead of opening a hole.
 
 The cheapest place to catch it is the `sanity` run §9 already gates a shoot on, which is why the
 check lives there as a blocking problem rather than a warning — every other class-list finding is
 work *not done yet*, while a distance in a class name is work done in the wrong shape. Keep **Lock
-Classes** on as well, so a ninth class cannot be typed into existence between runs.
+Classes** on as well, so an eighth class cannot be typed into existence between runs.
 
 ### 8.2 Version numbers and weight naming
 
@@ -1079,6 +1113,22 @@ the query for every batch.
   `wipe` then `upload --split-plan`. A wipe deletes every image, so `label_classes.py --apply` must
   be re-run afterwards.
 
+Both facts apply a plan *to the project*, which is only worth doing while the project holds the
+frames — and neither is needed by the local chain. A plan file is already the per-frame map
+(`{new_name: train|valid|test}` over every staged frame), so freezing one is a copy plus a check:
+
+```bash
+sidecar/.venv/Scripts/python.exe sidecar/tools/label_progress.py --capture-splits \
+  --split-plan sidecar/data/datasets/cleaned-v2/split_plan_b.json
+```
+
+That writes `<out>/splits.json`, the file the annotator displays and `build_dataset.py` refuses to
+build without. It validates the plan against the staged manifests on the way — writing what it
+knows and exiting 2 on any frame the plan never placed, because a plan that is *nearly* complete
+would otherwise move the acceptance number with no error anywhere. `plan_split` prints that command
+with the right filename as its last line, and `--capture-splits` without `--split-plan` is still the
+project-reading route, which is the one that has a deadline.
+
 ### 8.4 Dataset visibility — `snc-grocery` is public, and that is the plan's default
 
 `sanity` and `upload` both warn that the project is public, and neither warning says "make it
@@ -1112,7 +1162,7 @@ resize requirement, Roboflow project), and `train_model.py` reads it:
 
 | Field | v1 | v2 | Why it is per generation |
 |---|---|---|---|
-| `classes` | the 7 names `scanncart-grocery` declares | the 8 names of §8.1's roster | An export is judged against *its own* list. Judging v1 against v2's eight would refuse a set that is correct — and a guard that cries wolf is how the real mismatch gets waved through |
+| `classes` | the 7 names `scanncart-grocery` declares, alphabetically | the same 7 names in §8.1's roster order | An export is judged against *its own* list, **in its own order**: a label row's `cls` column is a position in it, so judging v1 against v2's order would refuse a set that is correct — and a guard that cries wolf is how the real mismatch gets waved through |
 | `manifest` | `None` | `cleaned-v2/manifest.json` | Distance is a Roboflow **tag**, and a YOLO export drops tags; v1 predates the tagging, so `None` means "this set has no distance axis", which is a different sentence from "the manifest went missing" |
 | `resize_mode` | `stretch`, frozen | `generate_version.REQUIRED_RESIZE_MODE` | v2's is derived from the preprocessing that generated its version; v1's version already exists, and binding it to v2's constant would let a change to v2 rewrite a requirement about an export that cannot change |
 | `export_dir` | the ingested export | `export-v2` (`--download` fills it) | The one path that genuinely differs |
@@ -1121,8 +1171,46 @@ resize requirement, Roboflow project), and `train_model.py` reads it:
 The claim `--generation` makes is therefore narrow and checkable: it selects a *spec*, not a code
 path. `--dataset-dir` and `--classes` override the two inputs it describes, so a dataset that is
 neither of these two is still trainable without editing anything — and `check_export` prints which
-classes another generation declares that this one cannot predict, because a v1 weight is correct
-and still cannot predict Palmolive.
+classes another generation declares that this one cannot predict. That note is silent today,
+because both generations declare the same seven names; it is kept because it is the sentence that
+becomes true again the moment a product is added.
+
+`classes` is **ordered**, and that order is a fact this file owns rather than one any consumer
+re-derives. A label row's `cls` column is a position in the list, so the same seven names in another
+order is a different labeling — which is not hypothetical here: those are exactly the two
+generations. So `build_dataset.py` takes the merged set's order from `V2.classes` (it used to
+re-derive it from `label_classes.SLUG_TO_CLASS`, which agreed with this spec only while both
+expressions did) and records the generation name in the set's own `data.yaml` and
+`merge_report.json`; `dataset_doctor.py` reads those back, so `make doctor` and the inline gate in
+`train_model.py --yes/--val`/`accept_v2.py` print the class list **in order**, say which generation's
+order they judged it against, and — when a set's labels index the *other* generation's order, which
+the membership check cannot see — name that generation and the flag to judge it with
+(`--generation auto`, the doctor's default, resolves this from the set itself). Relabelling a correct
+set to satisfy a check that asked the wrong question would corrupt every box in it, which is why this
+one failure is a flag rather than a rebuild.
+
+`merge_report.json` also carries the two facts about a v2 frame that the built set cannot
+reconstruct: the class it was staged under (`tags`) and the distance it was shot at
+(`sources.v2.distances`, per split). `dataset_doctor.py` checks the first against the drawings — a
+label drawn under a neighbouring product is readable, in range and in a valid box, and what it
+teaches is a model that calls that product by the name drawn — and reads the second as the measure
+of what the per-distance grid can say: a distance the model trains on with no `test` frame can never
+be measured (the split plan's problem), and a distance the plan follows that is in no split is the
+capture gap rather than a labelling one. Both are warnings rather than refusals, because a set
+holding only `close` frames is still trainable — what it cannot be is evidence about `far`.
+
+The same report has to agree with itself, and now does: `sources.<side>.images` counts the frames of
+that side that are **in the set** — a test frame the dedup pass dropped is not one — so the sides add
+up to the `splits` block, and `tags`/`distances` are those same frames again. `dataset_doctor.py`
+fails a report whose sides account for a different size than the dataset on disk, in the same sentence
+it uses for a stale frame count, because the fix is the same: rebuild it. Before this rule the report
+was internally plausible and arithmetically wrong — `v2: test 83` above a mix saying `test close 36`,
+2,123 frames across three splits holding 1,863.
+
+The same order is checked one step earlier, where the check is free: the export a version produces
+declares the classes in its **Roboflow project's** order, so `generate_version.py --yes` refuses a
+project holding the roster's names in another order before the POST — a version number cannot be
+reused, and between that POST and the doctor there is no check that can see the difference.
 
 ---
 
@@ -1135,10 +1223,11 @@ this section is the summary of what has to be true when you are done.
 - [ ] Decide on dataset visibility **before uploading** — the free plan publishes by default and
       there is no per-project toggle (§8.4)
 - [ ] Roboflow project created as **Object Detection**
-- [ ] All 8 classes defined from §8.1, names final, **Lock Classes** on (renaming later
-      invalidates existing labels) — `label_classes.py` prints the list in order and checks it,
-      including that no class name carries a distance word (`… close`/`… mid`/`… far` is a 24-class
-      head, not a per-distance one; §8.1)
+- [ ] All 7 classes defined from §8.1, names final, **in §8.1's order**, **Lock Classes** on
+      (renaming later invalidates existing labels) — `label_classes.py` prints the list in order and
+      checks it, including that no class name carries a distance word (`… close`/`… mid`/`… far` is a
+      21-class head, not a per-distance one; §8.1). The order matters: a version's export declares
+      the project's order, and `generate_version.py --yes` refuses the POST if it is another one
 - [ ] ~250–350 raw images per class captured on the real StreamCam rig, spread across the
       three distances (`CAPTURE_CHECKLIST.md` has the per-cell gaps)
 - [ ] ≥800 multi-item scenes with overlap and occlusion
@@ -1176,5 +1265,5 @@ this section is the summary of what has to be true when you are done.
       first) prints **13 `PASS` lines, exit 0** against a scratch 24-output weight — the Admin
       listing flags it before it is selected, and the Live view names the distance while it runs —
       then removes the weight and restores the settings. That is what makes step 7's reading
-      (*8 classes, no class warning*) a reading instead of a hope (`RUN_SHEET.md` §8)
+      (*7 classes, no class warning*) a reading instead of a hope (`RUN_SHEET.md` §8)
 - [ ] Verified end-to-end in Live View with `conf_threshold` / `track_expiry_s` retuned
