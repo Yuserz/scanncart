@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 import label_classes  # from sidecar/tools, on pythonpath via pytest.ini
 import label_progress  # from sidecar/tools, on pythonpath via pytest.ini
 import workspace  # from sidecar/tools, on pythonpath via pytest.ini
+import annotate.store as annotate_store
 from app.dataset_status import DISTANCES, SNAPSHOT_PATH, load_dataset_status
 from app.main import AppState, build_app
 from app.settings import Settings
@@ -368,6 +369,91 @@ def test_the_route_reports_unavailable_without_a_snapshot(monkeypatch, tmp_path)
     assert body["classes"] == []
 
 
+def test_a_project_snapshot_cannot_say_what_is_awaiting_review(tmp_path):
+    """The Roboflow path records who *uploaded* a frame, not who drew its boxes, so it has no
+    evidence about machine work. `None` rather than 0, because "no evidence" and "nothing
+    unreviewed" are opposite readings of the same acceptance gate."""
+    status = load_dataset_status(_write(tmp_path, _snapshot(source="roboflow")))
+
+    assert status.source == "roboflow"
+    assert status.awaiting_review is None
+    assert status.unreviewed_by_split == {}
+
+
+def test_a_local_snapshot_carries_the_unreviewed_decisions_and_the_splits_they_landed_in(tmp_path):
+    """A machine's unread boxes in `train` are cheap; the same boxes in `test` make the
+    acceptance number a measurement of the annotator, which is why the split travels with them."""
+    data = _snapshot(
+        source="local",
+        pseudo=3,
+        reviewed=37,
+        machine_only_by_split={"train": 2, "valid": 0, "test": 1},
+    )
+    status = load_dataset_status(_write(tmp_path, data))
+
+    assert status.awaiting_review == 3
+    # A zero split is dropped: it says nothing, and the panel renders the ones that matter.
+    assert status.unreviewed_by_split == {"train": 2, "test": 1}
+
+
+def test_a_zero_awaiting_review_is_kept_as_a_zero(tmp_path):
+    """The other direction of the same three-state field: a local snapshot that measured nothing
+    unreviewed has *evidence*, and the panel should be able to show a clean gate."""
+    status = load_dataset_status(_write(tmp_path, _snapshot(source="local", pseudo=0)))
+
+    assert status.awaiting_review == 0
+
+
+def test_the_sidecar_reads_a_locally_written_snapshot_end_to_end(tmp_path):
+    """The strongest form of the drift guard: the annotator's store is written by hand here, the
+    tool computes the snapshot from it *offline*, and the sidecar's reader takes the file. A key
+    renamed on either side of that chain fails here rather than rendering an empty panel.
+
+    It is also the check that the local source answers the questions the panel asks: the split a
+    frame sits in, the cell it belongs to, the session it was shot in, and how much of the work
+    a machine did unattended.
+    """
+    out = tmp_path / "cleaned-v2"
+    (out / "milo").mkdir(parents=True)
+    for name in ("milo_0001.jpg", "milo_0002.jpg"):
+        (out / "milo" / name).write_bytes(b"jpeg")
+    (out / "manifest.json").write_text(
+        json.dumps(
+            [
+                {"new_name": "milo_0001.jpg", "class": "milo", "distance": "mid", "session": "s2"},
+                {"new_name": "milo_0002.jpg", "class": "milo", "distance": "mid", "session": "s2"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (out / "splits.json").write_text(
+        json.dumps({"milo_0001.jpg": "test", "milo_0002.jpg": "train"}), encoding="utf-8"
+    )
+
+    annotations = tmp_path / "annotations-v2"
+    store = annotate_store.LabelStore(out=out, annotations=annotations)
+    box = annotate_store.Box(0, 0.5, 0.5, 0.2, 0.2)
+    store.record_suggestion("milo_0001.jpg", [box], "local:scanncart-grocery-v1")
+    store.write("milo_0001.jpg", [box])  # accepted a suggestion: decided, not reviewed
+    store.write("milo_0002.jpg", [box])  # by hand
+
+    assert label_progress.main(["--source", "local", "--out", str(out)]) == 0
+    status = load_dataset_status(out / "label_progress.json")
+
+    assert status.available is True
+    assert status.source == "local"
+    assert (status.total, status.decided) == (2, 2)
+    assert status.awaiting_review == 1
+    assert status.unreviewed_by_split == {"test": 1}
+    assert status.by_distance["mid"] == [2, 2]
+    assert status.by_split == {"train": [1, 1], "test": [1, 1]}
+    assert [s["name"] for s in status.sessions] == ["s2"]
+    assert status.sessions[0]["splits"] == 2
+    # The same cell the Roboflow writer keys, so the worklist does not split in two.
+    assert status.by_distance["close"] == [0, 0]
+    assert [c["slug"] for c in status.classes] == ["milo"]
+
+
 def test_the_route_serves_a_snapshot_and_needs_no_network(monkeypatch, tmp_path):
     monkeypatch.setattr("app.dataset_status.SNAPSHOT_PATH", _write(tmp_path, _snapshot()))
     body = _client().get("/api/dataset/status").json()
@@ -389,6 +475,10 @@ def test_the_route_serves_a_snapshot_and_needs_no_network(monkeypatch, tmp_path)
     assert body["labeling_backlog"][0]["slug"] == "milo"
     assert body["labeling_backlog"][0]["distance"] == "close"
     assert body["labeling_backlog"][0]["remaining"] == 60
+    # Which writer produced the numbers, and - only when the writer can know - how much of the
+    # work a machine did. A project snapshot leaves this null rather than reporting a clean zero.
+    assert body["source"] == ""
+    assert body["awaiting_review"] is None
 
 
 def test_the_route_does_not_expose_a_roboflow_key(monkeypatch, tmp_path):
@@ -430,3 +520,24 @@ def test_the_background_slug_list_matches_the_tooling():
     from app.dataset_status import BACKGROUND_SLUGS
 
     assert set(BACKGROUND_SLUGS) == set(label_classes.PSEUDO_CLASS_SLUGS)
+
+
+def test_the_split_names_match_the_tooling():
+    """The third hand-synced copy in that module, guarded the same way.
+
+    `SPLITS` is how the sidecar reads a session's counts and, from them, the `splits` field the
+    panel colours on. A name the tooling does not use is a session that reads as spread over fewer
+    splits than it is - which is exactly the flag that says how much the test number is worth.
+    """
+    from app.dataset_status import SPLITS
+
+    assert tuple(SPLITS) == label_classes.SPLIT_NAMES
+
+
+def test_the_distance_names_match_the_tooling():
+    """The fourth hand-synced copy in that module, guarded the same way.
+
+    `DISTANCES` keys `by_distance` and decides which `by_cell` rows the worklist can file, so a
+    distance the tooling renames would quietly drop out of the panel instead of reading as unknown.
+    """
+    assert tuple(DISTANCES) == label_classes.DISTANCE_ORDER

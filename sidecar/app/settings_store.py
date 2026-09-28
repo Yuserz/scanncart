@@ -115,6 +115,28 @@ RESETTABLE_FIELDS = {
 # or that _push_live_settings hands to the open camera and detector, so
 # mutating them in place takes effect without stopping capture. Everything
 # else is baked into source/detector objects at /api/capture/start time.
+# The sizes this app can be set to. YOLO requires the inference size to be a multiple of the
+# model stride (32), and ultralytics silently rounds otherwise, so a value off the grid is
+# rejected up front. Named and exported rather than left inside `_valid_field`, because the
+# *record* read (`app/models._read_imgsz`) has to apply the same rule: a weight whose record says
+# 256 would otherwise produce a warning telling the operator to set a size this module rejects -
+# the same trap `read_record` avoids for `resize_mode` by checking it against
+# `ALLOWED_RESIZE_MODES`. One predicate, so the warning cannot propose the impossible.
+IMGSZ_MIN = 320
+IMGSZ_MAX = 1920
+IMGSZ_STRIDE = 32
+
+
+def valid_imgsz(value: object) -> bool:
+    """Whether `value` is a size this app can run at. A `bool` is not: `True` is 1."""
+    return (
+        isinstance(value, int)
+        and not isinstance(value, bool)
+        and IMGSZ_MIN <= value <= IMGSZ_MAX
+        and value % IMGSZ_STRIDE == 0
+    )
+
+
 HOT_RELOADABLE_FIELDS = {
     "infer_frame_skip",
     "preview_height",
@@ -200,9 +222,7 @@ def _valid_field(name: str, value: Any) -> bool:
     if name == "conf_threshold":
         return isinstance(value, (int, float)) and 0.0 <= value <= 1.0
     if name == "imgsz":
-        # YOLO requires the inference size to be a multiple of the model stride
-        # (32); ultralytics silently rounds otherwise, so reject up front.
-        return isinstance(value, int) and 320 <= value <= 1920 and value % 32 == 0
+        return valid_imgsz(value)
     if name == "infer_frame_skip":
         return isinstance(value, int) and 0 <= value <= 30
     if name == "preview_max_fps":
@@ -384,6 +404,7 @@ def compute_warnings(
     state: str,
     api_key_present: bool | None = None,
     resize_requirement: str | None = None,
+    imgsz_requirement: int | None = None,
 ) -> list[str]:
     """Soft warnings surfaced in SettingsResponse. `api_key_present` is passed
     in rather than read here so tests stay off the filesystem; None means
@@ -394,8 +415,32 @@ def compute_warnings(
     warning, and its *absence* is what `resize_guess` reports — as a structured
     entry of its own, not a string in this list, because the panel puts a remedy
     beside that one. Nothing here may repeat it, or the panel would render the
-    same situation twice, once with a fix and once without."""
+    same situation twice, once with a fix and once without.
+
+    `imgsz_requirement` is the size recorded beside the selected weights, and it is
+    the second field of the same problem `resize_requirement` is the first of.
+    `resize_mode` says how a frame is fitted to the square; `imgsz` says how big
+    that square is - and `Settings.imgsz` is decided in this app, with nothing
+    relating it to the weights, so a run trained at 960 is fed 640 by default and
+    the small `far` objects this dataset exists for come back weaker with no screen
+    saying why. Only a *recorded* value can warn: the app's own 640 is not a claim
+    about a model, so a weight with no record stays silent rather than being
+    nagged about a number nobody measured. Native only, like the resize warnings -
+    a remote backend resizes to whatever its own workflow holds."""
     warnings: list[str] = []
+    if (
+        settings.detector_backend == "native"
+        and imgsz_requirement is not None
+        and int(settings.imgsz) != int(imgsz_requirement)
+    ):
+        # Named with the value to type, because the mismatch is invisible otherwise: 640 is a
+        # legal size, detection still works, and the only symptom is that these weights do worse
+        # than the run that measured them said they do.
+        warnings.append(
+            f"imgsz={settings.imgsz} does not match the size these weights were trained at "
+            f"({imgsz_requirement}). Detection still runs, but small or distant objects come back "
+            f"weaker than the model can do - set imgsz to {imgsz_requirement} for these weights."
+        )
     if settings.detector_backend in REMOTE_BACKENDS:
         if api_key_present is None:
             from app.credentials import has_api_key

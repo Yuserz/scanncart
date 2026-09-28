@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from app.main import AppState, build_app
 from app.models import (
     MODELS_DIR,
+    imgsz_for,
     installed_models,
     read_record,
     record_requirement,
@@ -139,6 +140,23 @@ def test_the_lookup_answers_only_for_weights_that_exist(tmp_path):
     assert requirement_for("models/gone.pt", tmp_path) is None
     assert requirement_for("../escape.pt", tmp_path) is None
     assert requirement_for("models/nested/inside.pt", tmp_path) is None
+
+
+def test_the_trained_size_is_looked_up_the_way_the_requirement_is(tmp_path):
+    """`imgsz_for` is `requirement_for`'s sibling and answers under the same contract: None for a
+    stock weight, a name the validator rejects, a missing file and a missing or unusable record -
+    because `Settings.imgsz` is only ever warned about when the record actually says."""
+    _with_record(tmp_path, imgsz=960)
+
+    assert imgsz_for("models/scanncart-grocery-v2.pt", tmp_path) == 960
+    assert imgsz_for("yolo11n.pt", tmp_path) is None
+    assert imgsz_for("models/gone.pt", tmp_path) is None
+    assert imgsz_for("../escape.pt", tmp_path) is None
+
+    # The size is reported in the listing too, which is where an operator compares it against
+    # the settings field without running anything.
+    (only,) = [m for m in installed_models(tmp_path) if m.imgsz]
+    assert only.imgsz == 960
 
 
 def test_a_corrupt_record_reads_as_no_requirement_not_an_error(tmp_path):
@@ -423,11 +441,30 @@ def test_a_corrupt_or_hostile_record_cannot_break_the_route(tmp_path):
     _with_record(tmp_path, "wrong-mode.pt", resize_mode="banana")
     _with_record(tmp_path, "list.pt")
     (tmp_path / "list.json").write_text(json.dumps([1, 2, 3]), encoding="utf-8")
+    # Every shape of imgsz that must *not* become a warning about the settings: a bool (`int`'s
+    # subclass, so `true` would arrive as 1), a string, a size ultralytics cannot train at, and
+    # one below the range. A wrong number here sends the operator to change a setting that is
+    # already right, which is worse than saying nothing.
+    _with_record(tmp_path, "bool.pt", imgsz=True)
+    _with_record(tmp_path, "string.pt", imgsz="640")
+    _with_record(tmp_path, "tiny.pt", imgsz=16)
+    _with_record(tmp_path, "huge.pt", imgsz=8192)
+    _with_record(tmp_path, "negative.pt", imgsz=-640)
 
     by_value = {m.value.rsplit("/", 1)[-1]: m for m in installed_models(tmp_path)}
-    assert set(by_value) == {"broken.pt", "wrong-mode.pt", "list.pt"}
+    assert set(by_value) == {
+        "broken.pt",
+        "wrong-mode.pt",
+        "list.pt",
+        "bool.pt",
+        "string.pt",
+        "tiny.pt",
+        "huge.pt",
+        "negative.pt",
+    }
     assert all(m.resize_mode is None for m in by_value.values())
     assert all(m.class_names == [] for m in by_value.values())
+    assert all(m.imgsz is None for m in by_value.values())
     # No class list means no finding about one. `class_list_problems([])` would say the model
     # cannot predict any roster class, which is a verdict about a list nobody has seen - the
     # wrong reading for a weight whose record simply predates the field.
@@ -439,6 +476,7 @@ def test_a_corrupt_or_hostile_record_cannot_break_the_route(tmp_path):
         "recorded": True,
         "resize_mode": None,
         "generation": None,
+        "imgsz": None,
         "source": "",
         "class_names": [],
         "validation": [],
@@ -447,6 +485,7 @@ def test_a_corrupt_or_hostile_record_cannot_break_the_route(tmp_path):
         "recorded": False,
         "resize_mode": None,
         "generation": None,
+        "imgsz": None,
         "source": "",
         "class_names": [],
         "validation": [],
@@ -544,19 +583,23 @@ def test_a_v1_weight_installs_and_the_listing_raises_nothing_about_it(tmp_path):
     assert only.class_warnings == []
 
 
-def test_a_v2_weight_that_cannot_predict_palmolive_is_named_as_such(tmp_path):
-    """The same seven names, the opposite verdict - which is why the record is read at all.
+def test_a_v2_weight_that_lost_a_class_is_judged_against_v2s_roster(tmp_path):
+    """A head that cannot predict one of its classes, judged through the record.
 
-    This is a v2 head that lost a class: it declares exactly v1's names, so nothing in the class
-    list distinguishes it from the test above. What makes it a v2 weight is the record, and the
-    quiet finding is then true of it: nothing it predicts is wrong, and one product simply never
-    appears in the log.
+    Two things were true when this test was named after Palmolive and one is left. The names used
+    to be the discriminator: a v2 head missing Palmolive declared *exactly* v1's seven, so the
+    class list could not tell it from a complete v1 weight and only the record had the answer
+    (that is `roster.resolve_roster`'s first rule). Both generations declare the same seven names
+    today, so the finding no longer depends on which generation is named - what the record is
+    still read for, and what this pins, is that a *missing* class is reported at all, and that the
+    count in the sentence is the roster's rather than a remembered 8.
     """
     import generations
     import train_model
 
     best = tmp_path / "best.pt"
     best.write_bytes(b"weights")
+    short = list(generations.V1.classes)[:6]  # everything but the last product
     train_model.install(
         best,
         tmp_path / "models",
@@ -565,17 +608,17 @@ def test_a_v2_weight_that_cannot_predict_palmolive_is_named_as_such(tmp_path):
             generations.V2,
             2,
             "snc-grocery",
-            # Everything but Palmolive, which is v1's list exactly.
-            class_names=list(generations.V1.classes),
+            class_names=short,
         ),
     )
 
     (only,) = installed_models(tmp_path / "models")
-    assert only.class_names == list(generations.V1.classes)
+    assert only.class_names == short
 
     (warning,) = only.class_warnings
-    assert "cannot predict 1 of the 8 v2 roster classes" in warning
-    assert "Palmolive Naturals Bar Soap 85g" in warning
+    missing = [n for n in generations.V2.classes if n not in short]
+    assert f"cannot predict 1 of the {len(generations.V2.classes)} v2 roster classes" in warning
+    assert missing[0] in warning
     # Neither of the other two findings: every name it predicts *is* a roster name, and none of
     # them carries a distance - which is what makes this the quiet one.
     assert "carry a distance" not in warning
@@ -589,7 +632,7 @@ def test_the_listing_flags_a_weight_trained_per_product_and_distance(monkeypatch
     contain; the filename and the checkpoint say nothing about it, and once such a model is
     running the app's own log fills with near-duplicates of one product.
     """
-    names = [f"Palmolive Naturals Bar Soap 85g {d}" for d in ("close", "mid", "far")]
+    names = [f"{V2_ROSTER[0]} {d}" for d in ("close", "mid", "far")]
     _touch(tmp_path, "distance-split.pt")
     (tmp_path / "distance-split.json").write_text(
         json.dumps({"class_names": names}), encoding="utf-8"

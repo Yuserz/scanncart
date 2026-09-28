@@ -72,6 +72,38 @@ def test_compute_warnings_default_imgsz_no_warning():
     assert not any("imgsz" in w for w in warnings)
 
 
+def test_compute_warnings_imgsz_mismatch_names_the_size_to_set():
+    """The second half of the geometry problem. A model trained at 960 runs at the app's 640 with
+    detection still working, so the only symptom is that these weights do worse than the run that
+    measured them said - which is a number nobody can account for unless the warning says why."""
+    warnings = compute_warnings(Settings(imgsz=640), "idle", None, None, 960)
+    assert any("trained at (960)" in w and "set imgsz to 960" in w for w in warnings)
+
+    # Matching, or nothing recorded, says nothing: the app's own 640 is not a claim about a
+    # model, so a weight with no record must not be nagged about a number nobody measured.
+    assert not any(
+        "trained at" in w for w in compute_warnings(Settings(imgsz=960), "idle", None, None, 960)
+    )
+    assert not any("trained at" in w for w in compute_warnings(Settings(imgsz=640), "idle"))
+
+
+def test_the_imgsz_warning_is_native_only_and_never_proposes_an_unsettable_size():
+    """A remote backend sends the frame to a workflow holding its own model, so this field decides
+    nothing there - and the recorded size has already been through `valid_imgsz`, so the sentence
+    can only ever name a value the PATCH accepts."""
+    settings = Settings(imgsz=640, detector_backend="cloud_api")
+    assert not any("trained at" in w for w in compute_warnings(settings, "idle", True, None, 960))
+
+    from app.settings_store import valid_imgsz
+
+    assert valid_imgsz(960) and not valid_imgsz(961) and not valid_imgsz(256)
+    assert not valid_imgsz(True) and not valid_imgsz(640.0) and not valid_imgsz("640")
+    for size in (320, 640, 1920):
+        assert valid_imgsz(size), size
+    for size in (288, 1952, 0, -640):
+        assert not valid_imgsz(size), size
+
+
 def test_load_settings_ignores_unknown_keys(tmp_path):
     path = tmp_path / "settings.json"
     path.write_text(json.dumps({"not_a_real_field": 123}), encoding="utf-8")
@@ -205,11 +237,6 @@ def test_onnx_on_cuda_without_the_gpu_runtime_warns(monkeypatch):
     the CPU wheel installed (the requirements.txt default) inference silently
     falls back to CPU with only an ultralytics log line."""
     monkeypatch.setattr("app.settings_store._cuda_provider_available", lambda: False)
-    # `device="cuda"` only reaches the warning when torch reports CUDA. A stock
-    # `requirements.txt` install pulls the CPU wheel, so the real torch would answer
-    # "cpu" and this test would pass for the wrong reason - or fail outright. Pin the
-    # resolution so the test is about the warning, not about the machine it runs on.
-    monkeypatch.setattr("app.settings_store.resolve_device", lambda _: "cuda")
     warnings = compute_warnings(
         Settings(detector_backend="native", active_model="models/scanncart-grocery.onnx",
                  device="cuda"),
@@ -220,7 +247,6 @@ def test_onnx_on_cuda_without_the_gpu_runtime_warns(monkeypatch):
 
 def test_onnx_on_cuda_with_the_gpu_runtime_does_not_warn(monkeypatch):
     monkeypatch.setattr("app.settings_store._cuda_provider_available", lambda: True)
-    monkeypatch.setattr("app.settings_store.resolve_device", lambda _: "cuda")
     warnings = compute_warnings(
         Settings(detector_backend="native", active_model="models/scanncart-grocery.onnx",
                  device="cuda"),

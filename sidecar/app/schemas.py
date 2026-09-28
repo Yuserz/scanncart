@@ -411,6 +411,13 @@ class InstalledModel(BaseModel):
 
     value: str
     resize_mode: str | None = None
+    # The size the weights were trained at, as `train_model.py --install` recorded it, and `None`
+    # when nothing usable was recorded - the same three-state field as `resize_mode`, for the same
+    # reason. `Settings.imgsz` is what the app resizes a frame to before detection and nothing
+    # relates it to the model, so 960-trained weights run at 640 by default with weaker `far`
+    # detections and no explanation; recorded, `compute_warnings` can name the mismatch. Not
+    # defaulted to 640: a default would be a claim about weights nobody measured.
+    imgsz: int | None = None
     auto_resolves_to: str = ""
     # Free text: which dataset version the weights came from, "" when unknown.
     source: str = ""
@@ -677,11 +684,23 @@ class DatasetStatusResponse(BaseModel):
     generated_at: str | None = None
     age_seconds: int | None = None
     project: str | None = None
+    # Which writer produced the snapshot (`roboflow` or `local`), so the panel can name the source
+    # instead of presenting two different measurements as one number. `""` when the snapshot
+    # predates the field.
+    source: str = ""
     total: int = 0
     decided: int = 0
     percent: float = 0.0
     null_annotations: int = 0
     mismatches: int = 0
+    # Machine-drawn, unreviewed decisions, or `None` when the snapshot's source cannot tell.
+    # Not defaulted to 0: the Roboflow path records who uploaded a frame rather than who drew its
+    # boxes, so "no evidence" and "none awaiting review" are different, and only one of them means
+    # the acceptance gate is satisfied.
+    awaiting_review: int | None = None
+    # The same decisions by split. A machine's unread boxes in `train` are cheap; in `test` they
+    # make the acceptance number a measurement of the annotator.
+    unreviewed_by_split: dict[str, int] = Field(default_factory=dict)
     classes: list[DatasetClassProgress] = Field(default_factory=list)
     by_distance: dict[str, list[int]] = Field(default_factory=dict)
     by_split: dict[str, list[int]] = Field(default_factory=dict)

@@ -14,7 +14,7 @@ It also reads the **record** each weight may carry - `models/<stem>.json`, writt
 source of the fact - because neither the requirement a model has to be *run* with nor the class
 list it predicts is recoverable from the weight or from its name. That second fact is what lets
 `installed_models` report `class_list_problems` for a weight before it ever runs: a checkpoint
-from a distance-split project has 24 outputs and nothing in its file says so. See `InstalledModel`'s docstring in
+from a distance-split project has 21 outputs and nothing in its file says so. See `InstalledModel`'s docstring in
 `app.schemas` for why that field is a fact rather than a guess, and note the three states it
 can be in: recorded, absent, or unreadable - all three reported distinctly, since only the
 first one is safe to act on. The record carries `--val`'s measured recall as well, so what a
@@ -43,6 +43,7 @@ from app.settings_store import (
     CUSTOM_MODEL_SUFFIXES,
     is_custom_model,
     resolve_resize_mode,
+    valid_imgsz,
 )
 
 # Resolved from the package, not the process's cwd, so a sidecar started from elsewhere
@@ -242,14 +243,14 @@ def read_record(weights: Path) -> dict:
     and the empty list means "not recorded" rather than "predicts nothing" - a hand-copied
     weight, or a record written before this field existed. This is the read that lets a bad
     weight be caught from the listing instead of only once it runs: a model trained from a
-    distance-split project predicts 24 classes, which nothing about its filename or its
+    distance-split project predicts 21 classes, which nothing about its filename or its
     checkpoint says.
 
     `generation` is which dataset generation trained these weights, and it is here because a
-    class list alone cannot answer it: v2's eight minus Palmolive *is* v1's seven, so a v2 head
-    that lost a class and a complete v1 head are the same list of names. The two want opposite
-    readings (`roster.resolve_roster`), and the training run is the only thing that ever knew
-    which it was. Read through `ROSTERS`, on `resize_mode`'s rule: a generation this app has no
+    class list alone cannot answer it when two generations differ: a head that lost a class and a
+    complete head of the *other* generation are the same list of names (they were exactly that
+    while v2's eight was v1's seven plus one). The two want opposite readings
+    (`roster.resolve_roster`), and the training run is the only thing that ever knew which it was. Read through `ROSTERS`, on `resize_mode`'s rule: a generation this app has no
     roster for answers None, i.e. "not recorded", so a record written by a *later* tool is judged
     by the names it carries rather than against a roster that does not exist yet.
     """
@@ -271,10 +272,26 @@ def read_record(weights: Path) -> dict:
         "recorded": recorded,
         "resize_mode": mode,
         "generation": generation,
+        "imgsz": _read_imgsz(body.get("imgsz")),
         "source": body.get("source") if isinstance(body.get("source"), str) else "",
         "class_names": _read_class_names(body.get("class_names")),
         "validation": _read_validation(body.get("validation")),
     }
+
+
+def _read_imgsz(value: object) -> int | None:
+    """The size the run trained at, or None when nothing usable was recorded.
+
+    Validated against `settings_store.valid_imgsz` rather than a range of its own, and that is
+    the load-bearing part: this value becomes a warning that *tells the operator which setting to
+    type*, so admitting a size the PATCH would reject would send them to a control that refuses
+    them. `resize_mode` is read under the same rule (`ALLOWED_RESIZE_MODES`), for the same reason.
+
+    A string, a bool (an `int`'s subclass, so `true` would arrive as 1), a negative number and
+    anything off the stride grid all answer None, which means "not recorded" - silence rather
+    than a wrong instruction. A record is a hand-editable file and this must never raise.
+    """
+    return int(value) if valid_imgsz(value) else None
 
 
 def requirement_for(active_model: str, directory: Path | None = None) -> str | None:
@@ -303,14 +320,37 @@ def requirement_for(active_model: str, directory: Path | None = None) -> str | N
     return read_record(weights).get("resize_mode")
 
 
+def imgsz_for(active_model: str, directory: Path | None = None) -> int | None:
+    """The `imgsz` recorded beside `active_model`, or None when there is none.
+
+    `requirement_for`'s sibling for the other half of the same geometry problem. `resize_mode`
+    says whether the frame is stretched or padded; `imgsz` says how big it is when the model sees
+    it, and `Settings.imgsz` is a field nothing else relates to the weights - so a model trained
+    at 960 runs at the app's 640 and its `far` detections come back weaker for a reason no screen
+    states. Read here rather than in `settings_store` for `requirement_for`'s reason: that module
+    is pure and never touches the filesystem, so the caller looks it up and hands it in.
+
+    Same never-raising contract: a stock weight, a name the validator rejects, a missing file and
+    a missing, corrupt or hostile record all answer None, which means "nothing recorded" rather
+    than "640".
+    """
+    if not isinstance(active_model, str) or not is_custom_model(active_model):
+        return None
+    root = Path(directory) if directory is not None else MODELS_DIR
+    weights = root / active_model.replace("\\", "/")[len(CUSTOM_MODEL_DIR):]
+    if not weights.is_file():
+        return None
+    return read_record(weights).get("imgsz")
+
+
 def generation_for(active_model: str, directory: Path | None = None) -> str | None:
     """The generation recorded beside `active_model`, or None when there is none.
 
     `requirement_for`'s sibling, and one field further in the same direction: which dataset trained
     these weights is the other fact only the record knows, and it is what decides the roster the
-    *running* model is judged against (`roster.class_list_problems`). A class list cannot settle
-    it - v1's seven are v2's eight minus Palmolive - so without this the runtime would read a v2
-    head that cannot predict Palmolive as a healthy v1 model.
+    *running* model is judged against (`roster.class_list_problems`). A class list cannot settle it
+    whenever two generations disagree about one name, so without this the runtime would read a head
+    of the wrong generation as a healthy one - which is what it did while v2 had a class v1 lacked.
 
     Same contract as `requirement_for` in every other respect: never raises, and answers None for
     a stock weight, a name the settings validator would reject, a missing file, a missing or
@@ -404,14 +444,16 @@ def installed_models(directory: Path | None = None) -> list[InstalledModel]:
         # an empty one is "not recorded" and `class_list_problems([])` would turn that silence
         # into "predicts none of the roster" - a finding about a class list nobody has seen.
         #
-        # The record's generation is passed because this is the one caller that has it, and it is
-        # what stops a v1 weight - the weights this app runs today - being held to v2's roster and
-        # reported as unable to predict Palmolive forever.
+        # The record's generation is passed because this is the one caller that has it: it is what
+        # stops a weight being held to the other generation's roster, which is how a v1 head used
+        # to be reported as unable to predict a class that only v2 had.
         names = record.get("class_names") or []
         installed.append(
             InstalledModel(
                 value=value,
                 resize_mode=required,
+                # The other half of what the weights need to be run: the recorded training size.
+                imgsz=record.get("imgsz"),
                 class_names=names,
                 class_warnings=(
                     class_list_problems(names, record.get("generation")) if names else []

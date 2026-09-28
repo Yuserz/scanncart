@@ -1,21 +1,22 @@
 """The product classes the app expects a weight to predict, and what to say when it doesn't.
 
 **One roster per generation, and the weight decides which one applies.** v1's export declares seven
-classes; v2's declares eight, which is those same seven with Palmolive added. Neither number is a
-fact about the app - it belongs to the dataset that trained the head - so a single fixed list is
-wrong in both directions. Held to v2's eight, the v1 weights *this app runs today* carry a
-permanent "cannot predict Palmolive" finding that no action clears, and a warning that cannot be
-acted on is how an operator learns to ignore the ones that can. Held to v1's seven, a v2 head
-that lost a class reads as healthy. `resolve_roster` picks by the evidence available: the record's
-`generation` when one was written beside the weight, the model's own class list otherwise.
+classes; v2's declares seven as well. Neither number is a fact about the app - it belongs to the
+dataset that trained the head - so a single fixed list is wrong whenever two generations disagree,
+which is the state this module was written for and the state it will be in again the moment a
+product is added. The two lists were eight-versus-seven until Palmolive was dropped (no v1 name to
+inherit and no close captures, so its `close` cell could never be shot), which is why they are now
+identical - see `V2_ROSTER` below for what that does and does not mean for this machinery.
+`resolve_roster` picks by the evidence available: the record's `generation` when one was written
+beside the weight, the model's own class list otherwise.
 
 Two facts about this app make this module necessary rather than decorative.
 
 **The class list is a property of the *weights*, and nothing else knows it.** A `.pt` or `.onnx`
 records no roster, the filename is only a convention, and the export that produced it is gone by
 the time someone runs it. So a model trained against a project whose class list had distances in
-it - `palmolive close` / `palmolive mid` / `palmolive far` instead of one `palmolive` - loads
-without complaint and predicts 24 classes. Every box then comes back under a label the roster does
+it - `safeguard close` / `safeguard mid` / `safeguard far` instead of one `safeguard` - loads
+without complaint and predicts 21 classes. Every box then comes back under a label the roster does
 not contain, the item log fills with near-duplicates of one product, and *nothing errors*: a class
 name records none of this. (The dataset tools refuse to *create* such a set - `clean_v2.py
 sanity`, `label_classes.py`, `generate_version.py --yes`, `train_model.check_export` - which is
@@ -51,11 +52,17 @@ V1_ROSTER: tuple[str, ...] = (
     "safeguard_pure_white_60g",
 )
 
-# v2's eight. Written as v1's seven plus the one class v2 adds, which is the convention itself
-# (MODEL_TRAINING.md 8.1: rows 1-7 are v1's names copied exactly so labels stay continuous, and
-# Palmolive is the addition) rather than a coincidence this file would have to keep re-checking.
-# A typo in either name fails the drift guard against the tools' own two lists.
-V2_ROSTER: tuple[str, ...] = V1_ROSTER + ("Palmolive Naturals Bar Soap 85g",)
+# v2's roster. It was `V1_ROSTER + ("Palmolive Naturals Bar Soap 85g",)` while Palmolive was the
+# class v2 added; that class was dropped, so the two rosters are now the same seven names. Written
+# as `V1_ROSTER` rather than as a second literal *because they are the same list*: two spellings of
+# one roster can drift, and a drift here is invisible - `resolve_roster` would still answer, just
+# with an expectation nobody holds. The name stays because the generation dimension is a fact about
+# the dataset that trained the head (`generations.py` keeps one spec per generation for the same
+# reason) and the next added class re-opens the difference immediately.
+#
+# The drift guard in tests/test_roster.py still checks both against the tools' own lists, so a
+# future addition that lands on one side only fails there rather than at a counter.
+V2_ROSTER: tuple[str, ...] = V1_ROSTER
 
 # Keyed by the `generation` a record carries (`train_model.weight_record` writes it) and by the
 # generation names the dataset tools use, so a record and this table cannot disagree about what a
@@ -90,11 +97,13 @@ def resolve_roster(
 
     1. **A recorded generation, when it names a roster this app knows.** The record is written by
        the training run (`--install`), so it is the one place the fact exists - and it is the only
-       thing that can settle the case the vocabulary cannot. v2's eight minus Palmolive *is* v1's
-       seven, so a v2-trained head that cannot predict Palmolive is indistinguishable from v1's
-       weights by its class list alone; those want opposite readings, and only the record has the
-       answer. Passing the generation is optional: the panel has a record to read, the probe on a
-       hand-copied weight may not.
+       thing that can settle a case the class list cannot. While Palmolive existed that case was
+       concrete: v2's eight minus Palmolive *is* v1's seven, so a v2-trained head that could not
+       predict Palmolive was indistinguishable from v1's weights by its vocabulary alone, and the
+       two wanted opposite readings. With the two rosters now equal this rule is a no-op rather
+       than dead code - it is what will settle the same shape of ambiguity the next time a product
+       is added, and it is already the rule the tests exercise. Passing the generation is optional:
+       the panel has a record to read, the probe on a hand-copied weight may not.
     2. **A class list that is exactly a known roster.** Whatever a record says or does not say, a
        model that predicts exactly v1's seven *is* a v1 model - which is what keeps the installed
        v1 weight clean even with no record beside it, and what makes every future generation work
@@ -138,7 +147,7 @@ def class_list_problems(
 
     Judged against the roster of the generation the weight belongs to (`resolve_roster`), because
     "cannot predict N of the roster" is only meaningful relative to the generation that declared
-    it: v1's seven are complete for v1, and v2's eight are what a v2 head is held to.
+    it: v1's seven are complete for v1, and v2's seven are what a v2 head is held to.
 
     Pure and total, so it is tested against hand-written class lists rather than a loaded model.
     Three findings, worst first, because the order is also the reading order in the panel:
@@ -148,7 +157,7 @@ def class_list_problems(
     2. **Names outside the roster** - any other stray output, e.g. a project id mix-up. Told
        separately from (1) so advice about distance is not given for a class that has none.
     3. **Roster names missing** - the other direction, and the quieter one: a model that can only
-       ever predict 6 of 8 products passes every check above, because nothing it predicted was
+       ever predict 6 of 7 products passes every check above, because nothing it predicted was
        ever wrong.
     """
     have = [str(n) for n in names]

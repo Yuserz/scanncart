@@ -282,24 +282,26 @@ def test_a_clean_class_list_reports_its_names_and_no_warnings():
 
 
 def test_the_running_weights_recorded_generation_decides_its_roster(monkeypatch):
-    """The wiring the per-generation split hangs on, at the point it matters: the *runtime* judge
-    consults the record.
+    """The wiring the record hangs on, at the point it matters: the *runtime* judge consults it.
 
-    A v2 head that lost Palmolive declares exactly v1's seven names, so its vocabulary alone
-    cannot say whether the missing class is a fault or the correct list for the generation - the
-    record is the only side that knows (`roster.resolve_roster`). Here a detector declares v1's
-    seven and the record claims v2, which is that head exactly: the finding has to appear.
-    Monkeypatched rather than read off disk, because the real `models/` directory is state this
-    suite must not assume.
+    The record decides which roster a running model is held to, and the case it was written for
+    was a v2 head that had lost Palmolive - it declared exactly v1's seven names, so its
+    vocabulary alone could not say whether the missing class was a fault or the correct list for
+    the generation (`roster.resolve_roster`'s first rule). Both generations declare the same seven
+    today, so the outcome of passing "v2" is now the same as passing "v1"; what is exercised here
+    is that the lookup happens at all and that the finding it produces is the *missing class* one,
+    with the count read off the named generation's roster. Monkeypatched rather than read off disk,
+    because the real `models/` directory is state this suite must not assume.
     """
     monkeypatch.setattr("app.main.generation_for", lambda *a, **k: "v2")
-    client, state = _make_client(detector=_DetectorDeclaring(list(V1_ROSTER)))
+    short = list(V1_ROSTER)[:6]
+    client, state = _make_client(detector=_DetectorDeclaring(short))
 
     assert client.post("/api/capture/start").json()["state"] == "running"
-    assert state.class_names == sorted(V1_ROSTER)
+    assert state.class_names == sorted(short)
     (warning,) = state.class_warnings
-    assert "cannot predict 1 of the 8 v2 roster classes" in warning
-    assert "Palmolive Naturals Bar Soap 85g" in warning
+    assert f"cannot predict 1 of the {len(V2_ROSTER)} v2 roster classes" in warning
+    assert [n for n in V2_ROSTER if n not in short][0] in warning
 
 
 def test_a_v1_weights_own_record_leaves_its_seven_classes_alone():

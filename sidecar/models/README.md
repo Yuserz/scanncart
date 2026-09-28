@@ -26,6 +26,18 @@ nothing else knows: the **`resize_mode` these weights have to be run with**.
   "resize_mode": "stretch",
   "source": "snc-grocery version 2",
   "installed_at": "2026-09-22T09:13:02",
+  "class_names": ["Bear Brand …", "lucky_me_…", "555 sardines 155grams", "…"],
+  "imgsz": 640,
+  "augmentation": {
+    "fliplr": 0.5,
+    "flipud": 0.0,
+    "degrees": 15.0,
+    "scale": 0.5,
+    "translate": 0.1,
+    "hsv_v": 0.2,
+    "mosaic": 0.0,
+    "erasing": 0.0
+  },
   "validation": [
     {
       "split": "test",
@@ -40,6 +52,32 @@ nothing else knows: the **`resize_mode` these weights have to be run with**.
   ]
 }
 ```
+
+Four more fields travel with it, and each one is a fact nothing else keeps:
+
+- **`class_names`** — the label set the model predicts, in the order it indexes them. A `.pt`
+  keeps no class list and the export that carried it is gone by the next session, so a weight
+  trained from a project whose classes were split by distance (`safeguard close` / `mid` / `far`
+  instead of one `safeguard`) would otherwise load without complaint and log one product under
+  three labels. Written down, the Admin Panel's *Weights on disk* list flags it **before the
+  weight is selected**, against the roster of its own generation.
+- **`imgsz`** — the size the run trained at. `Settings.imgsz` decides what the app resizes every
+  frame to before detection, and nothing else relates that setting to the weights: a model
+  trained at 960 runs at 640 by default, and the `far` detections come back weaker with no
+  explanation anywhere. `resize_mode` was the first half of "the app feeds the model the wrong
+  geometry"; this is the second.
+- **`augmentation`** — the table that trained, read back out of the run's own `args.yaml`
+  rather than echoed from the flags, because `--install` is a separate command from `--yes`.
+  It is evidence rather than an input (nothing in the app branches on it) and it exists because
+  augmentation leaves no trace in `results.csv`.
+- **`generation`** — which dataset trained these weights, and therefore which roster's class
+  names they are judged against. A record naming a generation this app has no roster for is read
+  as *not recorded*, so a record written by a later tool is judged by the names it carries.
+
+All four are **omitted rather than written empty** when the run did not know them, so a re-install
+of the same weights writes a byte-identical file. `POST /api/models/record` (the *Record it now*
+button) merges into an existing record rather than replacing it, so adding one field cannot delete
+what a training run measured.
 
 `validation` is what `--val` measured, carried in by the following `--install`, and the Admin
 Panel shows it beside the requirement. Three things about its shape are deliberate:
@@ -126,10 +164,12 @@ scanncart-grocery-v2.pt      v2, trained locally    <- what train_model.py insta
 scanncart-grocery-v3.pt      the next generation
 ```
 
-A `-v1.pt` is *expected* to be flagged in the Admin Panel's *Weights on disk* list: v1 declares
-seven classes and the app's roster has eight, so the listing says it can never predict Palmolive.
-Nothing it does predict is wrong, which is why the sentence is the only symptom — that is the
-record doing its job, not a damaged weight.
+A `-v1.pt` used to be *expected* to be flagged in the Admin Panel's *Weights on disk* list, back
+when v2 declared eight classes and v1's seven could never predict Palmolive. With Palmolive
+dropped the two generations declare the same seven names, so that finding is now silent and the
+silence is the correct reading — a clean listing is what "these weights can predict everything the
+roster names" looks like. Only a weight whose recorded class list really is missing a name, or
+carries a distance in one, is flagged.
 
 The `-vN` suffix is the **model generation**, not the Roboflow version number. They
 deliberately disagree: v2's weights come from `snc-grocery` **version 2**, while the model
@@ -160,9 +200,10 @@ between silencing a report and supplying the fact.
 `active_model` and `resize_mode` are both **restart-required** fields, so capture must be
 stopped before saving them.
 
-No weights are tracked in this repository — the v2 generation is produced by
-`../tools/train_model.py` from the exported Roboflow version. See `docs/MODEL_TRAINING.md`
-§6–§7 for the run and the integration steps.
+No weights are tracked in this repository. v2's are produced by `../tools/train_model.py` from the
+merged set `../tools/build_dataset.py` writes (v1's export plus the locally labeled v2 frames), and
+`../tools/dataset_doctor.py` checks that set before the GPU runs. See `docs/MODEL_TRAINING.md`
+§6–§8 and `docs/RUN_SHEET.md` for the run and the integration steps.
 
 ## What does **not** belong here
 

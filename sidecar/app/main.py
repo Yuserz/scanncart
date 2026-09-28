@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.settings import Settings, resolve_device
 from app.settings_store import (
     ALLOWED_MODELS,
+    DEFAULT_SETTINGS_PATH,
     is_custom_model,
     resize_guess,
     resolve_resize_mode,
@@ -45,6 +46,7 @@ from app.dataset_status import load_dataset_status
 from app.models import (
     MODELS_DIR,
     generation_for,
+    imgsz_for,
     installed_models,
     record_requirement,
     requirement_for,
@@ -216,7 +218,7 @@ class WSManager:
 @dataclass
 class AppState:
     settings: Settings | None = None
-    settings_path: str = "data/settings.json"
+    settings_path: str = DEFAULT_SETTINGS_PATH
     source_factory: Callable = _default_source_factory
     detector_factory: Callable = _default_detector_factory
     ws_manager: WSManager = field(default_factory=WSManager)
@@ -376,6 +378,11 @@ def _settings_response(state: "AppState") -> SettingsResponse:
     # agree about what these weights require, and a second `requirement_for` could only ever be a
     # second read of the same file.
     requirement = requirement_for(state.settings.active_model)
+    # The other half of the same fact, read from the same file: `resize_mode` says how the frame
+    # is fitted to the square, `imgsz` says how big the square is. Two lookups rather than one
+    # because the two are independent - a weight may have recorded either, both, or neither - and
+    # `compute_warnings` is where the second becomes a sentence.
+    trained_imgsz = imgsz_for(state.settings.active_model)
     # The third consumer of the same requirement, and the reason it is a *structured* entry: this
     # case has a remedy the panel can perform (`POST /api/models/record`), so it carries the model
     # to write for, the mode to write, and the sentence explaining why. `compute_warnings` no
@@ -424,7 +431,9 @@ def _settings_response(state: "AppState") -> SettingsResponse:
         camera_focus=state.settings.camera_focus,
         hot_reloadable_fields=sorted(HOT_RELOADABLE_FIELDS),
         restart_required_fields=sorted(RESTART_REQUIRED_FIELDS),
-        warnings=compute_warnings(state.settings, state.state, api_key_present, requirement),
+        warnings=compute_warnings(
+            state.settings, state.state, api_key_present, requirement, trained_imgsz
+        ),
         unrecorded_resize_mode=(
             UnrecordedResizeMode(
                 model=state.settings.active_model,

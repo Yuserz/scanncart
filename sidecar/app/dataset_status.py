@@ -28,6 +28,8 @@ from pathlib import Path
 DATASET_WORKSPACE = Path(__file__).resolve().parents[1] / "data" / "datasets"
 SNAPSHOT_PATH = DATASET_WORKSPACE / "cleaned-v2" / "label_progress.json"
 
+# Mirrors `tools/label_classes.py`'s `DISTANCE_ORDER` and `SPLIT_NAMES`, for the reason above;
+# tests/test_dataset_status.py pins each copy.
 DISTANCES = ("close", "mid", "far")
 SPLITS = ("train", "valid", "test")
 
@@ -57,6 +59,11 @@ class DatasetStatus:
     generated_at: str | None = None
     age_seconds: int | None = None
     project: str | None = None
+    # Which writer produced the snapshot: `roboflow` or `local` (the annotator). `""` for a
+    # snapshot written before the field existed. The two are not the same measurement - a frame
+    # the annotator has not reached is outstanding locally while a project cannot see a frame
+    # nobody uploaded - so the panel names the source rather than presenting both as one number.
+    source: str = ""
     total: int = 0
     decided: int = 0
     percent: float = 0.0
@@ -82,6 +89,18 @@ class DatasetStatus:
     # labeling session actually asks ("what next?") instead of by class name, and each row carries
     # its own distance because a cell is what gets labeled in one sitting.
     labeling_backlog: list[dict] = field(default_factory=list)
+    # Decisions a machine made that nobody has reviewed, and `None` when the snapshot's source
+    # cannot know. Both halves matter: the local annotator records provenance per frame, so it can
+    # count them, and the Roboflow path cannot - it knows who uploaded a frame, not who drew its
+    # boxes. A `0` from that source would read as "everything is reviewed", which is a claim the
+    # writer has no evidence for, and it is the exact number the acceptance gate depends on
+    # ("no machine-only labels in valid/test"). So absence is spelled `None` and rendered as
+    # "unknown" rather than as a clean bill of health.
+    awaiting_review: int | None = None
+    # Those decisions by the split they landed in: the gate is per split, because a machine's
+    # unread boxes in `train` are cheap and the same boxes in `test` make the acceptance number a
+    # measurement of the annotator. Empty when the source cannot say.
+    unreviewed_by_split: dict[str, int] = field(default_factory=dict)
 
 
 def _pair(value: object) -> list[int]:
@@ -107,6 +126,19 @@ def _int(value: object) -> int:
         return int(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return 0
+
+
+def _optional_int(value: object) -> int | None:
+    """A count, or `None` when the snapshot does not carry one at all.
+
+    Deliberately not `_int`: every other number in this snapshot has a meaningful zero (no
+    frames, no mismatches), while `awaiting_review` is the one whose absence is a different
+    fact from its zero. "The Roboflow path cannot tell" and "nothing is unreviewed" call for
+    opposite readings of the same gate, and a default of 0 would conflate them.
+    """
+    if value is None:
+        return None
+    return _int(value)
 
 
 def _tier_a(raw: object) -> dict:
@@ -308,6 +340,7 @@ def load_dataset_status(path: Path | None = None) -> DatasetStatus:
         generated_at=stamp if isinstance(stamp, str) else None,
         age_seconds=_age_seconds(stamp if isinstance(stamp, str) else None),
         project=raw.get("project") if isinstance(raw.get("project"), str) else None,
+        source=raw.get("source") if isinstance(raw.get("source"), str) else "",
         total=int(raw.get("total") or 0),
         decided=int(raw.get("decided") or 0),
         percent=float(raw.get("percent") or 0.0),
@@ -322,4 +355,12 @@ def load_dataset_status(path: Path | None = None) -> DatasetStatus:
         tier_a_remaining=tier_a["remaining"],
         tier_a_cells_under_target=tier_a["cells_under_target"],
         tier_a_cells=tier_a["cells"],
+        awaiting_review=_optional_int(raw.get("pseudo")),
+        unreviewed_by_split={
+            str(split): _int(count)
+            for split, count in (
+                raw.get("machine_only_by_split") if isinstance(raw.get("machine_only_by_split"), dict) else {}
+            ).items()
+            if _int(count)
+        },
     )
