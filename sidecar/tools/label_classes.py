@@ -37,6 +37,17 @@ WHAT IT CANNOT DO (verified, not assumed)
    So `--create-classes` seeds each class from a temporary annotated image, deletes
    the image, and then polls, because the refresh is slow and not immediate.
 
+WHAT THIS MODULE OWNS
+---------------------
+It is not only a tool: it is where the dataset tools' *shared vocabulary* lives, so that each fact
+is spelled once here and read by everyone who needs it:
+
+* `SLUG_TO_CLASS` / `PSEUDO_CLASS_SLUGS` - the class list, slug to exact name.
+* `DISTANCE_ORDER` - the distance axis in the order it is printed and validated, plus
+  `DISTANCE_TOKENS`, the words that give a class *name* away as a distance-split mistake.
+* `SPLIT_NAMES` - the three split directories, and `FIT_SPLITS`, the two a model is fitted on.
+* `tag_mismatch` - the rule that a frame's drawings must agree with the class it was staged as.
+
 WHAT IT DOES
 ------------
 * `class_name` metadata on every image: the exact v1 name. Metadata has no
@@ -59,11 +70,12 @@ import hashlib
 import json
 import re
 from collections import Counter
+from collections.abc import Iterable
 from pathlib import Path
 
 import httpx
 
-from workspace import DEFAULT_OUT, ENV_PATH  # workspace lives outside the repo tree
+from workspace import DEFAULT_OUT, ENV_PATH, MANIFEST_NAME  # workspace lives outside the repo tree
 
 # The Roboflow workspace slug. Not to be confused with the dataset workspace in
 # workspace.py - this one is a Roboflow account namespace, that one is a directory.
@@ -75,11 +87,15 @@ V1_PROJECT = "scanncart-grocery"
 # the order the class selector lists them, which is what makes keyboard labelling
 # predictable. Keep it stable.
 #
-# Rows 1-7 are v1's names verbatim, so v2 stays mergeable and comparable with the
-# 1,815 images already labeled in `scanncart-grocery`. Row 8 is the one class v2
-# adds - Palmolive - which had no v1 name to inherit. It is written in v1's own
-# style (`<brand>_<product>_<size>`, cf. `safeguard_pure_white_60g`) so the roster
-# reads as one list rather than seven inherited names plus an odd one out.
+# All seven are v1's names verbatim, which is what keeps v2 mergeable and comparable
+# with the 1,815 images already labeled in `scanncart-grocery` - and now that the
+# eighth is gone, the two sets declare literally the same list.
+#
+# Palmolive (`Palmolive Naturals Bar Soap 85g`) was the eighth and was dropped. It had
+# no v1 name to inherit and no close captures, so its `close` cell could never be shot
+# and a class with an unfillable cell is one the head is trained to be unsure about -
+# worse than a product the app does not know at all, which reads as a normal miss.
+# "Safeguard" below is the closest product the app does carry.
 SLUG_TO_CLASS: dict[str, str] = {
     "bear-brand-milk": "Bear Brand Fortified Powdered Milk 33g",
     "lucky-me-pancit": "lucky_me_pancit_canton_calamansi_flavor",
@@ -88,14 +104,13 @@ SLUG_TO_CLASS: dict[str, str] = {
     "silver-swan-vinegar": "silver_swan_sukang_puti_200ML",
     "milo": "Milo Chocolate Drink 22g Sachet",
     "safeguard": "safeguard_pure_white_60g",
-    "palmolive": "Palmolive Naturals Bar Soap 85g",
 }
 
 # Slugs for classes that are *declared but not yet named*. Empty, and deliberately
-# kept: Palmolive was the last one and now has a real name above, but the next new
-# class needs the same treatment. A placeholder is fine as a *label* here because it
-# is only ever printed at the operator - it is never written to an image, since
-# pinning a name that is about to change is worse than carrying the slug.
+# kept: Palmolive was the last one to need it, but the next new class needs the same
+# treatment. A placeholder is fine as a *label* here because it is only ever printed at
+# the operator - it is never written to an image, since pinning a name that is about to
+# change is worse than carrying the slug.
 NEW_CLASS_SLUGS: dict[str, str] = {}
 
 # Slugs that are batch and tag keys rather than labelable classes. `negative` is
@@ -105,22 +120,55 @@ NEW_CLASS_SLUGS: dict[str, str] = {}
 PSEUDO_CLASS_SLUGS = {"negative"}
 
 # Slugs whose class is new in v2, so v1 mutual continuity is not a property to check -
-# v1 has no Palmolive. Without this the continuity check reports the one class that is
-# supposed to be missing from v1 as a continuity break, which would train the operator
-# to ignore the check that guards the other seven.
-V2_ONLY_SLUGS = {"palmolive"}
+# v1 has no such class. **Empty, and deliberately kept**: Palmolive held this exemption
+# until it was dropped, and with it gone v2 declares exactly v1's seven - so this set is
+# what says "no class here is exempt from continuity" without deleting the mechanism
+# every future added class needs. Removing the constant instead would make the next
+# added class trip the continuity check and send the operator to fix a mapping that is
+# already right.
+V2_ONLY_SLUGS: set[str] = set()
+
+# The distance axis, in the order every reader prints it: the capture cells (MODEL_TRAINING.md
+# 8.3), the columns of `label_progress`'s grid and the rows `train_model.py --val` validates one
+# pass per. Defined *here* rather than in any of them, because the name of a distance is a fact
+# about the dataset, and a copy per tool is a tool that silently stops knowing about a fourth one:
+# `clean_v2` would stage frames under a folder nothing else understood, `recorded_distances` would
+# drop them from the grid, and the doctor would still print the row - a distance that exists
+# everywhere and is measured nowhere. The spellings a *folder* may use are `DISTANCE_MAP`'s job
+# (`clean_v2`), and `DISTANCE_TOKENS` below is what catches a distance that leaked into a class
+# name; this is the canonical three, and it is the only definition of them.
+DISTANCE_ORDER: tuple[str, ...] = ("close", "mid", "far")
+
+# The three split directories of a built set, in the order every reader prints them: the columns of
+# `plan_split`'s table and of `label_progress`'s grid, and the loop `dataset_doctor` reads the
+# distance mix in. Defined *here* for the same reason as the axis above - a split name is a fact
+# about the dataset, and a copy per tool is a tool that silently stops knowing about a fourth one:
+# `plan_split` would assign a split `clean_v2` accepts and `build_dataset` never creates, and the
+# doctor would go on printing three columns. It is deliberately **not** the yaml-key list: the
+# validation split's key is `val` (`train_model.VALIDATION_SPLITS`), and the acceptance gate reads a
+# two-name subset of this one (`accept_v2.GATE_SPLITS`) - neither is a second copy of it.
+SPLIT_NAMES: tuple[str, ...] = ("train", "valid", "test")
+
+# The two splits a model is *fitted* on - the acceptance split's complement. Read by
+# `build_dataset.find_test_duplicates`, where they are the population a test frame must not be a
+# near-copy of, and by `dataset_doctor.distance_problems`, which sums them as the frames a distance
+# is trained on. Defined here for the reason above, and pinned - together with its being a subset of
+# `SPLIT_NAMES` - by tests/test_dataset_drift_guards.py. It is deliberately *not*
+# `accept_v2.GATE_SPLITS`: that pair is the two names a gate number gets quoted from, not the two a
+# model learns from.
+FIT_SPLITS: tuple[str, ...] = ("train", "valid")
 
 # The distance words, as they appear in a class *name* when something has gone wrong.
 #
 # Distance is a **tag** on the image and a **cell** in the reports (MODEL_TRAINING.md 8.1, 8.3) -
-# never a category. A class named `palmolive close` splits one product into three classes, and the
-# trained head comes back with 24 outputs instead of 8: every box is then labelled something the
+# never a category. A class named `<product> close` splits one product into three classes, and the
+# trained head comes back with 21 outputs instead of 7: every box is then labelled something the
 # app's own roster does not contain, and nothing errors, because a class *name* records none of
 # this. That is the whole reason this is a check rather than a convention.
 #
 # Matched on whole tokens, so a legitimate name cannot trip it: "Farmer's Choice" tokenises to
-# `farmer`, which is not `far`. A drift guard in tests/test_dataset_tools.py keeps this covering
-# every spelling `clean_v2.DISTANCE_MAP` accepts, so a new folder spelling cannot slip past.
+# `farmer`, which is not `far`. A drift guard in tests/test_train_model_distances.py keeps this
+# covering every spelling `clean_v2.DISTANCE_MAP` accepts, so a new folder spelling cannot slip past.
 DISTANCE_TOKENS = frozenset({"close", "closeup", "mid", "middle", "far", "near", "distance"})
 
 
@@ -133,6 +181,28 @@ def distance_tokens_in(name: str) -> list[str]:
     """
     tokens = re.split(r"[^a-z0-9]+", str(name).lower())
     return sorted({t for t in tokens if t in DISTANCE_TOKENS})
+
+
+def tag_mismatch(slug: str, drawn: Iterable[str]) -> tuple[str, ...]:
+    """The classes drawn on a frame that contradict the class it was staged as. Pure.
+
+    Empty means the frame agrees with its tag - or that there was nothing to judge. Two slugs stand
+    for no class of ours and are unjudgeable: a **hard negative** (the decision that there is no
+    product in the frame) and a slug **nothing knows** (a hand-edited manifest, or a folder
+    `clean_v2.py` would have refused). A frame with nothing drawn is a background decision. Only a
+    **wrong class** is returned: extra boxes on a multi-item scene are intended and an unlabeled
+    sibling in the frame is not this rule's job.
+
+    The one place this rule is decided. Three readers ask it - `label_progress.py` twice (the
+    Roboflow source and the annotator's own store) and `dataset_doctor.py` - and each keeps its own
+    sentence about the answer, because they report to different audiences. It lives here because
+    the slug vocabulary does: a mislabel is a disagreement between a tag and a class name, and this
+    module owns both halves of that pair.
+    """
+    want = SLUG_TO_CLASS.get(slug)
+    if want is None:
+        return ()
+    return tuple(sorted({str(name) for name in drawn if name and name != want}))
 
 
 def load_key(project: str) -> str:
@@ -170,7 +240,7 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     out = Path(args.out).expanduser()
-    manifest = out / "manifest.json"
+    manifest = out / MANIFEST_NAME
     if not manifest.exists():
         raise SystemExit(f"no manifest at {manifest} - run clean_v2.py clean first")
     entries = json.loads(manifest.read_text(encoding="utf-8"))
@@ -224,7 +294,7 @@ def main(argv: list[str] | None = None) -> int:
 
         # ---- 3a. is any class a distance in disguise? ----
         # Checked before the create/assess step because it changes what to *do*: a project with
-        # `palmolive close` in it has to have that class deleted and its annotations moved, not
+        # `<product> close` in it has to have that class deleted and its annotations moved, not
         # another class added. Left to the extra-classes check in train_model this surfaces only
         # after a version has been generated - i.e. after the mistake is expensive.
         tainted = {name: distance_tokens_in(name) for name in sorted(have)}

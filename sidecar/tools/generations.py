@@ -8,18 +8,29 @@ the failure the roster guard exists to catch in the first place. So: one spec pe
 the trainer reads it.
 
     v1  seven classes, from the export of Roboflow's `scanncart-grocery` version 1
-    v2  eight classes, from the export of `snc-grocery` version N (`generate_version.py`)
+    v2  the same seven, from the merged local dataset (`build_dataset.py`)
 
 Three fields differ for a reason worth keeping:
 
 **classes.** A trained model's outputs are in whatever order its dataset declared, so an export is
-judged against *its own generation's* names. Judging v1 against the 8-name roster would refuse to
-train a set that is correct: Palmolive Naturals Bar Soap 85g is the class v2 adds, and v1 never
-had it. `app/roster.py` keeps the same split from the runtime's side ("rows 1-7 are v1's names
-copied exactly ... and Palmolive is the one class v2 adds"), so this side's v1 list is a strict
-subset of its v2 list. The honest consequence is that a v1 weight cannot predict Palmolive at all -
-which is what the app reports about it (`roster.class_list_problems`, the third finding), and why
-`train_model.check_export` says so out loud rather than passing it in silence.
+judged against *its own generation's* names - which is a per-generation list rather than one shared
+roster because the two sets were eight-versus-seven until Palmolive was dropped. Judging v1 against
+a list that had Palmolive in it would refuse to train a set that is correct, and judging v2 against
+v1's seven would pass a head that had lost a class. They are the same seven names today (`v1`'s list
+is spelled out below and `v2`'s is derived from `label_classes.SLUG_TO_CLASS`, which is where the
+continuity with the 1,815 v1 images actually lives), so the two entries agree by construction rather
+than by luck - and the moment a product is added they stop agreeing, which is exactly the case this
+dimension exists for. `app/roster.py` keeps the same per-generation split from the runtime's side.
+
+The list is **ordered**, and that order is a fact this file owns rather than one anything
+re-derives. A label row's `cls` column is a *position* in it, so two datasets declaring the same
+names in different orders are two different labelings - which is not hypothetical here: v1 and v2
+declare the same seven names and differ only in order. So `build_dataset.CANONICAL_NAMES` reads
+`V2.classes` instead of a second `tuple(SLUG_TO_CLASS.values())` that agreed only while the two
+expressions did, the merged set records which generation it was built for, and `dataset_doctor`
+asks `order_of` which generation a set's own declared names index rather than assuming the one it
+was told - because judging a v1 set against v2's order is a verdict about the wrong expectation,
+and it names a fix that would corrupt the labels.
 
 **manifest.** Distance is a Roboflow *tag* and a YOLO export carries none, so the per-distance
 breakdown reads a filename -> distance map from the dataset tooling's manifest. v2's set is staged
@@ -47,7 +58,7 @@ from pathlib import Path
 
 from generate_version import REQUIRED_RESIZE_MODE
 from label_classes import SLUG_TO_CLASS
-from workspace import DEFAULT_OUT
+from workspace import DEFAULT_OUT, MANIFEST_NAME
 from workspace import WORKSPACE as DATASET_ROOT
 
 
@@ -86,10 +97,11 @@ class Generation:
 V2_CLASSES: tuple[str, ...] = tuple(SLUG_TO_CLASS.values())
 
 # v1's seven, in the order its Roboflow project declares them. Retyped rather than derived as
-# "the roster minus Palmolive": a set difference is right only while that subtraction happens to
-# name the one class v2 added, and a re-spelling in one file would then silently change what this
-# dataset is expected to declare - the exact class of failure a hand-copied contract needs to fail
-# loudly on instead.
+# "the roster minus one class": a set difference is right only while that subtraction happens to
+# name the class the other generation adds, and a re-spelling in one file would then silently change
+# what this dataset is expected to declare - the exact class of failure a hand-copied contract needs
+# to fail loudly on instead. (v2's list below *is* derived from the shared slug mapping, because for
+# v2 the mapping itself is the contract - the same table the uploader tags images from.)
 V1_CLASSES: tuple[str, ...] = (
     "555 sardines 155grams",
     "Bear Brand Fortified Powdered Milk 33g",
@@ -115,7 +127,7 @@ V2 = Generation(
     name="v2",
     classes=V2_CLASSES,
     export_dir=DATASET_ROOT / "export-v2",
-    manifest=DEFAULT_OUT / "manifest.json",
+    manifest=DEFAULT_OUT / MANIFEST_NAME,
     resize_mode=REQUIRED_RESIZE_MODE,
     roboflow_project="snc-grocery",
 )
@@ -141,11 +153,31 @@ def get(name: str) -> Generation:
         ) from None
 
 
+def order_of(names) -> Generation | None:
+    """The generation whose class list is exactly `names`, **in that order** - or None.
+
+    The question "which generation's order do these labels index?", asked of a dataset's own
+    declared names. Only an exact match counts: the two generations declare the same seven names
+    today and differ only in order, so this is the one read that tells them apart - and a near miss
+    (one name short, one name renamed) is a *membership* question, which `check_export` judges.
+    Answering "closest roster" here would put a set of labels back in the wrong generation's mouth,
+    which is the failure this exists to prevent.
+    """
+    wanted = tuple(names)
+    for generation in GENERATIONS.values():
+        if wanted == generation.classes:
+            return generation
+    return None
+
+
 def added_over(earlier: Generation, later: Generation) -> tuple[str, ...]:
-    """Classes `later` declares that `earlier` does not - Palmolive, for v1 -> v2.
+    """Classes `later` declares that `earlier` does not.
 
     Used to say *which* classes a weight can never predict, rather than only that it cannot
-    predict all of them: the fact is per-class, and "Palmolive" is the actionable half of it.
+    predict all of them: the fact is per-class, and the name is the actionable half of it. Empty
+    for v1 -> v2 today, because both declare the same seven names (Palmolive was the entry here
+    until it was dropped) - which is the honest reading, not a broken check: there is no class a
+    v1 weight is missing that a v2 one knows.
     """
     have = set(earlier.classes)
     return tuple(name for name in later.classes if name not in have)
