@@ -73,6 +73,8 @@ from workspace import SIDECAR_ROOT
 # the tool works under test and dies by hand. Same shim as spec_check.py.
 sys.path.append(str(SIDECAR_ROOT))
 
+from app.settings_store import DEFAULT_SETTINGS_PATH  # noqa: E402  (needs the path above)
+
 # The ladder the shipped tolerance is judged against. It brackets the constant on **both** sides on
 # purpose: the looser rows are the argument, because what 0.02 would buy and what it would cost is
 # the reason 0.01 is where it is. A ladder that stopped at the shipped value could only show the
@@ -87,11 +89,11 @@ NEGATIVES_DIR = SIDECAR_ROOT / "data" / "datasets" / "cleaned-negatives" / "nega
 REAL_SPLIT = "train"
 REAL_SAMPLE = 60
 
-#: The app's own settings file, resolved absolutely: `settings_store.load_settings` reads a
-#: relative path against the process cwd, which is the repo root when a person runs this by hand
-#: and the sidecar dir when Electron spawns it. Naming the file outright is the only way the tool
-#: reads the same one whichever way it was started. Same reasoning as spec_check.py.
-SETTINGS_PATH = SIDECAR_ROOT / "data" / "settings.json"
+#: The app's own settings file. The name is the app's (`settings_store` writes it); the absolute
+#: resolution is this tool's, because `load_settings` reads a relative path against the process
+#: cwd - the repo root when a person runs this by hand, the sidecar dir when Electron spawns it -
+#: and the tool has to read the same file whichever way it was started. Same as spec_check.py.
+SETTINGS_PATH = SIDECAR_ROOT / DEFAULT_SETTINGS_PATH
 
 #: How many instances a class needs in the phantom breakdown before it is worth naming. A single
 #: stray detection is not a pattern, and the doc's point - that the phantoms are not one product -

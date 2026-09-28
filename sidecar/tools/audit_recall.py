@@ -107,9 +107,10 @@ import resources  # must precede numpy/torch: sets OMP/MKL thread limits
 from generations import DEFAULT, GENERATIONS, Generation
 from generations import get as generation_for
 # The distance join and its ordering are imported rather than re-derived: `train_model` already
-# reads the manifest on filenames (`distance_map`) and owns `DISTANCE_ORDER`, and a second copy is
-# how the two tools' `far` comes to mean different files. It is a light module - `httpx` and these
-# same helpers, nothing that loads a model - so importing it costs this tool nothing at start-up.
+# reads a distance record on filenames (`distance_map`, whatever file holds it) and owns
+# `DISTANCE_ORDER`, and a second copy is how the two tools' `far` comes to mean different files. It
+# is a light module - `httpx` and these same helpers, nothing that loads a model - so importing it
+# costs this tool nothing at start-up.
 from train_model import DISTANCE_ORDER, distance_map
 from workspace import SIDECAR_ROOT
 

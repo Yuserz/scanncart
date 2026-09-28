@@ -79,6 +79,8 @@ from workspace import SIDECAR_ROOT
 # pytest.ini adds the sidecar root for it: the tool works under test and dies by hand.
 sys.path.append(str(SIDECAR_ROOT))
 
+from app.settings_store import DEFAULT_SETTINGS_PATH  # noqa: E402  (needs the path above)
+
 # The PRD's own numbers. Not tunable by flag on purpose: a target that can be moved is not a
 # target, and a run that needed a looser one would be reporting a failure it should report.
 TARGET_FPS = 30.0
@@ -91,11 +93,11 @@ PRD_REALTIME = "PRD 5, 7"
 PRD_LATENCY = "PRD 6, 7"
 PRD_ACCURACY = "PRD 7"
 
-# The app's own settings file, resolved absolutely: `settings_store.load_settings` takes a
-# relative path and reads it against the process cwd, which is the repo root when a person runs
-# this by hand and the sidecar dir when Electron spawns it. Naming the file outright is the only
-# way the tool reads the same one whichever way it was started.
-SETTINGS_PATH = SIDECAR_ROOT / "data" / "settings.json"
+# The app's own settings file. The name is the app's (`settings_store` writes it); the absolute
+# resolution is this tool's, because `load_settings` reads a relative path against the process
+# cwd - the repo root when a person runs this by hand, the sidecar dir when Electron spawns it -
+# and the tool has to read the same file whichever way it was started.
+SETTINGS_PATH = SIDECAR_ROOT / DEFAULT_SETTINGS_PATH
 
 # How many labelled test frames to time over. Enough that one slow frame cannot move the mean,
 # few enough that a full check stays a couple of minutes on this machine.
