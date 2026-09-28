@@ -67,7 +67,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import resources  # must precede numpy: sets OMP/MKL thread limits before init
-from workspace import DEFAULT_OUT, ENV_PATH  # workspace lives outside the repo tree
+from label_classes import DISTANCE_ORDER, SPLIT_NAMES  # defined once for every tool that reads them
+from workspace import DEFAULT_OUT, ENV_PATH, MANIFEST_NAME  # workspace lives outside the repo tree
 
 from PIL import Image, ImageOps
 import numpy as np
@@ -103,7 +104,6 @@ CLASS_MAP = {
     "BEARBRAND": "bear-brand-milk",
     "LUCKY ME": "lucky-me-pancit",
     "MILO": "milo",
-    "PALMOLIVE": "palmolive",
     "SAFEGUARD": "safeguard",
     "SARDINES": "555-sardines",
     "Silver Swan": "silver-swan-vinegar",
@@ -120,6 +120,8 @@ CLASS_MAP = {
 NEGATIVE_CLS = CLASS_MAP["NEGATIVES"]
 
 # Distance folder name -> tag. The source uses three different spellings.
+# Its *values* are `DISTANCE_ORDER`'s (imported above), so this is a map of spellings rather than a
+# second copy of the axis.
 DISTANCE_MAP = {
     "CLOSE": "close",
     "CLOSE-UP": "close",
@@ -129,9 +131,6 @@ DISTANCE_MAP = {
     "FAR": "far",
     "FAR-SHOT": "far",
 }
-
-DISTANCE_ORDER = ["close", "mid", "far"]
-SPLIT_NAMES = ("train", "valid", "test")
 
 # The first capture. Every unsuffixed batch, every manifest written before sessions were
 # recorded, and every retag that did not name one has meant this session - so it is the
@@ -145,13 +144,14 @@ DEFAULT_SESSION = "s1"
 # appear on disk, not the slug - so `scaffold` cannot create a folder that `ingest` would
 # then skip as unmapped. Three of these names contain a space, which is exactly where a
 # hand-made tree goes wrong: a typo costs a whole capture session, silently.
+# Palmolive's two rows used to be here (close 40, mid 27), which is what made this table's
+# target 253. The class was dropped - no v1 name to inherit and no close captures, so it could
+# only ever be an eighth class the model cannot finish - and its rows went with it: target 186.
 TIER_A_CELLS: dict[tuple[str, str], int] = {
     ("TUNA", "mid"): 40,
     ("TUNA", "far"): 40,
-    ("PALMOLIVE", "close"): 40,
     ("Silver Swan", "mid"): 35,
     ("LUCKY ME", "far"): 27,
-    ("PALMOLIVE", "mid"): 27,
     ("SARDINES", "mid"): 23,
     ("LUCKY ME", "mid"): 21,
 }
@@ -644,7 +644,7 @@ def write_manifest(
                     "dup_mse": rec.dup_mse,
                 }
             )
-    (out / "manifest.json").write_text(
+    (out / MANIFEST_NAME).write_text(
         json.dumps(
             [
                 {
@@ -925,7 +925,7 @@ def staged_coverage(dirs: Iterable[Path]) -> Counter[tuple[str, str]]:
     """
     counts: Counter[tuple[str, str]] = Counter()
     for directory in dirs:
-        manifest = Path(directory).expanduser() / "manifest.json"
+        manifest = Path(directory).expanduser() / MANIFEST_NAME
         try:
             entries = json.loads(manifest.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -949,8 +949,8 @@ def holdout_gaps(
     shooting the session.
 
     The zero test is deliberately the planner's own (see `plan_split.summarize`'s
-    `no_train_cells`), and a test in sidecar/tests/test_dataset_tools.py holds the two
-    together rather than trusting that they stay equal. A non-held-out tier has no gaps to
+    `no_train_cells`), and `tests/test_plan_split.py` holds the two together rather than
+    trusting that they stay equal. A non-held-out tier has no gaps to
     report: Tier A *is* the fix for them, so it would name its own cells as problems.
     """
     if not plan.holdout:
@@ -1006,7 +1006,7 @@ def cmd_scaffold(args: argparse.Namespace) -> int:
         return 0
     # The projection in the README is only printed when the staged set can be counted.
     current: int | None = None
-    manifest = Path(args.out).expanduser() / "manifest.json"
+    manifest = Path(args.out).expanduser() / MANIFEST_NAME
     if manifest.exists():
         try:
             current = len(json.loads(manifest.read_text(encoding="utf-8")))
@@ -1298,6 +1298,179 @@ def cmd_wipe(args: argparse.Namespace) -> int:
     return 0
 
 
+# --------------------------------------------------------------------------
+# Dropping a class
+# --------------------------------------------------------------------------
+
+
+def drop_targets(entries: list[dict], slug: str) -> list[dict]:
+    """The manifest rows belonging to `slug`. Pure, so the selection is testable on its own."""
+    return [e for e in entries if e.get("class") == slug]
+
+
+def labeled_on_server(index: dict[str, dict], names: list[str]) -> list[str]:
+    """Which of `names` carry drawn boxes, judged by the *type* of `annotations`.
+
+    `{"count": 0}` is a deliberate null annotation, not work - so a hard negative is not
+    "labeled" here. Only a positive count means somebody drew something, and that is the case
+    `drop` refuses to delete without `--force`.
+    """
+    out: list[str] = []
+    for name in names:
+        ann = (index.get(name) or {}).get("annotations")
+        if isinstance(ann, dict) and int(ann.get("count") or 0) > 0:
+            out.append(name)
+    return out
+
+
+def park_staged(out: Path, slug: str, names: list[str], park: Path) -> list[str]:
+    """Move a dropped class's staged JPEGs out of the live set. Returns the names moved.
+
+    Moved rather than deleted: the capture is real work, and the cheap re-entry is an upload.
+    The per-class bucket is removed only when it is empty, so anything an operator added by
+    hand is left where they put it.
+    """
+    bucket = out / slug
+    dest = park / slug
+    moved: list[str] = []
+    for name in names:
+        src = bucket / name
+        if not src.exists():
+            continue
+        dest.mkdir(parents=True, exist_ok=True)
+        target = dest / name
+        if target.exists():
+            target.unlink()
+        shutil.move(str(src), str(target))
+        moved.append(name)
+    try:
+        bucket.rmdir()
+    except OSError:
+        pass
+    return moved
+
+
+def rewrite_manifests(out: Path, drop: set[str]) -> tuple[int, int]:
+    """Rewrite `manifest.json` and `manifest.csv` without the rows in `drop`.
+
+    Atomic, for the same reason `write_manifest`'s callers and `save_settings` are: a half-written
+    manifest is indistinguishable from "the set changed", and every reader downstream - the split
+    planner, `label_progress`, the dataset build - would act on it.
+
+    The CSV's own header is read back rather than respelled here, so a column added to
+    `write_manifest` cannot be silently dropped by this command. Returns (before, after).
+    """
+    manifest = out / MANIFEST_NAME
+    entries = json.loads(manifest.read_text(encoding="utf-8"))
+    kept = [e for e in entries if e.get("new_name") not in drop]
+    tmp = manifest.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(kept, indent=1), encoding="utf-8")
+    os.replace(tmp, manifest)
+
+    csv_path = out / "manifest.csv"
+    if csv_path.exists():
+        with csv_path.open(newline="", encoding="utf-8") as fh:
+            reader = csv.DictReader(fh)
+            fields = list(reader.fieldnames or [])
+            rows = [r for r in reader if r.get("new_name") not in drop]
+        tmp_csv = csv_path.with_suffix(".csv.tmp")
+        with tmp_csv.open("w", newline="", encoding="utf-8") as fh:
+            writer = csv.DictWriter(fh, fieldnames=fields)
+            writer.writeheader()
+            writer.writerows(rows)
+        os.replace(tmp_csv, csv_path)
+    return len(entries), len(kept)
+
+
+def cmd_drop(args: argparse.Namespace) -> int:
+    """Remove one class from the staged set, and optionally from the project.
+
+    Written for Palmolive, and kept because the reason it was dropped is a general one: a class
+    with no v1 name to inherit and no close captures can never be finished, and a class the model
+    cannot learn is worse than a product the app does not know. Every other way of dropping it
+    leaves part of its footprint behind - deleting the images in the UI leaves the staged JPEGs,
+    the manifest and the Tier A table still describing a class that is gone, and the next
+    `clean` re-ingests it.
+
+    Nothing is destroyed by default: the JPEGs are parked, not deleted, so re-shooting that
+    product later is an upload rather than a shoot. Deleting from the project is opt-in twice
+    (`--delete-on-server` and `--yes`), and it refuses outright when a frame carries boxes
+    somebody drew - a labeled frame cannot be recovered from the manifest.
+    """
+    out = Path(args.out).expanduser()
+    manifest = out / MANIFEST_NAME
+    if not manifest.exists():
+        raise SystemExit(f"no manifest at {manifest} - run `clean` first")
+
+    entries = json.loads(manifest.read_text(encoding="utf-8"))
+    targets = drop_targets(entries, args.class_name)
+    park = Path(args.park).expanduser() if args.park else out / "dropped"
+
+    if not targets:
+        print(f"no staged images for class `{args.class_name}` in {manifest}")
+        print(f"staged entries: {len(entries)} - nothing to drop")
+        return 0
+
+    names = [e["new_name"] for e in targets]
+    print(f"class `{args.class_name}`: {len(targets)} staged image(s)")
+
+    client = None
+    index: dict[str, dict] = {}
+    if args.delete_on_server:
+        try:
+            import httpx
+        except ImportError:
+            raise SystemExit("httpx is not installed - run this with the sidecar venv python")
+        api_key, project = load_credentials(args)
+        client = httpx.Client(timeout=180)
+        index = fetch_index(client, api_key, args.workspace, project)
+        missing = [n for n in names if n not in index]
+        labeled = labeled_on_server(index, names)
+        print(f"project {project}: {len(index)} image(s) indexed")
+        if missing:
+            print(f"  {len(missing)} staged image(s) are not in the project (never uploaded, or already gone)")
+        if labeled and not args.force:
+            if client is not None:
+                client.close()
+            raise SystemExit(
+                f"refusing to delete {len(labeled)} image(s) that carry annotations "
+                f"({', '.join(labeled[:5])}{', ...' if len(labeled) > 5 else ''}) - "
+                "someone drew those boxes and the manifest cannot restore them. "
+                "Move the annotations off the class first, or pass --force if you are sure."
+            )
+        if not args.yes and not args.dry_run:
+            raise SystemExit("refusing to delete a project's images without --yes")
+
+    if args.dry_run:
+        print(f"--dry-run: would park {len(names)} file(s) in {park / args.class_name}")
+        print(f"--dry-run: would rewrite manifest.json + manifest.csv to {len(entries) - len(names)} entries")
+        if args.delete_on_server:
+            print(f"--dry-run: would delete {len([n for n in names if n in index])} image(s) from the project")
+        print("nothing changed")
+        if client is not None:
+            client.close()
+        return 0
+
+    moved = park_staged(out, args.class_name, names, park)
+    before, after = rewrite_manifests(out, set(names))
+    print(f"  manifest:     {before} -> {after} entries ({before - after} removed)")
+    print(f"  staged files: {len(moved)} parked in {park / args.class_name}")
+
+    if args.delete_on_server:
+        ids = [index[n]["id"] for n in names if n in index]
+        deleted = delete_images(client, api_key, args.workspace, project, ids) if ids else 0
+        print(f"  project:      {deleted} image(s) deleted from {project}")
+        client.close()
+
+    remaining = len(json.loads(manifest.read_text(encoding="utf-8")))
+    print(f"\nstaged total for the remaining classes: {remaining}")
+    print(
+        "the class row itself lives on Settings -> Classes (no API for it) - delete it there,"
+        " then `sanity` verifies the class list is the seven in MODEL_TRAINING.md 8.1"
+    )
+    return 0
+
+
 def cmd_upload(args: argparse.Namespace) -> int:
     try:
         import httpx
@@ -1305,7 +1478,7 @@ def cmd_upload(args: argparse.Namespace) -> int:
         raise SystemExit("httpx is not installed - run this with the sidecar venv python")
 
     out = Path(args.out).expanduser()
-    manifest = out / "manifest.json"
+    manifest = out / MANIFEST_NAME
     if not manifest.exists():
         raise SystemExit(f"no manifest at {manifest} - run `clean` first")
 
@@ -1453,7 +1626,12 @@ def _index_sweep(client: "httpx.Client", api_key: str, workspace: str, project: 
         resp = client.post(
             f"https://api.roboflow.com/{workspace}/{project}/search",
             params={"api_key": api_key},
-            json={"limit": 500, "offset": offset, "fields": ["name", "tags", "split"]},
+            # `annotations` is asked for on every sweep rather than only where it is read: it is
+            # what separates "unannotated" from "deliberately marked empty" (see
+            # NULL_ANNOTATION_VERDICT), and `drop --delete-on-server` refuses to delete a frame
+            # whose boxes someone drew. `retag` ignores the extra field; asking twice for the same
+            # page would be the expensive mistake.
+            json={"limit": 500, "offset": offset, "fields": ["name", "tags", "split", "annotations"]},
         )
         body = resp.json()
         if "results" not in body:
@@ -1537,7 +1715,7 @@ def cmd_retag(args: argparse.Namespace) -> int:
         raise SystemExit("httpx is not installed - run this with the sidecar venv python")
 
     out = Path(args.out).expanduser()
-    manifest = out / "manifest.json"
+    manifest = out / MANIFEST_NAME
     if not manifest.exists():
         raise SystemExit(f"no manifest at {manifest} - run `clean` first")
 
@@ -1636,10 +1814,14 @@ def cmd_retag(args: argparse.Namespace) -> int:
 # Pre-capture sanity check
 # --------------------------------------------------------------------------
 
-# The 8 canonical class names, exactly as MODEL_TRAINING.md §8.1 records them.
-# Rows 1-7 are v1's names copied verbatim - that is the whole reason labels stay
-# continuous with the 1,815 images already annotated in `scanncart-grocery`.
-# Row 8 (Palmolive) is genuinely new, so the real name is still to be chosen.
+# The 7 canonical class names, exactly as MODEL_TRAINING.md §8.1 records them - v1's
+# names copied verbatim, which is the whole reason labels stay continuous with the
+# 1,815 images already annotated in `scanncart-grocery`.
+#
+# Seven, not eight: Palmolive was the eighth and was dropped. It had no v1 name to
+# inherit and no close captures, so its cell could never be filled and a class that
+# cannot be finished is worse than a product the app does not know - `clean_v2.py drop`
+# is what removes the rest of its footprints.
 #
 # These are CLASS names, not the upload tags. The tags (`bear-brand-milk`, ...)
 # are per-image metadata and are already on all 1,383 images; the class list is
@@ -1791,7 +1973,7 @@ def class_list_rows(classes: object) -> list[tuple[str, str, str]]:
         return [(
             "fail",
             "no classes defined yet",
-            "set the 8 names from MODEL_TRAINING.md section 8.1 on Settings -> Classes and\n"
+            "set the 7 names from MODEL_TRAINING.md section 8.1 on Settings -> Classes and\n"
             "turn on Lock Classes BEFORE labeling. Renaming a class later rewrites every\n"
             "annotation that used it and deleting one deletes them - neither is\n"
             "reversible. The upload tags on the images are NOT the class list.",
@@ -1799,16 +1981,15 @@ def class_list_rows(classes: object) -> list[tuple[str, str, str]]:
 
     missing = [c for c in V1_CLASSES if c not in names]
     extra = sorted(n for n in names if n not in V1_CLASSES)
-    palmolive = sorted(n for n in names if "palmolive" in n.lower())
     detail = f"{len(names)} class(es) defined"
     if missing:
-        detail += f"; missing {len(missing)} v1 name(s):\n  " + "\n  ".join(missing)
-    if palmolive:
-        detail += f"; palmolive class: {palmolive[0]}"
-    else:
-        detail += "; no palmolive class yet (the one genuinely new class)"
+        detail += f"; missing {len(missing)} name(s):\n  " + "\n  ".join(missing)
     if extra:
+        # Every name that is not one of the seven is unexpected, including a product the app
+        # does not know: a class nothing labels is a head output nothing can ever match.
         detail += f"; unexpected: {', '.join(extra)}"
+        if any("palmolive" in n.lower() for n in extra):
+            detail += " (a Palmolive class means it was re-created after being dropped)"
     rows: list[tuple[str, str, str]] = [("warn" if missing else "ok", "class list", detail)]
 
     tainted = {n: words for n, words in ((n, distance_tokens_in(n)) for n in sorted(names)) if words}
@@ -1819,7 +2000,7 @@ def class_list_rows(classes: object) -> list[tuple[str, str, str]]:
             + ", ".join(repr(n) for n in tainted),
             "distance is a tag on the image and a cell in the coverage tables - never a class - so\n"
             "these split one product into three and train one head output per product-and-distance\n"
-            "(24 instead of 8). Every box then comes back under a name the app's own roster does\n"
+            "(21 instead of 7). Every box then comes back under a name the app's own roster does\n"
             "not contain, and nothing errors, because a class *name* records none of this.\n"
             "Fix the Classes tab, MOVE the annotations onto the product class (a class-list edit\n"
             "alone orphans the boxes), then regenerate the version - a version number cannot be\n"
@@ -1955,7 +2136,7 @@ def cmd_sanity(args: argparse.Namespace) -> int:
             ))
 
         # ---- class list: the thing that is expensive to fix after labeling ----
-        # Including the distance words, because a class named `palmolive close` is the one
+        # Including the distance words, because a class named `<product> close` is the one
         # class-list problem that labeling cannot fix afterwards (see `class_list_rows`).
         results.extend(class_list_rows(meta.get("classes")))
 
@@ -1981,7 +2162,7 @@ def cmd_sanity(args: argparse.Namespace) -> int:
             ))
 
     # ---- against the local manifest, which is the source of truth for intent ----
-    manifest = Path(args.out).expanduser() / "manifest.json"
+    manifest = Path(args.out).expanduser() / MANIFEST_NAME
     if manifest.exists():
         entries = json.loads(manifest.read_text(encoding="utf-8"))
         # Compared against the *wanted* set, not the manifest's own list, so the session
@@ -2163,6 +2344,37 @@ def main(argv: list[str] | None = None) -> int:
     )
     t.add_argument("--dry-run", action="store_true")
     t.set_defaults(func=cmd_retag)
+
+    d = sub.add_parser("drop", help="remove one class from the staged set (and optionally the project)")
+    d.add_argument(
+        "--class",
+        dest="class_name",
+        required=True,
+        metavar="SLUG",
+        help="the class slug to drop, e.g. palmolive",
+    )
+    d.add_argument("--out", default=str(DEFAULT_OUT))
+    d.add_argument(
+        "--park",
+        default="",
+        help="where to move the dropped class's staged JPEGs (default: <out>/dropped)",
+    )
+    d.add_argument("--project", default="")
+    d.add_argument("--api-key", default="")
+    d.add_argument("--workspace", default="yusri-caloyloy")
+    d.add_argument(
+        "--delete-on-server",
+        action="store_true",
+        help="also delete this class's images from the project (needs --yes)",
+    )
+    d.add_argument(
+        "--force",
+        action="store_true",
+        help="allow --delete-on-server to delete images that carry annotations",
+    )
+    d.add_argument("--yes", action="store_true", help="confirm deleting from the project")
+    d.add_argument("--dry-run", action="store_true")
+    d.set_defaults(func=cmd_drop)
 
     s = sub.add_parser("sanity", help="check the project is ready to receive a capture session")
     s.add_argument("--out", default=str(DEFAULT_OUT))

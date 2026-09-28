@@ -49,7 +49,7 @@ import time
 from pathlib import Path
 
 import resources  # must precede numpy/torch: sets OMP/MKL thread limits
-from workspace import DEFAULT_OUT, SIDECAR_ROOT  # DEFAULT_OUT is outside the repo tree
+from workspace import DEFAULT_OUT, MANIFEST_NAME, SIDECAR_ROOT  # DEFAULT_OUT is outside the repo
 
 # yolo11s, not the m: under the default 20% VRAM cap (1.7 GB of 8.6) the m OOMs
 # even at batch 4, and this pass only needs to name distractor-shaped objects.
@@ -83,7 +83,9 @@ DISTRACTORS = {
 
 # Bottle-shaped SKUs: the only v2 classes a COCO "bottle" detection can plausibly
 # stand in for, so the only ones where a multi-bottle frame is real evidence.
-BOTTLE_SHAPED = {"silver-swan-vinegar", "palmolive", "safeguard"}
+# Palmolive was the third until the class was dropped; the remaining two are the SKUs that
+# actually come in a bottle shape, which is the only thing COCO's `bottle` detection can read.
+BOTTLE_SHAPED = {"silver-swan-vinegar", "safeguard"}
 
 
 def empty_coco() -> dict:
@@ -105,7 +107,7 @@ def empty_coco() -> dict:
 
 
 def load_manifest(out: Path) -> list[dict]:
-    path = out / "manifest.json"
+    path = out / MANIFEST_NAME
     if not path.exists():
         raise SystemExit(f"no manifest at {path} - run `clean` first")
     return json.loads(path.read_text(encoding="utf-8"))

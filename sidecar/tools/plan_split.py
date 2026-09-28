@@ -31,11 +31,17 @@ And one plan that only exists once you have shot a second session:
                        re-shoots cells the other sessions already cover, which is why
                        Tier D in CAPTURE_CHECKLIST.md is a re-shoot by design.
 
-Read-only: this computes a plan and writes it to JSON/Markdown. Applying it means
-re-uploading with `upload --split-plan`, and since a duplicate upload does NOT move
-an image's existing split (verified: returns {"duplicate": true} and leaves the
-image on train), the project has to be wiped and re-uploaded first. `--commands`
-prints that exact sequence.
+Read-only about the project: this computes a plan and writes it to JSON/Markdown, and nothing
+here touches Roboflow. Applying a plan to the *project* means re-uploading with
+`upload --split-plan`, and since a duplicate upload does NOT move an image's existing split
+(verified: returns {"duplicate": true} and leaves the image on train), the project has to be
+wiped and re-uploaded first. `--commands` prints that exact sequence.
+
+Applying it *locally* needs none of that, and it is what the offline chain uses: the plan file
+is already the per-frame map `build_dataset.py` and the annotator read, so
+`label_progress.py --capture-splits --split-plan <file>` freezes one of them into
+`<out>/splits.json`. That route needs no API and no key at all, which is the difference between
+a split with a deadline and a split that is just a file.
 
     sidecar/.venv/Scripts/python.exe sidecar/tools/plan_split.py
     sidecar/.venv/Scripts/python.exe sidecar/tools/plan_split.py --commands
@@ -52,9 +58,9 @@ from pathlib import Path
 from zlib import crc32
 
 from clean_v2 import DEFAULT_SESSION, batch_for_session
-from workspace import DEFAULT_OUT  # the workspace lives outside the repo tree
+from label_classes import SPLIT_NAMES
+from workspace import DEFAULT_OUT, MANIFEST_NAME, resolve_extras  # outside the repo tree
 
-SPLITS = ("train", "valid", "test")
 TARGET = {"train": 0.70, "valid": 0.20, "test": 0.10}
 
 # Cost weights. Size dominates because 70/20/10 is the rule; the distance axis is
@@ -93,6 +99,39 @@ class Batch:
         self.images = images
 
 
+def include_dirs(out: Path, explicit: list[str]) -> list[Path]:
+    """Every staged set a plan has to cover: the sets beside `--out`, plus any `--include`.
+
+    The defaults are the staged hard negatives, whose own manifest is what makes them a set at all,
+    and they are here because a plan is read as the assignment for the *set* - the annotator, the
+    snapshot and the merge all read the set and its extras together, so a plan that covers
+    `cleaned-v2` but not `cleaned-negatives` leaves frames a build will read without a split, and
+    the freeze step then exits 2 naming exactly those. Sharing the rule instead of repeating the
+    directory name is why `workspace.DEFAULT_EXTRAS` exists.
+
+    A union, not either/or: a later session passes `--include` for its own directory and still
+    means the negatives to be planned, so an explicit set *adds* to the default rather than
+    replacing it. That rule now lives in `workspace.resolve_extras`, which the three tools taking
+    an `--extras` call too - one answer to "which sets does this run read", instead of this
+    function being the union and every `--extras` being a replacement.
+    """
+    return resolve_extras(out.parent, explicit)
+
+
+def freeze_command(out: Path, plan: str) -> str:
+    """How to freeze one of these plans into the local `<out>/splits.json` - the offline route.
+
+    Printed because it is the route that needs no API at all, and the one that works when the
+    machine has never been online: the plan is already the per-frame map `build_dataset.py` and
+    the annotator read, so freezing it is a copy plus a check that it covers every staged frame
+    (`label_progress.capture_splits` does both).
+    """
+    return (
+        "sidecar/.venv/Scripts/python.exe sidecar/tools/label_progress.py "
+        f"--capture-splits --split-plan {out / f'split_plan_{plan}.json'}"
+    )
+
+
 def load_batches(out: Path, include: tuple[Path, ...] = ()) -> tuple[list[Batch], list[dict]]:
     """The batches of the staged set at `out`, plus any `include` directories.
 
@@ -103,12 +142,12 @@ def load_batches(out: Path, include: tuple[Path, ...] = ()) -> tuple[list[Batch]
     in train - lives in a sibling directory. Reading them together is what makes "is this
     cell still learnable once s3 is held out" a real question rather than a misread one.
     """
-    manifest = out / "manifest.json"
+    manifest = out / MANIFEST_NAME
     if not manifest.exists():
         raise SystemExit(f"no manifest at {manifest} - run `clean` first")
     entries = json.loads(manifest.read_text(encoding="utf-8"))
     for extra in include:
-        extra_manifest = Path(extra) / "manifest.json"
+        extra_manifest = Path(extra) / MANIFEST_NAME
         if not extra_manifest.exists():
             raise SystemExit(f"no manifest at {extra_manifest} (passed via --include)")
         entries = entries + json.loads(extra_manifest.read_text(encoding="utf-8"))
@@ -140,8 +179,8 @@ def load_batches(out: Path, include: tuple[Path, ...] = ()) -> tuple[list[Batch]
 
 def evaluate(assign: dict[str, str], batches: list[Batch], total: int) -> tuple[float, dict]:
     size: Counter[str] = Counter()
-    dist: dict[str, Counter] = {s: Counter() for s in SPLITS}
-    cls_seen: dict[str, set] = {s: set() for s in SPLITS}
+    dist: dict[str, Counter] = {s: Counter() for s in SPLIT_NAMES}
+    cls_seen: dict[str, set] = {s: set() for s in SPLIT_NAMES}
     session_splits: dict[str, set] = defaultdict(set)
     for b in batches:
         s = assign[b.name]
@@ -155,7 +194,7 @@ def evaluate(assign: dict[str, str], batches: list[Batch], total: int) -> tuple[
         global_dist[b.distance] += b.n
 
     cost = 0.0
-    for s in SPLITS:
+    for s in SPLIT_NAMES:
         # 1. how far this split is from its target share of the whole set
         cost += W_SIZE * abs(size[s] / total - TARGET[s])
         # 2 + 3. distance coverage and mirroring
@@ -165,7 +204,7 @@ def evaluate(assign: dict[str, str], batches: list[Batch], total: int) -> tuple[
             cost += W_DIST_MIRROR * abs(dist[s][d] / max(size[s], 1) - global_dist[d] / total)
 
     all_cls = {b.cls for b in batches}
-    for s in SPLITS:
+    for s in SPLIT_NAMES:
         cost += W_CLASS_MISSING * len(all_cls - cls_seen[s])
 
     # 4. a session split across N splits pays N-1 times. With one session this is a
@@ -184,13 +223,13 @@ def anneal(batches: list[Batch], total: int, seed: int = 7, iters: int = 240_000
     best: dict[str, str] = {}
     best_cost = math.inf
     for _ in range(6):
-        assign = {b.name: rng.choice(SPLITS) for b in batches}
+        assign = {b.name: rng.choice(SPLIT_NAMES) for b in batches}
         cost, _ = evaluate(assign, batches, total)
         for i in range(iters):
             t = max(0.02, 1.0 - i / iters)
             b = rng.choice(batches)
             old = assign[b.name]
-            new = rng.choice(SPLITS)
+            new = rng.choice(SPLIT_NAMES)
             if new == old:
                 continue
             assign[b.name] = new
@@ -350,15 +389,15 @@ def summarize(plan: dict[str, str], entries: list[dict], batches: list[Batch]) -
     by_name = {e["new_name"]: e for e in entries}
     total = len(entries)
     size: Counter[str] = Counter()
-    dist: dict[str, Counter] = {s: Counter() for s in SPLITS}
-    cls: dict[str, Counter] = {s: Counter() for s in SPLITS}
-    batch_ids: dict[str, set] = {s: set() for s in SPLITS}
+    dist: dict[str, Counter] = {s: Counter() for s in SPLIT_NAMES}
+    cls: dict[str, Counter] = {s: Counter() for s in SPLIT_NAMES}
+    batch_ids: dict[str, set] = {s: set() for s in SPLIT_NAMES}
     # Which (class, distance) cells a split can actually speak about. A cell with no
     # train images is one the model was never taught, so its valid/test reading
     # measures the absence of training rather than the model - a different failure from
     # "no images in this split", which is what the missing_dist/missing_cls terms above
     # already cover.
-    cell_ids: dict[str, set] = {s: set() for s in SPLITS}
+    cell_ids: dict[str, set] = {s: set() for s in SPLIT_NAMES}
     for name, s in plan.items():
         e = by_name[name]
         size[s] += 1
@@ -387,8 +426,8 @@ def summarize(plan: dict[str, str], entries: list[dict], batches: list[Batch]) -
 
     all_cls = sorted({e["class"] for e in entries})
     all_dist = ["close", "mid", "far"]
-    missing_cls = {s: [c for c in all_cls if cls[s][c] == 0] for s in SPLITS}
-    missing_dist = {s: [d for d in all_dist if dist[s][d] == 0] for s in SPLITS}
+    missing_cls = {s: [c for c in all_cls if cls[s][c] == 0] for s in SPLIT_NAMES}
+    missing_dist = {s: [d for d in all_dist if dist[s][d] == 0] for s in SPLIT_NAMES}
 
     all_cells = {(e["class"], e["distance"]) for e in entries}
     return {
@@ -417,7 +456,7 @@ def render(title: str, plan: dict[str, str], batches: list[Batch], entries: list
 
     lines.append("| Split | Images | Share | Target |")
     lines.append("|-------|-------:|------:|-------:|")
-    for sp in SPLITS:
+    for sp in SPLIT_NAMES:
         n = s["size"][sp]
         lines.append(f"| {sp} | {n} | {n / total:.1%} | {TARGET[sp]:.0%} |")
     lines.append("")
@@ -426,7 +465,7 @@ def render(title: str, plan: dict[str, str], batches: list[Batch], entries: list
     lines.append("")
     lines.append("| Split | " + " | ".join(s["all_dist"]) + " |")
     lines.append("|-------|" + "|".join(["---:"] * len(s["all_dist"])) + "|")
-    for sp in SPLITS:
+    for sp in SPLIT_NAMES:
         cells = []
         for d in s["all_dist"]:
             n = s["dist"][sp][d]
@@ -436,18 +475,18 @@ def render(title: str, plan: dict[str, str], batches: list[Batch], entries: list
 
     lines.append("Per-class coverage:")
     lines.append("")
-    lines.append("| Class | " + " | ".join(SPLITS) + " |")
-    lines.append("|-------|" + "|".join(["---:"] * len(SPLITS)) + "|")
+    lines.append("| Class | " + " | ".join(SPLIT_NAMES) + " |")
+    lines.append("|-------|" + "|".join(["---:"] * len(SPLIT_NAMES)) + "|")
     for c in s["all_cls"]:
         cells = []
-        for sp in SPLITS:
+        for sp in SPLIT_NAMES:
             n = s["cls"][sp][c]
             cells.append("**0**" if n == 0 else str(n))
         lines.append(f"| {c} | " + " | ".join(cells) + " |")
     lines.append("")
 
     warns = []
-    for sp in SPLITS:
+    for sp in SPLIT_NAMES:
         if s["missing_dist"][sp]:
             warns.append(f"**{sp} has no {', '.join(s['missing_dist'][sp])} images** - that distance is unmeasurable in {sp}")
         if s["missing_cls"][sp]:
@@ -475,11 +514,11 @@ def render(title: str, plan: dict[str, str], batches: list[Batch], entries: list
 
     lines.append("Capture sessions in this plan:")
     lines.append("")
-    lines.append("| Session | " + " | ".join(SPLITS) + " | Splits |")
-    lines.append("|---------|" + "|".join(["---:"] * len(SPLITS)) + "|--------:|")
+    lines.append("| Session | " + " | ".join(SPLIT_NAMES) + " | Splits |")
+    lines.append("|---------|" + "|".join(["---:"] * len(SPLIT_NAMES)) + "|--------:|")
     for sess in sorted(s["session_splits"]):
         counts = s["session_size"][sess]
-        cells = [str(counts[sp]) if counts[sp] else "—" for sp in SPLITS]
+        cells = [str(counts[sp]) if counts[sp] else "—" for sp in SPLIT_NAMES]
         lines.append(f"| {sess} | " + " | ".join(cells) + f" | {len(s['session_splits'][sess])} |")
     lines.append("")
     leaked = sorted(sess for sess, sps in s["session_splits"].items() if len(sps) > 1)
@@ -515,7 +554,9 @@ def main(argv: list[str] | None = None) -> int:
         action="append",
         default=[],
         metavar="DIR",
-        help="another staged set to plan across, e.g. a later session's (repeatable)",
+        help="another staged set to plan across, e.g. a later session's (repeatable). The sets "
+        "staged beside --out (the hard negatives) are always planned too, so a plan file covers "
+        "every frame a build reads",
     )
     ap.add_argument("--commands", action="store_true", help="also print how to apply a plan")
     ap.add_argument(
@@ -528,10 +569,15 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     out = Path(args.out).expanduser()
-    batches, entries = load_batches(out, tuple(Path(p).expanduser() for p in args.include))
+    includes = include_dirs(out, args.include)
+    batches, entries = load_batches(out, tuple(includes))
     total = len(entries)
 
     sessions = Counter(b.session for b in batches)
+    # Printed because the plan's own coverage numbers are a fact about *these* sets: a run that
+    # silently left the hard negatives out would report the same-looking tables and then refuse to
+    # freeze.
+    print(f"staged sets: {', '.join(p.name for p in [out, *includes])}")
     print(f"{len(batches)} batches, {total} images, {len(sessions)} capture session(s)\n")
     for sess, n in sorted(sessions.items()):
         print(f"  session {sess}: {n} batch(es), {sum(b.n for b in batches if b.session == sess)} images")
@@ -567,7 +613,7 @@ def main(argv: list[str] | None = None) -> int:
     plan_a = {n: assign_a[b.name] for b in batches for n in b.images}
     a = summarize(plan_a, entries, batches)
     print("PLAN A (strict by-batch)")
-    for sp in SPLITS:
+    for sp in SPLIT_NAMES:
         d = a["dist"][sp]
         print(f"  {sp:6} {a['size'][sp]:5} ({a['size'][sp] / total:5.1%})  close {d['close']:4} mid {d['mid']:4} far {d['far']:4}"
               f"   missing classes: {len(a['missing_cls'][sp])}")
@@ -577,7 +623,7 @@ def main(argv: list[str] | None = None) -> int:
     plan_b = stratify(batches)
     b = summarize(plan_b, entries, batches)
     print("PLAN B (stratified per cell)")
-    for sp in SPLITS:
+    for sp in SPLIT_NAMES:
         d = b["dist"][sp]
         print(f"  {sp:6} {b['size'][sp]:5} ({b['size'][sp] / total:5.1%})  close {d['close']:4} mid {d['mid']:4} far {d['far']:4}"
               f"   missing classes: {len(b['missing_cls'][sp])}")
@@ -600,8 +646,9 @@ def main(argv: list[str] | None = None) -> int:
     out_lines.append("## Plan A as batch assignments")
     out_lines.append("")
     out_lines.append(
-        "A batch is exactly one `(capture session, class, distance)` bucket, and all three are already "
-        "tags on every image in it - so the query in the last column selects precisely that batch. That "
+        "A batch is exactly one `(capture session, class, distance)` bucket, and those are already "
+        "tags on every image in it - so the query in the last column selects precisely that batch "
+        "(the hard negatives have no distance, so theirs names the tags they do carry). That "
         "makes Plan A applicable *without* wiping: paste a query, Select all matching, then Change "
         "Dataset Split from the bulk actions menu. The session tag is in the query for the same reason "
         "it exists: without it, a cell shot twice would match both sessions' frames and the split would "
@@ -611,9 +658,12 @@ def main(argv: list[str] | None = None) -> int:
     out_lines.append("| Batch | Session | Class | Distance | Images | Split | Search query |")
     out_lines.append("|-------|---------|-------|----------|-------:|-------|--------------|")
     for batch in batches:
-        query = f"tag:{batch.cls} tag:{batch.distance}"
-        if batch.session:
-            query += f" tag:{batch.session}"
+        # Built from the tags the batch actually has: a hard negative has no distance (its first tag
+        # is the pseudo-class instead - `clean_v2.tags_for`), and an empty `tag:` in the query would
+        # select nothing at all.
+        query = " ".join(
+            f"tag:{part}" for part in (batch.cls, batch.distance, batch.session) if part
+        )
         out_lines.append(
             f"| `{batch.name}` | {batch.session} | {batch.cls} | {batch.distance} | {batch.n} | "
             f"{assign_a[batch.name]} | `{query}` |"
@@ -691,7 +741,7 @@ def main(argv: list[str] | None = None) -> int:
         written.append(out / "split_plan_c.json")
         print()
         print(f"PLAN C (held-out session {args.holdout_session})")
-        for sp in SPLITS:
+        for sp in SPLIT_NAMES:
             d = c["dist"][sp]
             print(f"  {sp:6} {c['size'][sp]:5} ({c['size'][sp] / total:5.1%})  close {d['close']:4} mid {d['mid']:4} far {d['far']:4}"
                   f"   missing classes: {len(c['missing_cls'][sp])}")
@@ -725,10 +775,26 @@ def main(argv: list[str] | None = None) -> int:
         print(f"sessions: {', '.join(sorted(sessions))} - see the session table in the report")
     print(f"report  -> {report}")
     print("plans   -> " + ", ".join(str(p) for p in written))
+    # The offline route, and the one that applies a plan *without* a project. Plan C when there is
+    # one (it exists to produce the acceptance number); B otherwise, the plan the recommendation
+    # above names for measuring distance. Named here rather than left to the run sheet, because a
+    # plan that nobody freezes leaves every decided frame unplaced and the build refuses it.
+    print(f"freeze  -> {freeze_command(out, 'c' if plan_c is not None else 'b')}")
 
     if args.commands:
         print()
         print("HOW TO APPLY")
+        print()
+        print("Offline - freeze the plan into the local splits.json, no API and no project:")
+        print()
+        print(f"  {freeze_command(out, 'c' if plan_c is not None else 'b')}")
+        print()
+        print("  That is the whole route: nothing is uploaded, the annotator and build_dataset.py")
+        print("  read that file, and it exits 2 (after writing what it knows) if a staged frame")
+        print("  is missing from the plan. Swap c for a or b to freeze a different plan.")
+        print()
+        print("Onto the Roboflow project - a different thing, and only needed while the")
+        print("project holds the frames:")
         print()
         print("There is no split API, and an existing image's split cannot be changed by")
         print("re-uploading it - identical bytes come back as {\"duplicate\": true} and the")
@@ -752,6 +818,10 @@ def main(argv: list[str] | None = None) -> int:
         print()
         print("  The last step is not optional: a wipe deletes every image, so the class_name")
         print("  metadata has to be rewritten afterwards.")
+        print()
+        print("Either route ends the same way if the file is what you are after: use")
+        print("`--capture-splits` to freeze the assignment the project now holds (the offline")
+        print("route above freezes the plan directly and needs no upload at all).")
     return 0
 
 
