@@ -117,6 +117,50 @@ def test_a_conf_patch_reaches_the_running_detector(running):
     assert det.conf == 0.8
 
 
+def test_a_mirror_patch_reaches_the_running_pipeline_and_the_response(running):
+    """The checkbox is a live PATCH, so the value has to land on the very `Settings` instance
+    the running `Pipeline` reads at each emit.
+
+    That instance identity is the load-bearing assertion: `Pipeline` holds `settings` by
+    reference, so a patch that swapped in a fresh `Settings` would leave the copy correctly
+    updated — every value assertion below would still pass — while the capture went on emitting
+    the old orientation forever. `is` is what tells those two apart, and the response body is
+    asserted too because a response built from a different copy could report the change while
+    the pipeline never saw it.
+    """
+    client, state, _, _ = running
+    held_by_pipeline = state.settings
+    r = client.patch("/api/settings?persist=false", json={"preview_mirror": False})
+
+    assert r.status_code == 200
+    assert state.settings is held_by_pipeline
+    assert held_by_pipeline.preview_mirror is False
+    assert r.json()["preview_mirror"] is False
+
+
+def test_the_mirror_survives_a_settings_response_round_trip(running):
+    """It is a field the renderer draws a checkbox from, so it has to be in the payload.
+    `SettingsPayload` is hand-mirrored in api.ts; a field missing from the response is a
+    checkbox stuck at its default with no error anywhere."""
+    client, _, _, _ = running
+
+    assert client.get("/api/settings").json()["preview_mirror"] is True
+
+
+def test_a_suppression_patch_reaches_the_running_pipeline_and_the_response(running):
+    """Same instance-identity claim as the mirror: `Pipeline` holds `settings` by reference, so a
+    patch that swapped in a fresh `Settings` would leave the running capture filtering exactly as
+    before while every value assertion here still passed."""
+    client, state, _, _ = running
+    held_by_pipeline = state.settings
+    r = client.patch("/api/settings?persist=false", json={"suppress_clamped_detections": False})
+
+    assert r.status_code == 200
+    assert state.settings is held_by_pipeline
+    assert held_by_pipeline.suppress_clamped_detections is False
+    assert r.json()["suppress_clamped_detections"] is False
+
+
 def test_camera_controls_no_longer_409_while_running(running):
     client, _, _, _ = running
     r = client.patch("/api/settings", json={"camera_exposure": -6.0})

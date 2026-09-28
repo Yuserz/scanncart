@@ -8,8 +8,11 @@ FastAPI app with injected fakes.
 import numpy as np
 from fastapi.testclient import TestClient
 
+from tests import next_frame
+
 from app.hardware import HardwareInfo
 from app.main import AppState, build_app
+from app.roster import V2_ROSTER
 from app.schemas import Detection
 from app.settings import Settings
 
@@ -51,6 +54,8 @@ class _FakeDetector:
     Tracks call count for assertions.  When ``sequence`` is provided, the
     detector returns items from it in order and falls back to ``default``
     once exhausted — useful for tests that need to observe drain behaviour.
+    ``names`` is the class list it declares — the thing a roster verdict and a
+    ``class_allowlist`` are about — and defaults to the fake classes above.
     """
 
     _DEFAULT_DETS = [
@@ -61,11 +66,12 @@ class _FakeDetector:
         self,
         default: list[Detection] | None = None,
         sequence: list[list[Detection]] | None = None,
+        names: dict[int, str] | None = None,
     ):
         self._default = default if default is not None else self._DEFAULT_DETS
         self._sequence = sequence or []
         self._i = 0
-        self.names = {0: "banana", 1: "apple", 2: "milk"}
+        self.names = dict(names) if names is not None else {0: "banana", 1: "apple", 2: "milk"}
         self.calls = 0
 
     def infer(self, frame: np.ndarray) -> list[Detection]:
@@ -81,6 +87,11 @@ def _fake_hardware() -> HardwareInfo:
     return HardwareInfo(
         cpu_count=8, ram_gb=16.0, cuda_available=False, accelerator="cpu"
     )
+
+
+def _roster_names() -> dict[int, str]:
+    """v2's roster in the shape a detector declares it (`YoloDetector.names`): index -> name."""
+    return dict(enumerate(V2_ROSTER))
 
 
 # ---------------------------------------------------------------------------
@@ -135,9 +146,8 @@ class TestCaptureE2E:
         assert r.json()["state"] == "running"
 
         with client.websocket_connect("/ws/stream") as ws:
-            msg = ws.receive_json()
+            msg = next_frame(ws)
 
-        assert msg["type"] == "frame"
         assert msg["seq"] >= 1
         # JPEG payload is non-empty base64
         assert isinstance(msg["jpeg"], str)
@@ -171,7 +181,7 @@ class TestCaptureE2E:
 
         client.post("/api/capture/start")
         with client.websocket_connect("/ws/stream") as ws:
-            ws.receive_json()  # consume the frame
+            next_frame(ws)  # pull one frame, so the detection is logged
         client.post("/api/capture/stop")
 
         logs = client.get("/api/logs").json()
@@ -192,8 +202,11 @@ class TestCaptureE2E:
 
         client.post("/api/capture/start")
         with client.websocket_connect("/ws/stream") as ws:
-            ws.receive_json()
-            ws.receive_json()
+            # Two frames, because the point is that the same track's confidence is *tracked*
+            # across them. Counting messages instead of frames would now consume the handshake
+            # status as one of the two and measure a single frame.
+            next_frame(ws)
+            next_frame(ws)
         client.post("/api/capture/stop")
 
         logs = client.get("/api/logs").json()
@@ -206,12 +219,113 @@ class TestCaptureE2E:
 
         client.post("/api/capture/start")
         with client.websocket_connect("/ws/stream") as ws:
-            ws.receive_json()
-            ws.receive_json()
+            next_frame(ws)
+            next_frame(ws)
         client.post("/api/capture/stop")
 
         logs = client.get("/api/logs").json()
         assert logs["events"] == []
+
+    def test_a_feed_that_matches_nothing_streams_and_logs_nothing(self):
+        """The empty-counter case on the one path that can produce it: the model reports boxes and
+        every one of them is off the class allowlist, so nothing that matches is left.
+
+        Its promise is that the preview keeps running - an operator still has to aim the camera at
+        the counter - while the item log stays empty and the session is still recorded. Driven
+        through the real surface: the WS stream and the SQLite-backed `/api/logs`. The roster is
+        what "matches" means here: the detector declares v2's seven, the dropped boxes name none
+        of them, and the stream says which names were in force.
+        """
+        dets = [
+            Detection(track_id=1, cls="person", conf=0.93, box=(0.1, 0.2, 0.3, 0.4)),
+            Detection(track_id=2, cls="tv", conf=0.81, box=(0.4, 0.4, 0.7, 0.7)),
+        ]
+        client, _ = _make_client(
+            default=dets,
+            settings=Settings(class_allowlist=list(V2_ROSTER)),
+            names=_roster_names(),
+        )
+
+        frames: list[dict] = []
+        announced = None
+        states: set[str] = set()
+        with client.websocket_connect("/ws/stream") as ws:
+            # Connected *before* start, so the class-list broadcast reaches this client on the
+            # stream rather than being folded into a handshake it did not take.
+            assert ws.receive_json()["state"] == "idle"  # the handshake, before any capture
+            assert client.post("/api/capture/start").json()["state"] == "running"
+            assert client.get("/api/health").json()["state"] == "running"
+            # A session ran, even though nothing in it matched: the log being empty is a fact
+            # about the feed, not a missing session.
+            assert client.get("/api/logs").json()["session_id"] is not None
+            # Bounded rather than "receive until satisfied": a broadcast that stops arriving has
+            # to fail the assertions below, not hang the suite.
+            for _ in range(50):
+                msg = ws.receive_json()
+                if msg["type"] == "frame":
+                    frames.append(msg)
+                elif msg["type"] == "status":
+                    states.add(msg.get("state") or "")
+                    if msg.get("class_names"):
+                        announced = msg["class_names"]
+                if len(frames) >= 2 and announced:
+                    break
+
+        assert announced == sorted(V2_ROSTER)
+        assert "error" not in states  # an empty feed is not an error, and must not become one
+        for msg in frames:
+            assert msg["detections"] == []
+            # The preview is the behavior, not a side effect: a rendered JPEG with no boxes, on
+            # every frame, so the operator can see the counter they are aiming at.
+            assert isinstance(msg["jpeg"], str) and len(msg["jpeg"]) > 100
+            assert msg["stats"]["suppressed"] == 0
+
+        assert client.post("/api/capture/stop").json()["state"] == "idle"
+        logs = client.get("/api/logs").json()
+        assert logs["session_id"] is not None
+        assert logs["events"] == []
+        # And the app is still serving afterwards, rather than wedged on the empty feed.
+        assert client.get("/api/health").json()["state"] == "idle"
+
+    def test_the_default_allowlist_filters_nothing_not_even_a_non_roster_class(self):
+        """The default is *no* class filter: the app draws and logs what the model reports, roster
+        or not. That is why the empty case above has to set the allowlist to reach its state - and
+        pinning it here is what keeps a future "auto-filter to the roster" from silently changing
+        every existing capture, which the class-list verdict warns about but does not do.
+        """
+        dets = [Detection(track_id=1, cls="person", conf=0.91, box=(0.1, 0.2, 0.3, 0.4))]
+        client, _ = _make_client(default=dets, names=_roster_names())
+
+        client.post("/api/capture/start")
+        with client.websocket_connect("/ws/stream") as ws:
+            msg = next_frame(ws)
+        client.post("/api/capture/stop")
+
+        assert [d["cls"] for d in msg["detections"]] == ["person"]
+        events = client.get("/api/logs").json()["events"]
+        assert [(e["class_name"], e["confidence"]) for e in events] == [("person", 0.91)]
+
+    def test_a_v2_roster_class_passes_the_allowlist_that_empties_the_non_roster_feed(self):
+        """The other half of the filter, so a filter that dropped *everything* cannot pass the
+        empty-feed test: a name the roster does carry is streamed and logged under the same
+        allowlist, and logged under its own name rather than remapped to a roster position.
+        """
+        name = V2_ROSTER[0]
+        dets = [Detection(track_id=7, cls=name, conf=0.88, box=(0.2, 0.2, 0.6, 0.8))]
+        client, _ = _make_client(
+            default=dets,
+            settings=Settings(class_allowlist=list(V2_ROSTER)),
+            names=_roster_names(),
+        )
+
+        client.post("/api/capture/start")
+        with client.websocket_connect("/ws/stream") as ws:
+            msg = next_frame(ws)
+        client.post("/api/capture/stop")
+
+        assert [d["cls"] for d in msg["detections"]] == [name]
+        events = client.get("/api/logs").json()["events"]
+        assert [(e["class_name"], e["confidence"]) for e in events] == [(name, 0.88)]
 
     def test_multiple_tracks_logged_independently(self):
         """Different track_ids produce separate log rows."""
@@ -224,7 +338,7 @@ class TestCaptureE2E:
 
         client.post("/api/capture/start")
         with client.websocket_connect("/ws/stream") as ws:
-            ws.receive_json()
+            next_frame(ws)
         client.post("/api/capture/stop")
 
         logs = client.get("/api/logs").json()
@@ -244,8 +358,7 @@ class TestCaptureE2E:
         with client.websocket_connect("/ws/stream") as ws:
             # Receive frames — pipeline only delivers ones that pass inference
             for _ in range(2):
-                msg = ws.receive_json()
-                assert msg["type"] == "frame"
+                next_frame(ws)
         client.post("/api/capture/stop")
 
         # Assert the ratio, not an absolute call count. The pipeline keeps
@@ -268,7 +381,7 @@ class TestCaptureE2E:
 
         client.post("/api/capture/start")
         with client.websocket_connect("/ws/stream") as ws:
-            ws.receive_json()
+            next_frame(ws)
         client.post("/api/capture/stop")
 
         logs = client.get("/api/logs").json()

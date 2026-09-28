@@ -5,18 +5,22 @@
 // hot-reloadable vs restart-required; this file only drives form rendering.
 import type { SettingsPayload } from './api'
 
-// The locally trained grocery model, run in-process. Listed first because it
-// is the default and the only model that detects the actual SKUs; the stock
-// YOLO weights below are generic COCO. Mirrors the sidecar's CUSTOM_MODEL_DIR
-// convention — any .onnx/.pt under sidecar/models/ is valid, this is just the
-// one we ship with. (The Roboflow-exported ONNX,
-// models/scanncart-grocery.onnx, is the same architecture pre-retrain and
-// remains selectable.)
+// The locally trained grocery model, run in-process. Listed first because it is the default
+// (`sidecar/app/settings.py`) and the only model that detects the actual SKUs; the stock YOLO
+// weights below are generic COCO. Mirrors the sidecar's CUSTOM_MODEL_DIR convention — any
+// .onnx/.pt under sidecar/models/ is valid, this is just the one we ship with. (The
+// Roboflow-exported ONNX, models/scanncart-grocery.onnx, is the same architecture pre-retrain
+// and remains selectable.)
 export const CUSTOM_MODEL = 'models/scanncart-grocery.pt'
+// The locally trained successor (MODEL_TRAINING.md §8.2). Named here only for its label and
+// hint; the picker *discovers* the file from GET /api/models, so this entry is optional and
+// its absence would not hide the model — a future v3 needs no entry at all to be selectable.
+export const CUSTOM_MODEL_V2 = 'models/scanncart-grocery-v2.pt'
 
 // A raw path is not a label. Anything not listed falls back to its own name.
 export const MODEL_LABELS: Record<string, string> = {
-  [CUSTOM_MODEL]: 'SCANnCART grocery (custom, 7 SKUs)',
+  [CUSTOM_MODEL]: 'SCANnCART grocery v1 (custom, 7 SKUs)',
+  [CUSTOM_MODEL_V2]: 'SCANnCART grocery v2 (custom, 8 SKUs)',
   'models/scanncart-grocery.onnx': 'SCANnCART grocery (Roboflow export)'
 }
 
@@ -31,13 +35,14 @@ export const ALLOWED_MODELS = [
   'yolo26s.pt',
   'yolo26m.pt'
 ] as const
-// Mirrors the sidecar's ALLOWED_RESIZE_MODES.
+// Mirrors the sidecar's ALLOWED_RESIZE_MODES. Put the aspect-preserving choice first,
+// but keep the v1 default as `auto` so recorded model training geometry remains honored.
 export const ALLOWED_RESIZE_MODES = ['letterbox', 'auto', 'stretch'] as const
 
 export const RESIZE_MODE_LABELS: Record<string, string> = {
-  letterbox: 'Letterbox (recommended)',
-  auto: 'Auto (legacy → letterbox)',
-  stretch: 'Stretch (experimental)'
+  letterbox: 'Letterbox (preserves proportions)',
+  auto: 'Auto (matches model training)',
+  stretch: 'Stretch (experimental A/B)'
 }
 
 export const ALLOWED_DEVICES = ['auto', 'cpu', 'cuda'] as const
@@ -87,6 +92,16 @@ export const EXPERIMENTAL_MODELS: readonly string[] = ['yolo26n.pt', 'yolo26s.pt
 // Per-model hardware guidance shown under the Model field while an
 // experimental model is selected.
 export const MODEL_SPEC_HINTS: Record<string, string> = {
+  // Not "remember to set this": a `.pt` resolves `resize_mode: auto` to *letterbox*, and
+  // the v2 weights were trained on a Stretch version (MODEL_TRAINING.md §6). Letterboxing
+  // them presents every object at 0.56x the canvas they were trained at — no error, just
+  // weaker detections, worst on the far cells where the pixels were already scarce.
+  // The resize_mode half of this used to be here as prose. It is now derived: `train_model.py
+  // --install` records the requirement beside the weights, the sidecar reports it, and the
+  // Model field flags a mismatch for *any* installed weight rather than only this filename.
+  // What is left is what a record cannot carry - what these weights are and what they cost.
+  [CUSTOM_MODEL_V2]:
+    'Locally trained (8 SKUs) — see the requirement recorded beside it below. Runs on torch, so a CUDA GPU is the fast path.',
   'yolo26n.pt':
     'Experimental — lightest YOLO26. Needs roughly yolo11n-class hardware: a modern 4-core CPU and 8 GB RAM. Its NMS-free design typically runs faster than yolo11n on CPU. Weights auto-download on first capture start (internet needed once).',
   'yolo26s.pt':
@@ -174,6 +189,12 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
     step: 0.05
   },
   {
+    key: 'suppress_clamped_detections',
+    label: 'Drop frame-edge phantoms',
+    hint: 'Ignores detections whose box is pinned to all four frame edges. This model produces them on an empty counter — measured: 19 of 25 empty-counter detections were that shape, against 0 of 60 real product frames — and each one logs a phantom item. Turn it off if a genuine item that fills the frame stops being detected: about 1.4% of this model\u2019s own training boxes touch all four edges, so that case is rare but real.',
+    type: 'boolean'
+  },
+  {
     key: 'imgsz',
     label: 'Inference size (px)',
     hint: 'Size each frame is scaled to before detection (square, multiple of 32). Bigger sees small and fast-moving items better — the key lever for catching thrown objects — but raises latency. 640 is the default; 960 is a good accuracy step on a discrete GPU.',
@@ -185,7 +206,7 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
   {
     key: 'resize_mode',
     label: 'Frame fitting',
-    hint: 'Preferred for checkout detection: preserves item proportions and avoids warping familiar packages. Stretch (experimental) forces the whole frame into a square and may distort SKUs; use only for a deliberate A/B test against a labeled camera scene. Auto is retained for legacy configs and resolves to letterbox.',
+    hint: 'Letterbox preserves package proportions for the checkout view, but that alone does not prove better detection accuracy. Auto honors the recorded training geometry for the selected weights and remains the v1 default; for the Roboflow ONNX export it uses stretch. Use letterbox or explicit stretch for a controlled A/B comparison on the same labeled checkout scenes, and check the model requirement shown above before overriding it.',
     type: 'select',
     options: ALLOWED_RESIZE_MODES
   },
@@ -217,6 +238,12 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
     min: 0,
     max: 120,
     step: 5
+  },
+  {
+    key: 'preview_mirror',
+    label: 'Mirror preview',
+    hint: 'Flips the image left to right, the way a mirror does, so the feed moves the same way you do while holding an item. The boxes flip with it and keep sitting on the items. Detection is untouched either way — the model always sees the true frame. Turn it off when you need to read a label or barcode the right way round.',
+    type: 'boolean'
   },
   {
     key: 'detector_backend',
@@ -372,10 +399,20 @@ export const SETTINGS_GROUPS: FieldGroup[] = [
     home: 'live',
     keys: ['camera_brightness', 'camera_exposure', 'camera_autofocus', 'camera_focus']
   },
-  { label: 'Detection', home: 'live', keys: ['conf_threshold'] },
+  {
+    label: 'Detection',
+    home: 'live',
+    keys: ['conf_threshold', 'suppress_clamped_detections']
+  },
   {
     label: 'Stream',
     home: 'live',
-    keys: ['infer_frame_skip', 'preview_height', 'preview_max_fps', 'track_expiry_s']
+    keys: [
+      'infer_frame_skip',
+      'preview_height',
+      'preview_max_fps',
+      'preview_mirror',
+      'track_expiry_s'
+    ]
   }
 ]

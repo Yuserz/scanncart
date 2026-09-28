@@ -74,6 +74,71 @@ def test_untracked_detection_is_not_logged():
     assert store.records == []
 
 
+#: The box the empty counter actually produced at 0.957 conf, and the shape the frame-clamp rule
+#: suppresses (see `app/pipeline.py::CLAMPED_EDGE_TOLERANCE` for how the boundary was chosen).
+_PHANTOM = (0.0002, 0.0001, 0.9996, 1.0)
+
+
+def test_a_phantom_never_becomes_an_item_log_row():
+    """The whole point of the suppression, stated where it is actually felt.
+
+    The phantom held for 16 consecutive frames in the live capture, so it is a *persistent track*:
+    dropping it at the detector's output is what stops one keystroke of work turning into one row in
+    the item log per session. The row is the user-visible artifact, so the assertion belongs here
+    rather than only on the frame message.
+    """
+    store, clock = FakeStore(), FakeClock()
+    phantom = [Detection(track_id=7, cls="Bear Brand Fortified Powdered Milk 33g", conf=0.957,
+                         box=_PHANTOM)]
+    pipe = _pipe([phantom, phantom, phantom], store, clock)
+
+    for _ in range(3):
+        clock.t += 0.1
+        pipe.process_once()
+
+    assert store.records == []
+    # Nothing was created, so nothing has to be resolved later either: a suppressed detection
+    # should leave no trace at all, not a track that opens and then expires.
+    assert store.resolved == []
+
+
+def test_a_real_detection_beside_a_phantom_is_still_logged():
+    """The filter drops a *box*, not a frame.
+
+    A crowded counter is exactly where the phantom and real items coexist, so a rule that discarded
+    the whole frame's output on seeing one clamped box would throw away the items that matter.
+    """
+    store, clock = FakeStore(), FakeClock()
+    mixed = [
+        Detection(track_id=7, cls="Bear Brand Fortified Powdered Milk 33g", conf=0.957, box=_PHANTOM),
+        Detection(track_id=8, cls="Milo Chocolate Drink 22g Sachet", conf=0.91,
+                  box=(0.2, 0.3, 0.5, 0.7)),
+    ]
+    pipe = _pipe([mixed], store, clock)
+    pipe.process_once()
+
+    assert [(r[1], r[2]) for r in store.records] == [(8, "Milo Chocolate Drink 22g Sachet")]
+
+
+def test_turning_the_suppression_off_logs_the_phantom_again():
+    """The escape hatch, on the path an operator would use it: if a real item really does fill the
+    frame, turning the rule off has to put its row back."""
+    store, clock = FakeStore(), FakeClock()
+    settings = Settings(suppress_clamped_detections=False)
+    pipe = Pipeline(
+        ScriptedSource(),
+        ScriptedDetector([[Detection(track_id=7, cls="banana", conf=0.957, box=_PHANTOM)]]),
+        settings,
+        on_message=lambda m: None,
+        logging_store=store,
+        session_id=42,
+        clock=clock,
+    )
+    pipe.process_once()
+
+    assert [r[1] for r in store.records] == [7]
+
+
 def test_track_is_resolved_after_expiry():
     store, clock = FakeStore(), FakeClock()
     seen = [Detection(track_id=5, cls="banana", conf=0.9, box=(0.1, 0.2, 0.3, 0.4))]

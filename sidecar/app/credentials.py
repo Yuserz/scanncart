@@ -53,17 +53,33 @@ def load_env_file(path: str = DEFAULT_ENV_PATH) -> dict[str, str]:
         return {}
 
 
+def env_value(name: str, path: str = DEFAULT_ENV_PATH) -> str:
+    """One setting from the environment, falling back to the env file.
+
+    The same rule as `load_api_key`, for the same reasons and for any name: the real environment
+    wins over the file so a deploy can inject a value without shipping a .env, blank counts as
+    unset, and a missing file is not an error. Exists because the authoring tool
+    (`sidecar/annotate/providers.py`) needs keys for vision providers that are not Roboflow's, and
+    a second hand-rolled reader of the same file is how two of them end up disagreeing about
+    quoting or `export ` prefixes.
+
+    Returns `""` rather than None: every caller here is asking "is this configured?" and an empty
+    string answers that without a second `is None` check at each call site.
+    """
+    value = os.environ.get(name)
+    if value and value.strip():
+        return value.strip()
+    value = load_env_file(path).get(name)
+    return value.strip() if value and value.strip() else ""
+
+
 def load_api_key(path: str = DEFAULT_ENV_PATH) -> str | None:
     """The Roboflow API key, or None if unset.
 
     The real environment wins over the file so a packaged deploy can inject the
     key without shipping a .env. Blank values are treated as unset.
     """
-    value = os.environ.get(ROBOFLOW_API_KEY_ENV)
-    if value and value.strip():
-        return value.strip()
-    value = load_env_file(path).get(ROBOFLOW_API_KEY_ENV)
-    return value.strip() if value and value.strip() else None
+    return env_value(ROBOFLOW_API_KEY_ENV, path) or None
 
 
 def has_api_key(path: str = DEFAULT_ENV_PATH) -> bool:

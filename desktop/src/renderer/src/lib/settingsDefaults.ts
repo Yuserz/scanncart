@@ -18,6 +18,8 @@ export const DEFAULT_SETTINGS: SettingsPayload = {
   device: 'auto',
   preview_height: 720,
   preview_max_fps: 30,
+  preview_mirror: true,
+  suppress_clamped_detections: true,
   track_expiry_s: 1.5,
   class_allowlist: [],
   detector_backend: 'native',

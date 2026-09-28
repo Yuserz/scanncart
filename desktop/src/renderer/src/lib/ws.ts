@@ -13,6 +13,11 @@ export interface FrameStats {
   infer_fps: number
   capture_fps: number
   latency_ms: number
+  // Detections this frame's inference produced and the sidecar's frame-clamp filter dropped
+  // (settings.suppress_clamped_detections). Optional because the field is newer than the wire:
+  // a sidecar that predates it sends no such key, and `undefined` has to read as "nothing
+  // suppressed" rather than as a missing reading.
+  suppressed?: number
 }
 
 export interface FrameMessage {
@@ -28,6 +33,20 @@ export interface StatusMessage {
   type: 'status'
   state: string
   detail?: string
+  // The class names the *running* model predicts, empty until the sidecar knows them. Empty means
+  // "not known yet" - a detector has no vocabulary until its first inference - and never "predicts
+  // nothing", which is why the stats strip's class chip is absent rather than zero.
+  //
+  // It arrives on the status protocol because it is a fact about the capture rather than about a
+  // request, and it is sent for a clean model too: the count itself is a readout, not only the
+  // input to a verdict. The handshake replays it, so a renderer that connects mid-capture is not
+  // left guessing from the labels going by.
+  class_names?: string[]
+  // What is wrong with that class list (`app/roster.py` on the sidecar side), empty when there is
+  // nothing wrong or nothing is known yet. Judged by the sidecar and rendered as it arrives — and
+  // against the roster of the running weight's own generation, which is a fact only the sidecar
+  // has: the roster is not mirrored on this side, so the sentences are the only description of it.
+  class_warnings?: string[]
 }
 
 export type StreamMessage = FrameMessage | StatusMessage

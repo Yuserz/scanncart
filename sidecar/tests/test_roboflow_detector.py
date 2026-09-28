@@ -114,6 +114,79 @@ def test_falls_back_to_sent_dims_when_image_meta_is_absent():
     assert det.infer(frame(640, 480))[0].box[0] >= 0.0
 
 
+# --- what the round trip did with the geometry ----------------------------
+#
+# Two sizes and a silence. `reported` is the workflow's answer — the canvas its coordinates are
+# relative to — and `None` is a response that carried no size block, which is an *assumption* the
+# detector then makes ("relative to what I sent"), not a match. `probe()` reports both, so an
+# operator can catch a workflow that re-frames the image before the model sees it: for remote
+# weights that is the only observable geometry, the analogue of `resize_mode_resolved`.
+
+
+def test_the_round_trip_records_what_it_sent_and_what_the_workflow_reported():
+    square = {"predictions": {"image": {"width": 640, "height": 640}, "predictions": []}}
+    det, _ = make(square, infer_size=640)
+    det.infer(frame(1080, 1920))
+
+    # The aspect is kept on the way out (1920x1080 -> 640x360), and the workflow answered with a
+    # canvas of its own — which is exactly the mismatch this record exists to make visible.
+    assert det.last_geometry.sent == (640, 360)
+    assert det.last_geometry.reported == (640, 640)
+
+
+def test_a_workflow_that_reports_nothing_says_so_rather_than_agreeing():
+    """The third state. `None` here means the response carried no dimensions, so the detector falls
+    back to the size it transmitted — an assumption, and the panel must not render it as a match."""
+    r = {"predictions": {"predictions": []}}
+    det, _ = make(r, infer_size=640)
+    det.infer(frame(1080, 1920))
+    assert det.last_geometry.sent == (640, 360)
+    assert det.last_geometry.reported is None
+
+
+def test_the_geometry_is_recorded_even_when_nothing_was_detected():
+    """The probe sends a blank frame, so *every* probe is a no-detections round trip. Recording
+    after the early return would leave the probe reporting nothing every time."""
+    det, _ = make()  # REAL_RESPONSE carries one detection; strip it.
+    det._client.response["predictions"]["predictions"] = []
+    assert det.infer(frame(1080, 1920)) == []
+    assert det.last_geometry.reported == (480, 640)
+
+
+def test_nothing_is_recorded_before_the_first_call():
+    det, _ = make()
+    assert det.last_geometry is None
+
+
+def test_a_frame_smaller_than_the_limit_is_sent_unscaled():
+    """`remote_infer_size` is a limit, not a target: upscaling a small capture before transmit
+    would add bytes and no detail."""
+    det, _ = make(infer_size=640)
+    det.infer(frame(240, 320))
+    assert det.last_geometry.sent == (320, 240)
+
+
+def test_the_pre_downscale_keeps_the_aspect_ratio():
+    """Which is what makes it geometry-neutral: a uniform scale commutes with whatever the model
+    does to the pixels, so `remote_infer_size` decides detail, not object scale. A non-uniform
+    one would silently warp objects before they ever left the machine."""
+    det, _ = make(infer_size=640)
+    for (h, w) in ((1080, 1920), (480, 640), (720, 1280), (1000, 1000)):
+        det.infer(frame(h, w))
+        sent_w, sent_h = det.last_geometry.sent
+        assert sent_w == pytest.approx(sent_h * (w / h), rel=0.02), (h, w)
+        assert max(sent_w, sent_h) <= 640
+
+
+def test_an_extreme_aspect_ratio_never_collapses_an_axis_to_zero():
+    """`int()` truncation of a 4-pixel-tall frame wants to answer 0, and `cv2.resize` refuses a
+    zero dimension — a probe (or a capture) would fail on a frame shape rather than on anything to
+    do with the backend."""
+    det, _ = make(infer_size=640)
+    det.infer(frame(8, 4000))
+    assert det.last_geometry.sent == (640, 1)
+
+
 def test_find_image_size_reads_the_meta_block():
     assert find_image_size(REAL_RESPONSE) == (480, 640)
 

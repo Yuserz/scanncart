@@ -4,6 +4,10 @@ Standalone Python service: camera capture → detection + tracking → WebSocket
 Detection runs through a swappable backend — YOLO11 weights in-process, or a
 Roboflow Workflow over HTTP. See [../docs/DETECTOR_BACKENDS.md](../docs/DETECTOR_BACKENDS.md).
 
+> Setting up the whole project from a fresh clone? Start with the step-by-step
+> [development guide](../docs/DEVELOPMENT.md); this file covers sidecar-specific
+> setup, GPU/CUDA details, and manual verification.
+
 ## Setup
 
 ```bash

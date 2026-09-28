@@ -1,5 +1,6 @@
 import os
 import sys
+from dataclasses import dataclass
 from typing import Protocol
 import numpy as np
 from app.roboflow import RoboflowError, find_image_size, find_predictions
@@ -94,6 +95,26 @@ def enable_onnx_cuda() -> bool:
     except Exception:  # noqa: BLE001 - CPU inference must still work
         pass
     return False
+
+
+@dataclass(frozen=True)
+class RemoteGeometry:
+    """What one remote round trip did with the frame's geometry, from this side.
+
+    Two facts, and the *absence* of the second is a third: `reported` is what the workflow said the
+    frame was, and `None` means its response carried no size block at all. That is not the same as
+    "it agreed with us" — in that case the response omitted the dimensions, and this detector falls
+    back to what it transmitted (see `infer`), which is an assumption rather than an observation.
+
+    Recorded rather than inferred by the caller because the caller cannot: the transmit size is
+    `_encode`'s answer and the reported size is in a response only this class parses. `probe()`
+    reports both so an operator can see the geometry a real frame is sent at and the geometry the
+    workflow's coordinates are relative to, side by side — the remote analogue of
+    `resize_mode_resolved`, which answers the same question for weights that run here.
+    """
+
+    sent: tuple[int, int]
+    reported: tuple[int, int] | None
 
 
 class YoloDetector:
@@ -263,6 +284,10 @@ class RoboflowRemoteDetector:
         self._jpeg_quality = jpeg_quality
         # No model manifest to read over HTTP; filled in as classes are seen.
         self.names: dict = {}
+        # The geometry of the most recent round trip, or None before the first one. Read by
+        # `POST /api/detector/probe` — see RemoteGeometry for why it is recorded here rather than
+        # computed by the caller.
+        self.last_geometry: RemoteGeometry | None = None
 
     def set_conf(self, value: float) -> None:
         """Change the confidence threshold on a running detector.
@@ -273,6 +298,14 @@ class RoboflowRemoteDetector:
         self._conf = float(value)
 
     def _encode(self, frame: np.ndarray) -> tuple[str, int, int]:
+        """The frame as it goes on the wire, plus the size it was sent at.
+
+        Downscaling keeps the aspect ratio, and a uniform scale commutes with whatever the model
+        does to these pixels, so this cannot change the geometry the model sees — it only decides
+        how many pixels are left for the model to work with. `RemoteGeometry.sent` is this size,
+        and the probe reports it beside what the workflow says, which is how an operator sees
+        whether the workflow re-frames the image before the model gets it.
+        """
         import base64
 
         import cv2
@@ -292,14 +325,22 @@ class RoboflowRemoteDetector:
         image_b64, sent_w, sent_h = self._encode(frame)
         result = self._client.run(image_b64)
         predictions = find_predictions(result)
+        # Recorded before the no-predictions return below: a workflow that found nothing still
+        # answered with a geometry, and a blank frame is exactly what the probe sends — so bailing
+        # out first would leave `last_geometry` unset for every probe that had no detections.
+        self.last_geometry = RemoteGeometry(
+            sent=(sent_w, sent_h), reported=find_image_size(result)
+        )
         if not predictions:
             # Still age out tracks, or an item that leaves frame keeps its slot
             # until something else happens to be detected.
             return self._tracker.assign([]) if self._tracker is not None else []
 
         # Coordinates are relative to the frame the server saw. It echoes those
-        # dimensions back; trust that over our own when present.
-        ref = find_image_size(result) or (sent_w, sent_h)
+        # dimensions back; trust that over our own when present — and when it reports none, this
+        # falls back to what was transmitted, which `last_geometry.reported` records as the
+        # assumption it is.
+        ref = self.last_geometry.reported or (sent_w, sent_h)
         ref_w, ref_h = ref
 
         out: list[Detection] = []

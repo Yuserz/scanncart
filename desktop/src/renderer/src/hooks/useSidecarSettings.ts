@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   createApiClient,
   type ApiClient,
@@ -6,6 +6,7 @@ import {
   type CameraProfileResponse,
   type CameraQualityResponse,
   type DetectorProbeResponse,
+  type InstalledModel,
   type PresetInfo,
   type SettingsResponse,
   type SettingsUpdate,
@@ -44,6 +45,20 @@ export interface SidecarSettings {
   restoreDefaults: () => Promise<SettingsResponse>
   probe: () => Promise<DetectorProbeResponse>
   cameras: CameraInfo[]
+  // Weights discovered under sidecar/models/, as `models/<name>` with what each one needs.
+  // Empty is normal: it means nothing has been trained locally yet, not that the picker is
+  // broken. The built-in list lives in settingsFields.ts and is merged in by the picker.
+  // `models` is the names alone, which is all the picker needs; `installed` carries the
+  // recorded `resize_mode` requirement, which is what lets the Admin Panel flag a mismatch.
+  models: string[]
+  installed: InstalledModel[]
+  // Writes the requirement beside the selected weights and refreshes `installed` from the
+  // answer. Deliberately does *not* re-read settings: that would discard the Admin form's
+  // unsaved edits, and the acknowledgement a caller needs is the refreshed list itself — a
+  // weight that had no requirement now has one, which is the same fact the settings response
+  // would report.
+  recordRequirement: (model: string, resizeMode: string) => Promise<void>
+  recording: boolean
   // Stopping from Admin: the restart-required fields are edited here, so
   // sending the user to Live view just to unblock the form is a dead end.
   stopCapture: () => Promise<void>
@@ -98,7 +113,13 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
   const [error, setError] = useState<string | null>(null)
   const [cameras, setCameras] = useState<CameraInfo[]>([])
   const [camerasLoading, setCamerasLoading] = useState(true)
+  // The weights on disk, as the sidecar reports them. A read of models/ — no torch import,
+  // no download — so it rides along with the settings load rather than getting its own
+  // timer: it can only change when someone drops a file in, which means an app restart.
+  const [installed, setInstalled] = useState<InstalledModel[]>([])
+  const models = useMemo(() => installed.map((m) => m.value), [installed])
   const [stopping, setStopping] = useState(false)
+  const [recording, setRecording] = useState(false)
   const [probing, setProbing] = useState(false)
   const [probeResult, setProbeResult] = useState<DetectorProbeResponse | null>(null)
   const [cameraQuality, setCameraQuality] = useState<CameraQualityResponse | null>(null)
@@ -119,12 +140,16 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
     setLoading(true)
     setError(null)
     try {
-      const [s, sys, p, prof] = await Promise.all([
+      const [s, sys, p, prof, m] = await Promise.all([
         api.getSettings(),
         api.getSystemInfo(),
         api.getPresets(),
         // Cheap: reads one small JSON file, opens no device.
-        api.getCameraProfile()
+        api.getCameraProfile(),
+        // Also a small directory read. Deliberately *not* fatal to the settings load:
+        // it feeds one dropdown, so if it fails the picker falls back to the built-in
+        // list plus whatever is already selected, and the form still works.
+        api.getModels().catch(() => ({ stock: [], installed: [], directory: '' }))
       ])
       setSettings(s)
       setSavedSettings(s)
@@ -132,6 +157,7 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
       setPresets(p.presets)
       setRecommended(p.recommended)
       setStoredProfile(prof.profile)
+      setInstalled(m.installed ?? [])
       return true
     } catch (e) {
       setError(errorMessage(e))
@@ -310,6 +336,22 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
     }
   }, [])
 
+  const recordRequirement = useCallback(
+    async (model: string, resizeMode: string): Promise<void> => {
+      setRecording(true)
+      setError(null)
+      try {
+        const r = await apiRef.current!.recordResizeMode(model, resizeMode)
+        setInstalled(r.installed ?? [])
+      } catch (e) {
+        setError(errorMessage(e))
+      } finally {
+        setRecording(false)
+      }
+    },
+    []
+  )
+
   // An unreachable backend is a normal answer here, not an error: the sidecar
   // returns reachable:false rather than a non-2xx, so only a transport failure
   // lands in the catch.
@@ -327,7 +369,14 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
         detail: errorMessage(e),
         latency_ms: null,
         class_names: [],
-        provider: null
+        // Nothing was loaded, so nothing is known about a class list — and an empty list here
+        // means *no finding*, which is the honest answer for a probe that never reached a model.
+        class_warnings: [],
+        provider: null,
+        // A transport failure carries no geometry, and there is nothing to compare: the panel
+        // renders no geometry line at all for an unreachable backend.
+        sent_size: null,
+        reported_size: null
       }
       setProbeResult(failed)
       return failed
@@ -439,6 +488,10 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
     cameras,
     refreshCameras,
     camerasLoading,
+    models,
+    installed,
+    recordRequirement,
+    recording,
     stopCapture,
     startCapture,
     stopping,

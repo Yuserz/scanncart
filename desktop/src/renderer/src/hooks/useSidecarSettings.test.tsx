@@ -19,6 +19,51 @@ describe('useSidecarSettings', () => {
     expect(result.current.recommended).toBe('mid_range')
   })
 
+  it('exposes installed weights, and their names for the picker', async () => {
+    // Two shapes off one endpoint: the picker needs the names, the Admin Panel needs the
+    // recorded requirement. Deriving the names here rather than shipping both over the wire
+    // is what stops the two from disagreeing.
+    const { deps } = makeDeps({
+      getModels: vi.fn(async () => ({
+        stock: ['yolo11n.pt'],
+        installed: [
+          {
+            value: 'models/scanncart-grocery-v2.pt',
+            resize_mode: 'stretch',
+            auto_resolves_to: 'stretch',
+            source: 'snc-grocery version 2',
+            class_names: [],
+            class_warnings: [],
+            recorded: true,
+            validation: []
+          }
+        ],
+        directory: 'models/'
+      }))
+    })
+    const { result } = renderHook(() => useSidecarSettings(8765, deps))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    expect(result.current.models).toEqual(['models/scanncart-grocery-v2.pt'])
+    expect(result.current.installed[0].resize_mode).toBe('stretch')
+  })
+
+  it('survives a models endpoint that fails', async () => {
+    // It feeds one dropdown and one list, so a failure must not take the form down with it:
+    // the picker falls back to the built-in list plus whatever is already selected.
+    const { deps } = makeDeps({
+      getModels: vi.fn(async () => {
+        throw new Error('nope')
+      })
+    })
+    const { result } = renderHook(() => useSidecarSettings(8765, deps))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    expect(result.current.models).toEqual([])
+    expect(result.current.installed).toEqual([])
+    expect(result.current.settings?.active_model).toBe('yolo11n.pt')
+  })
+
   it('polls health() and exposes captureState', async () => {
     const { deps } = makeDeps({
       health: vi.fn(async () => ({ state: 'running', active_model: 'yolo11n.pt', device: 'cpu' }))

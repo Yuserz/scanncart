@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>SCANnCART annotator</title>
+    <!-- No bundler, no npm: this page is served by the same process that serves the API, so
+         `make annotate` is the whole install story and the sidecar's own test style covers it. -->
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>SCANnCART annotator</h1>
+      <div id="weight" data-testid="weight">loading…</div>
+      <div id="progress" data-testid="progress"></div>
+      <!-- The acceptance gate, live: the two splits a run refuses on, and how many decisions are
+           left in them. It is a readout of the same call the checklist's header is rendered from,
+           so the number here moves as the pass is worked - and it is a button, because a number
+           with work behind it should take you to the work. It is disabled once the gate is clear
+           (there is nowhere to go). -->
+      <button id="gate" data-testid="gate" data-act="gate" type="button"></button>
+      <div id="hosted" data-testid="hosted"></div>
+    </header>
+
+    <main>
+      <!-- The filters are applied by the server, and the options come from `/api/config`: this page
+           sends the tokens and never decides which frames match, so the checklist's draw and review
+           sections and the list on screen are the same selection. `unassigned`/`unrecorded` are the
+           `unknown` token reaching the query string (`annotate/store.UNRECORDED`). -->
+      <section id="sidebar">
+        <div id="filters">
+          <select
+            id="filter-split"
+            data-testid="filter-split"
+            title="Which split the frame landed in - test and valid are the two the acceptance gate asks about"
+          ></select>
+          <select
+            id="filter-distance"
+            data-testid="filter-distance"
+            title="How far the item was from the camera - far is the axis this dataset exists for"
+          ></select>
+          <!-- `unrecorded` here is the hard negatives, which carry no distance by construction, and
+               `null` below is the decision that there is no item: the two axes the null section
+               turns on, so it can be reached without the view button too. -->
+          <select
+            id="filter-state"
+            data-testid="filter-state"
+            title="Whether the frame carries a decision yet"
+          >
+            <option value="">any state</option>
+            <option value="unlabeled">unlabeled</option>
+            <option value="labeled">labeled</option>
+            <option value="null">null</option>
+          </select>
+        </div>
+        <aside id="worklist" data-testid="worklist"></aside>
+      </section>
+
+      <section id="editor">
+        <div id="stage" data-testid="stage">
+          <img id="image" data-testid="frame-image" alt="" />
+          <!-- Every box is positioned from percentages the server computed, so there is no
+               geometry in this file to disagree with the dataset's. -->
+          <div id="overlay" data-testid="overlay"></div>
+        </div>
+        <p id="frame-info" data-testid="frame-info"></p>
+      </section>
+    </main>
+
+    <footer>
+      <div id="classes" data-testid="classes"></div>
+      <div id="actions">
+        <button
+          id="review"
+          data-testid="review"
+          data-act="review"
+          title="Only the frames a weight drew that nobody has checked, worst split first (test, then valid)"
+        >Review (u)</button>
+        <button
+          id="draw"
+          data-testid="draw"
+          data-act="draw"
+          title="Only the far frames in test/valid a weight was asked about and found nothing in - the checklist's draw section, served from the same rule"
+        >Draw (d)</button>
+        <button
+          id="nulls"
+          data-testid="nulls"
+          data-act="nulls"
+          title="Only the hard negatives in test/valid that still have no null - the checklist's null section, served from the same rule"
+        >Nulls (m)</button>
+        <button data-testid="suggest" data-act="suggest">Suggest (s)</button>
+        <button data-testid="accept" data-act="accept">Accept all (a)</button>
+        <button data-testid="clear" data-act="clear">Clear (c)</button>
+        <button data-testid="null" data-act="null">Mark null (n)</button>
+        <button
+          id="confirm"
+          data-testid="confirm"
+          data-act="confirm"
+          title="These are a weight's boxes and they are right - clears it from the review count without changing them"
+        >Confirm (f)</button>
+        <button data-testid="save" data-act="save">Save (enter)</button>
+        <button data-testid="prev" data-act="prev">Prev (←)</button>
+        <button data-testid="next" data-act="next">Next (→)</button>
+      </div>
+      <p id="note" data-testid="note"></p>
+    </footer>
+
+    <script type="module" src="/static/app.js"></script>
+  </body>
+</html>

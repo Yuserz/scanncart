@@ -14,6 +14,12 @@ graphify-out/
 # Sidecar runtime logs from a manually launched `python run.py`.
 sidecar/*.log
 
+# The annotator's own log. `make annotate` runs the tool from `sidecar/`, so these
+# land there and the rule above covers them; launching it from the repo root - which
+# is what an agent shell does - writes the same files here instead.
+/annotate.log
+/annotate.err.log
+
 # Runtime state, not source. `main.py`'s db_path is relative, so a sidecar launched with
 # the repo root as its CWD writes a detection log here instead of into sidecar/data/.
 # Whatever it logs, it is a session record rather than something to clone.

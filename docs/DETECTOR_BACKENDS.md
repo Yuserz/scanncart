@@ -197,13 +197,24 @@ The way to actually go faster is a `.pt` on CUDA (see below), not tuning this.
    produces 640x360 of content inside 640x640 with 140px bars, so objects occupy less of the model
    canvas; that tradeoff is worth testing against real checkout scenes, especially for small SKUs.
 
-   `Settings.resize_mode` (`auto` | `letterbox` | `stretch`) makes the choice explicit. `auto` is
-   retained for old config files but now resolves to `letterbox` for every model, so model format
-   cannot silently select a geometry-warping mode. `stretch` remains available as an **experimental**
-   option for deliberate, labeled A/B comparisons (particularly with the stretch-trained Roboflow
-   ONNX export). It resizes the frame to `imgsz` x `imgsz` before inference, avoiding additional
-   Ultralytics letterbox padding; however, it can distort package proportions. Selecting it surfaces
-   a warning, and it intentionally mismatches the local `.pt` training geometry.
+   `Settings.resize_mode` (`auto` | `letterbox` | `stretch`) makes the choice explicit. `auto`
+   reads the geometry recorded beside the selected weights — the `models/<stem>.json` that
+   `train_model.py --install` writes, or the one the app's `Record it now` button writes for a
+   weight no run recorded — and only falls back to the format heuristic when nothing was recorded:
+   `stretch` for a custom `.onnx` (a Roboflow export, trained stretched), `letterbox` for a custom
+   `.pt`. That fallback is a guess about weights nobody recorded anything about, so it is *reported*
+   as one rather than left to be noticed (`SettingsResponse.unrecorded_resize_mode`, rendered in
+   both views, each carrying the same one-click record button). An explicit `letterbox`/`stretch`
+   is honoured outright as the operator overriding all of that — and `stretch` stays an
+   **experimental** A/B choice, which resizes the frame to `imgsz` x `imgsz` before inference,
+   avoiding the additional Ultralytics letterbox padding at the cost of distorting package
+   proportions. Selecting it for weights whose record does not ask for it surfaces a warning.
+
+   For the **remote** backends there is no equivalent setting to get wrong on this side: the
+   workflow holds the model, so it holds the preprocessing, and the app only decides how large a
+   frame to transmit (`remote_infer_size`, aspect kept — a uniform scale commutes with whatever
+   the model then does, so it changes detail rather than geometry). What the app *can* do is
+   report the pair at Test Connection time — see §8.
 
    Detection boxes are normalized against the dimensions actually fed to the model, so the renderer
    can overlay either mode in the preview without a separate manual un-warping step. A prior local
@@ -217,14 +228,21 @@ The way to actually go faster is a `.pt` on CUDA (see below), not tuning this.
 ### The clean long-term path
 
 `environment.json` also carries the **dataset export link**, and dataset export is free on any plan.
-Training `yolo11n` from it yields a real `.pt` that runs on torch + CUDA — no ONNX runtime, no
-preprocessing mismatch, and the model the PRD wants. **That path was taken on 2026-09-24:**
-`models/scanncart-grocery.pt` (mAP50-95 0.944) is now the shipped default; see `MODEL_TRAINING.md
-§7` for the runbook and the measured `.pt`-vs-ONNX benchmark. Any other `models/*.pt` is equally
-selectable with no code edits in either codebase, `resize_mode: "auto"` resolves to `letterbox`
-for every model, and `device: "auto"` resolves to CUDA. Ultralytics
-**cannot** export ONNX → `.pt` (PyTorch is the source format), so retraining from the dataset
-export is the only route to these weights.
+Training `yolo11n` from it yields a real `.pt` that runs on torch + CUDA — the fastest option, no
+ONNX runtime, no preprocessing mismatch, and the model the PRD wants. See `MODEL_TRAINING.md §7`:
+any `models/*.pt` is already selectable with no code edits in either codebase, and `device: "auto"`
+resolves to CUDA. `resize_mode: "auto"` uses the geometry recorded beside the weights — the record
+`train_model.py --install` writes, or the one the app's `Record it now` button writes for a
+weight with no run behind it (Admin's, or the Live view's own copy while a capture runs) — falling back to `letterbox` for a `.pt` nobody recorded anything
+about, since that is how ultralytics-native training fits its frames. That fallback is an
+assumption rather than a fact, so it is reported as one (`SettingsResponse.unrecorded_resize_mode`,
+rendered in both views, the Admin Panel's and the Live view's copy each carrying the same
+record-it-now button — writing it cannot disturb a running detector, since the mode written is the
+one `auto` already resolved to) instead of reaching the detector unremarked. **That path was taken on
+2026-09-24:** `models/scanncart-grocery.pt` (mAP50-95 0.944) is the shipped default, and the
+measured `.pt`-vs-ONNX benchmark is in `MODEL_TRAINING.md §7`. Ultralytics **cannot** export
+ONNX → `.pt` (PyTorch is the source format), so
+retraining from the dataset export is the only route to these weights.
 
 
 ## 2. Non-goals
@@ -548,10 +566,35 @@ working with no internet.
 Validates the selected backend **before** the user hits Start, so a misconfigured URL or missing key
 surfaces in the Admin Panel instead of as a failed capture.
 
-Returns `{ reachable, backend, latency_ms, class_names, provider, detail }` — `provider`
-(native only) names the execution provider/device actually in use, i.e. the answer to "am I really
-on the GPU?". Powers a **"Test Connection"** button beside the backend picker. For remote
-backends it posts a tiny synthetic frame.
+Returns `{ reachable, backend, latency_ms, class_names, provider, sent_size, reported_size, detail }`
+— `provider` (native only) names the execution provider/device actually in use, i.e. the answer to
+"am I really on the GPU?". Powers a **"Test Connection"** button beside the backend picker.
+
+### The remote probe reports the geometry (`sent_size` / `reported_size`)
+
+Remote weights have no `resize_mode` and no record — the model lives inside the workflow, so there
+is no file on this machine to read a requirement from. The one geometry fact a round trip *can*
+produce is the pair below, and it is the remote analogue of `resize_mode_resolved`:
+
+| Field | Meaning |
+|---|---|
+| `sent_size` | the size the probe transmitted. Not the capture size: the probe builds a frame **shaped like the capture** (`capture_width` × `capture_height`) and sends it through the detector's own downscale, so this equals what a live frame would be sent at. A 64×64 square probe could not show an aspect mismatch at all, which is the point of asking. |
+| `reported_size` | the workflow's `image: {width, height}` block — the frame its coordinates are relative to (Phase 0: `predictions.image`). `null` means the response carried **no** size block, so the detector fell back to assuming the coordinates match what it sent. |
+
+Three states, and the third is not a synonym for "they agreed":
+
+- **equal** → the workflow passes the frame through at the size sent. Neutral. It does *not* prove
+  the geometry is right: whatever the model's own preprocessing does inside the workflow is
+  invisible from here, and that is exactly where a `Stretch to`-trained version meets a letterbox.
+- **different** → the workflow re-frames the image before the model sees it, so `remote_infer_size`
+  is not the geometry these weights run at. This is the case worth catching, and the panel flags it.
+  A changed **aspect ratio** (cross-multiplied, not divided) means stretch-or-pad rather than a
+  uniform rescale, and the wording says both possibilities rather than guessing between them.
+- **absent** → unverified. The coordinates were *assumed* to be relative to what was sent; a workflow
+  that re-frames silently puts boxes in the wrong place, and nothing here can rule that out.
+
+Both fields are `null` for `native`, whose geometry is already on `SettingsResponse` — a probe
+inventing a pair for it would answer a question nobody asked in this response.
 
 For `native` the probe is now a real build, not a filesystem check:
 
