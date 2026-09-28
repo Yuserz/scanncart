@@ -25,7 +25,11 @@ if str(SIDECAR_DIR) not in sys.path:  # pragma: no cover - import plumbing
 if str(TOOLS_DIR) not in sys.path:  # pragma: no cover - import plumbing
     sys.path.insert(0, str(TOOLS_DIR))
 
+# `store` comes with the same import-path requirement as `workspace`, and it is imported here
+# rather than inside `main()` because `build_parser` names the labels directory in its help text:
+# a constant that only exists after argument parsing would be a NameError in `--help`.
 from workspace import DEFAULT_OUT, MANIFEST_NAME, resolve_extras  # noqa: E402  (needs the path above)
+from .store import ANNOTATIONS_DIRNAME  # noqa: E402  (same, and it is where the name lives)
 
 
 def pick_port(preferred: int = 8770) -> int:
@@ -65,7 +69,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--annotations",
         default="",
-        help="where the labels live (default: <workspace>/annotations-v2)",
+        # The store owns the name; this is the same constant the tool that *reads* the tree keeps a
+        # copy of, and `tests/test_annotate_store.py` pins the two against each other.
+        help=f"where the labels live (default: <workspace>/{ANNOTATIONS_DIRNAME})",
     )
     ap.add_argument("--weights", default="", help="which weight may suggest (default: by roster)")
     ap.add_argument("--conf", type=float, default=0.25, help="suggestion confidence floor")
@@ -109,7 +115,11 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - exercised 
 
     models_dir = SIDECAR_DIR / "models"
     weight, note = choose_weights(models_dir, args.weights)
-    annotations = Path(args.annotations).expanduser() if args.annotations else out.parent / "annotations-v2"
+    annotations = (
+        Path(args.annotations).expanduser()
+        if args.annotations
+        else out.parent / ANNOTATIONS_DIRNAME
+    )
 
     store = LabelStore(out=out, annotations=annotations, extras=extras)
     state = AnnotateState(

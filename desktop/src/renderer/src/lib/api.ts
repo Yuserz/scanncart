@@ -350,6 +350,13 @@ export interface ValidationRecord {
 export interface InstalledModel {
   value: string
   resize_mode: string | null
+  // The size these weights were trained at, as `train_model.py --install` recorded it, and `null`
+  // when nothing usable was recorded — the same three-state field as `resize_mode`, for the same
+  // reason: `Settings.imgsz` is what the app resizes a frame to and nothing relates it to the
+  // model, so 960-trained weights run at the app's 640 by default and only the recorded value lets
+  // the sidecar name the mismatch. Declared here so the panel *can* show it; not defaulted to 640,
+  // since that would be a claim about weights nobody measured.
+  imgsz: number | null
   auto_resolves_to: string
   source: string
   // The class list these weights predict, as recorded beside them by `train_model.py --install`.

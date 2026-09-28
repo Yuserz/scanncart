@@ -457,8 +457,8 @@ describe('LiveView', () => {
 
     it('shows the class count and the roster verdict as a chip in the stats strip', async () => {
       // The banner above is silent on a healthy model, which is exactly why the count needs a tile
-      // of its own: `8` where an operator expects 8 is the reassuring case, and it has to be
-      // visible without a problem to carry it.
+      // of its own: `7` where an operator expects the seven this app's roster declares is the
+      // reassuring case, and it has to be visible without a problem to carry it.
       const h = makeHarness()
       render(<LiveView port={8765} deps={h.deps} />)
 
@@ -473,15 +473,15 @@ describe('LiveView', () => {
       })
 
       const chip = await screen.findByTestId('stat-classes')
-      expect(chip).toHaveTextContent('8')
+      expect(chip).toHaveTextContent('7')
       expect(chip).toHaveTextContent('classes · roster ok')
       expect(chip).not.toHaveClass('warn')
-      // A tile cannot carry the names, so the title does — including which 8 they are.
+      // A tile cannot carry the names, so the title does — including which seven they are.
       expect(chip).toHaveAttribute('title', expect.stringContaining(ROSTER_NAMES[0]))
     })
 
     it('counts the findings on the chip when the list is not the roster', async () => {
-      // A distance-split project: 24 outputs where the roster has 8. The number is the whole point
+      // A distance-split project: 21 outputs where the roster has 7. The number is the whole point
       // of this tile — the banner says what is wrong, and only the chip says *how many* classes the
       // head came back with.
       const names = ROSTER_NAMES.flatMap((n) => ['close', 'mid', 'far'].map((d) => `${n} ${d}`))
@@ -499,7 +499,7 @@ describe('LiveView', () => {
       })
 
       const chip = await screen.findByTestId('stat-classes')
-      expect(chip).toHaveTextContent('24')
+      expect(chip).toHaveTextContent('21')
       expect(chip).toHaveTextContent('1 finding')
       expect(chip).toHaveClass('warn')
       // The sidecar's own sentence in the title, so the chip and the banner cannot describe one

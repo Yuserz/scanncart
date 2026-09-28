@@ -16,6 +16,8 @@ to be right before it matters rather than after.
 
 from __future__ import annotations
 
+import pytest
+
 import generations
 import label_classes
 
@@ -41,6 +43,7 @@ DISTANCE_SPLIT = [
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.mirror
 def test_the_runtime_rosters_are_the_tools_rosters():
     """The names are typed twice on purpose (the runtime must not import the tools), so the one
     thing that has to hold is that they are the same names, generation by generation - including
@@ -72,6 +75,7 @@ def test_the_runtime_rosters_are_the_tools_rosters():
     assert NEWEST == generations.DEFAULT.name
 
 
+@pytest.mark.mirror
 def test_the_distance_predicate_agrees_with_the_tools():
     """Same contract, second half. The tools refuse to *build* a distance-split dataset; this
     module is what notices a weight that arrived from one anyway, and a predicate that disagreed

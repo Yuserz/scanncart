@@ -20,7 +20,7 @@ export const CUSTOM_MODEL_V2 = 'models/scanncart-grocery-v2.pt'
 // A raw path is not a label. Anything not listed falls back to its own name.
 export const MODEL_LABELS: Record<string, string> = {
   [CUSTOM_MODEL]: 'SCANnCART grocery v1 (custom, 7 SKUs)',
-  [CUSTOM_MODEL_V2]: 'SCANnCART grocery v2 (custom, 8 SKUs)',
+  [CUSTOM_MODEL_V2]: 'SCANnCART grocery v2 (custom, 7 SKUs)',
   'models/scanncart-grocery.onnx': 'SCANnCART grocery (Roboflow export)'
 }
 
@@ -101,7 +101,7 @@ export const MODEL_SPEC_HINTS: Record<string, string> = {
   // Model field flags a mismatch for *any* installed weight rather than only this filename.
   // What is left is what a record cannot carry - what these weights are and what they cost.
   [CUSTOM_MODEL_V2]:
-    'Locally trained (8 SKUs) — see the requirement recorded beside it below. Runs on torch, so a CUDA GPU is the fast path.',
+    'Locally trained v2 (7 SKUs) — see the requirement recorded beside it below. Runs on torch, so a CUDA GPU is the fast path.',
   'yolo26n.pt':
     'Experimental — lightest YOLO26. Needs roughly yolo11n-class hardware: a modern 4-core CPU and 8 GB RAM. Its NMS-free design typically runs faster than yolo11n on CPU. Weights auto-download on first capture start (internet needed once).',
   'yolo26s.pt':

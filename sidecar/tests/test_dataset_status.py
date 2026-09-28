@@ -497,6 +497,7 @@ def test_the_route_does_not_expose_a_roboflow_key(monkeypatch, tmp_path):
 # --------------------------------------------------------------------------
 
 
+@pytest.mark.mirror
 def test_the_snapshot_path_matches_where_the_tool_writes_it():
     """Fails the moment the workspace moves without the sidecar following.
 
@@ -510,6 +511,7 @@ def test_the_snapshot_path_matches_where_the_tool_writes_it():
     )
 
 
+@pytest.mark.mirror
 def test_the_background_slug_list_matches_the_tooling():
     """The second hand-synced copy in that module, guarded the same way.
 
@@ -522,6 +524,7 @@ def test_the_background_slug_list_matches_the_tooling():
     assert set(BACKGROUND_SLUGS) == set(label_classes.PSEUDO_CLASS_SLUGS)
 
 
+@pytest.mark.mirror
 def test_the_split_names_match_the_tooling():
     """The third hand-synced copy in that module, guarded the same way.
 
@@ -534,6 +537,7 @@ def test_the_split_names_match_the_tooling():
     assert tuple(SPLITS) == label_classes.SPLIT_NAMES
 
 
+@pytest.mark.mirror
 def test_the_distance_names_match_the_tooling():
     """The fourth hand-synced copy in that module, guarded the same way.
 

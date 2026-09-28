@@ -339,9 +339,15 @@ export const VALIDATION_V2: ValidationRecord = {
   ]
 }
 
-// The 8 class names a v2 weight predicts, as `--install` records them. A fixture mirror like the
-// other hand-kept pairs in this repo: the renderer never judges these names (the sidecar does and
-// sends sentences), so only the count and the presence matter here.
+// The class names a v2 weight predicts, as `--install` records them: v1's seven. This fixture
+// carried an eighth - `Palmolive Naturals Bar Soap 85g` - for a while after the class was dropped
+// from the dataset (no v1 name to inherit, no `close` captures, so its cell could never be shot),
+// and nothing noticed, because a fixture is the kind of mirror that fails quietly: it is what the
+// panel's own tests are written against, so a stale one keeps a stale panel green. It is pinned
+// against the runtime's `V2_ROSTER` by `sidecar/tests/test_desktop_contracts.py` now.
+//
+// The renderer never *judges* these names - the sidecar does, and sends sentences - so what this
+// list has to be is the same names the weights carry, which is exactly what that guard checks.
 export const ROSTER_NAMES = [
   'Bear Brand Fortified Powdered Milk 33g',
   'lucky_me_pancit_canton_calamansi_flavor',
@@ -349,8 +355,7 @@ export const ROSTER_NAMES = [
   'century_tuna_flakes_in_oil_155_grams',
   'silver_swan_sukang_puti_200ML',
   'Milo Chocolate Drink 22g Sachet',
-  'safeguard_pure_white_60g',
-  'Palmolive Naturals Bar Soap 85g'
+  'safeguard_pure_white_60g'
 ]
 
 // What `train_model.py --install` records beside the weights, as the sidecar reports it.
@@ -361,6 +366,9 @@ export function installedV2(overrides: Partial<InstalledModel> = {}): InstalledM
   return {
     value: 'models/scanncart-grocery-v2.pt',
     resize_mode: 'stretch',
+    // The size the run trained at, recorded beside the weight with the geometry: `--install`
+    // writes both or neither, so a record that has a mode has an `imgsz`.
+    imgsz: 640,
     auto_resolves_to: 'stretch',
     source: 'snc-grocery version 2',
     class_names: ROSTER_NAMES,
@@ -371,9 +379,9 @@ export function installedV2(overrides: Partial<InstalledModel> = {}): InstalledM
   }
 }
 
-// A weight whose project class list was split by distance: one product in `close`/`mid`/`far`,
-// so 24 outputs and every box under a label the roster does not contain. The names and the
-// sentence are what the sidecar reports; the panel renders them as they arrive.
+// A weight whose project class list was split by distance: one product in `close`/`mid`/`far`, so
+// 21 outputs where the roster has 7 and every box under a label the roster does not contain. The
+// names and the sentence are what the sidecar reports; the panel renders them as they arrive.
 export function installedV2DistanceSplit(): InstalledModel {
   return installedV2({
     class_names: ['Palmolive Naturals Bar Soap 85g close', 'Palmolive Naturals Bar Soap 85g mid'],
@@ -383,7 +391,7 @@ export function installedV2DistanceSplit(): InstalledModel {
         "'Palmolive Naturals Bar Soap 85g close' (close), 'Palmolive Naturals Bar Soap 85g " +
         "mid' (mid). Distance is a tag on the training image (MODEL_TRAINING.md 8.1), never a " +
         'class - so this is a project whose class list was split by distance. Retrain from a ' +
-        'version generated with the 8 product names; no setting here fixes it.'
+        'version generated with the 7 product names; no setting here fixes it.'
     ]
   })
 }
@@ -423,6 +431,8 @@ export function installedUnrecorded(overrides: Partial<InstalledModel> = {}): In
   return {
     value: 'models/hand-copied.pt',
     resize_mode: null,
+    // Three states again, and for the same reason: nothing recorded means nothing known, not 640.
+    imgsz: null,
     auto_resolves_to: 'letterbox',
     source: '',
     // Nothing recorded beside it, so no class list is known either - and "nothing known" must

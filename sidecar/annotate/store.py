@@ -50,7 +50,12 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from label_classes import DISTANCE_ORDER, SLUG_TO_CLASS, SPLIT_NAMES
+from label_classes import (
+    DISTANCE_ORDER,
+    PSEUDO_CLASS_SLUGS as TOOLS_PSEUDO_CLASS_SLUGS,
+    SLUG_TO_CLASS,
+    SPLIT_NAMES,
+)
 from workspace import MANIFEST_NAME, PROVENANCE_NAME, SPLITS_NAME
 
 # The canonical class order. Index in this tuple is the `cls` column of every label row, so it is
@@ -61,9 +66,26 @@ CLASS_SLUGS: tuple[str, ...] = tuple(SLUG_TO_CLASS)
 SLUG_BY_NAME: dict[str, str] = {name: slug for slug, name in SLUG_TO_CLASS.items()}
 CLASS_INDEX: dict[str, int] = {slug: i for i, slug in enumerate(CLASS_SLUGS)}
 
+# Where the labels live, relative to the staged set: `<workspace>/annotations-v2`. **The one
+# spelling of it on this side.** `label_progress.py` and `import_labels.py` read the same tree from
+# `sidecar/tools/`, so the tools keep their own copy (`label_progress.ANNOTATIONS_DIRNAME`, spelled
+# there rather than imported because that tool has to run when the annotator package is not present
+# at all) - and a second literal in *this* package is how two tools stop finding each other's work:
+# the annotator writes a tree `label_progress` does not look in, `--source auto` answers "the
+# annotator has never been used against this set", and the snapshot reports 0 decided over a set
+# somebody has been labeling for a week. `tests/test_annotate_store.py` pins the pair and scans
+# this package for the literal, so there is exactly one here.
+ANNOTATIONS_DIRNAME = "annotations-v2"
+
 # The pseudo-class: a tag and a batch key with nothing to annotate. Its frames are the null
 # annotations, so they are the one "class" whose every label file must be empty.
-PSEUDO_CLASS_SLUGS = {"negative"}
+#
+# Imported rather than spelled, because it is `label_classes`' fact and this module is not a copy of
+# that file: the comment above `SLUG_TO_CLASS` explains why the class list is imported, and the same
+# argument holds for the one slug that is not a class. A literal here would be a third chance to
+# disagree about a name, and the disagreement would read as a hard negative the annotator refuses to
+# null (it would stop counting as a pseudo-class and start demanding a box).
+PSEUDO_CLASS_SLUGS = TOOLS_PSEUDO_CLASS_SLUGS
 
 # How a *missing* value is named rather than a value: the distance of a hard negative, the split of
 # a frame no plan has reached yet. `Frame.cell` already spells a missing distance this way (it is

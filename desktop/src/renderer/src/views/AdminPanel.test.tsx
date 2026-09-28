@@ -815,12 +815,14 @@ describe('AdminPanel', () => {
       const values = Array.from(select.options).map((o) => o.value)
       expect(values).toContain('models/scanncart-grocery-v2.pt')
       expect(values).toContain('yolo11n.pt')
-      // Labelled for a person, and named for the 8 classes v2 adds rather than v1's 7.
+      // Labelled for a person, and with the count of the generation it names: v2 declares the same
+      // seven as v1 (Palmolive, its one addition, was dropped), so a label promising eight names a
+      // model the operator cannot install.
       const label = Array.from(select.options).find(
         (o) => o.value === 'models/scanncart-grocery-v2.pt'
       )?.textContent
       expect(label).toContain('v2')
-      expect(label).toContain('8 SKUs')
+      expect(label).toContain('7 SKUs')
     })
 
     it('lists each installed weight with the resize_mode it requires', async () => {
@@ -846,7 +848,7 @@ describe('AdminPanel', () => {
       // And the other fact the record carries: what these weights predict. Shown as a count
       // for the installed one, absent for the hand-copied weight - where the class list is as
       // unknown as the geometry, not zero.
-      expect(list).toHaveTextContent('8 classes')
+      expect(list).toHaveTextContent('7 classes')
       expect(
         within(screen.getByTestId('installed-model-models/hand-copied.pt')).queryByText(/classes/)
       ).toBeNull()
@@ -1646,7 +1648,7 @@ describe('AdminPanel', () => {
     }
 
     it('shows what is wrong with the class list, not only how many classes there are', async () => {
-      // The count alone is the trap: a 24-class weight reads as "24 classes", which looks like a
+      // The count alone is the trap: a 21-class weight reads as "21 classes", which looks like a
       // bigger, better model rather than one trained per product-and-distance.
       await testConnection(
         weights(

@@ -13,12 +13,15 @@ not have and must not need.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
 
 from annotate.store import (
+    ANNOTATIONS_DIRNAME,
     CLASS_NAMES,
+    PSEUDO_CLASS_SLUGS,
     SLUG_BY_NAME,
     UNRECORDED,
     Box,
@@ -562,3 +565,69 @@ def test_splits_are_read_when_they_exist_and_absent_is_not_an_error(tmp_path):
         json.dumps({"milo_0001.jpg": "test", "milo_0002.jpg": "train"}), encoding="utf-8"
     )
     assert store.splits() == {"milo_0001.jpg": "test", "milo_0002.jpg": "train"}
+
+
+# --------------------------------------------------------------------------
+# drift guards: the two names this package shares with sidecar/tools
+# --------------------------------------------------------------------------
+
+# Where the annotator's own source lives, for the "spelled once" scans below.
+ANNOTATE_DIR = Path(__file__).resolve().parents[1] / "annotate"
+
+
+def _annotate_source(name: str) -> str:
+    return (ANNOTATE_DIR / name).read_text(encoding="utf-8")
+
+
+@pytest.mark.mirror
+def test_the_labels_directory_is_one_name_on_both_sides():
+    """`annotations-v2` is written by this package and read by `sidecar/tools`.
+
+    The tools keep their own copy deliberately (`label_progress` says why: it has to run when the
+    annotator package is not present at all), so nothing but this test stops the two from diverging
+    - and the failure is silent in the worse direction. The annotator would write a tree
+    `label_progress` never looks in, `--source auto` would answer "the annotator has not been used
+    against this set", and the snapshot the Admin Panel shows would report 0 decided over a set
+    somebody has been labeling for a week - a reading that looks like unfinished work rather than
+    like a broken lookup.
+
+    The second half is the other way round: the literal is spelled *once* in this package, so the
+    two entrypoints cannot drift from the store. They used to carry their own copies, in an
+    argparse default and in that default's help text, which is three chances to disagree about
+    where the work lives.
+    """
+    from label_progress import ANNOTATIONS_DIRNAME as tools_dirname
+
+    assert ANNOTATIONS_DIRNAME == tools_dirname, (
+        "the annotator writes its labels to "
+        f"{ANNOTATIONS_DIRNAME!r} and label_progress reads {tools_dirname!r} - one of the two "
+        "tools stopped finding the other's work"
+    )
+    for name in ("store.py", "run.py", "human_pass.py"):
+        quoted = re.findall(r"['\"]annotations-v2['\"]", _annotate_source(name))
+        expected = 1 if name == "store.py" else 0
+        assert len(quoted) == expected, (
+            f"{name} spells the labels directory as a string literal ({len(quoted)} time(s), "
+            f"expected {expected}) - read `store.ANNOTATIONS_DIRNAME` instead, so there is one "
+            "copy of the name that matters"
+        )
+
+
+@pytest.mark.mirror
+def test_the_pseudo_class_slug_is_the_tooling_s_own_set():
+    """`negative` decides which frames nobody may draw a box on.
+
+    It is `label_classes.PSEUDO_CLASS_SLUGS`' fact, and this package imports it rather than spelling
+    it - the same argument the module docstring makes for the class list, applied to the one slug
+    that is not a class. The guard is about that direction: if the set is ever copied again, a hard
+    negative stops being a pseudo-class, which does not read as "this frame must have no box" but
+    as a frame demanding one - and `write` refuses a null for a class that needs drawing, so the 50
+    staged negatives become unworkable rather than merely mislabeled.
+    """
+    import label_classes
+
+    assert PSEUDO_CLASS_SLUGS is label_classes.PSEUDO_CLASS_SLUGS, (
+        "the annotator has its own copy of the pseudo-class slugs again: import "
+        "`label_classes.PSEUDO_CLASS_SLUGS`, so the two cannot disagree about which frames carry "
+        "no annotation by definition"
+    )

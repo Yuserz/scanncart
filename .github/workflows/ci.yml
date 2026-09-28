@@ -27,6 +27,14 @@ jobs:
       - name: Run tests
         run: python -m pytest -v
 
+      # Every hand-mirrored contract at once, marked `mirror` rather than listed. It is a subset of
+      # the run above - one second, so running it twice costs nothing - and it is here as well as in
+      # its own job because some of those guards import the runtime they check: `app.dataset_status`
+      # brings in the whole app, and the annotator's own copies reach the dataset tooling
+      # (`label_progress` -> `clean_v2` -> pillow and numpy). The fast job below covers the rest.
+      - name: The hand-mirrored contracts, both directions
+        run: python -m pytest -q -m mirror
+
   two-toolchain-mirrors:
     name: Two-toolchain mirrors
     runs-on: ubuntu-latest
@@ -40,20 +48,30 @@ jobs:
         with:
           python-version: '3.12'
 
-      # Several contracts are restated by hand between the two toolchains - the `Settings`
-      # defaults and the picker's vocabularies in `desktop/.../settingsDefaults.ts` and
-      # `settingsFields.ts` - and nothing on the desktop side can import the sidecar to check
-      # them, so the guards live on this side and read the desktop files.
+      # Ones whose whole dependency is pytest plus `pydantic`: the `Settings` defaults and the
+      # picker's vocabularies in `desktop/.../settingsDefaults.ts` and `settingsFields.ts`, the WS
+      # and REST shapes in `ws.ts`/`api.ts`, the fixtures under `src/test/`, the spawn handshake in
+      # `desktop/src/main` + the Makefile, and the field list and bounds compared against the
+      # sidecar's own models.
       #
       # Its own job rather than a step inside `sidecar-tests`, because a drift failure is read for
       # the *pair* it broke: the job name and the test name say which of the two sides moved, and
-      # that is the whole diagnosis. `pytest` alone installs it: the guards import the settings
-      # modules, which are stdlib-only until `resolve_device` reaches for torch.
-      - name: Install pytest
-        run: pip install pytest
+      # that is the whole diagnosis.
+      #
+      # The module paths are listed rather than `-m mirror` over the whole directory on purpose:
+      # pytest imports every module it collects before it applies a marker, so a directory-wide run
+      # would need the full runtime (torch included) to compare settings *names*. The two guards
+      # absent here - the sidecar's copies of the dataset tooling's names, and the annotator's -
+      # import the runtime they check, so they run under `-m mirror` in `sidecar-tests`, which
+      # installs requirements.
+      - name: Install pytest and pydantic
+        run: pip install pytest pydantic
 
-      - name: The hand-mirrored settings contracts, both directions
-        run: python -m pytest tests/test_settings.py -q -k mirror
+      - name: The hand-mirrored contracts that only read files
+        run: >-
+          python -m pytest -q -m mirror
+          tests/test_settings.py
+          tests/test_desktop_contracts.py
 
   desktop-tests:
     name: Desktop tests (Node)

@@ -70,6 +70,7 @@ if str(TOOLS_DIR) not in sys.path:  # pragma: no cover - import plumbing
 from workspace import DEFAULT_OUT, MANIFEST_NAME, resolve_extras  # noqa: E402
 
 from .store import (  # noqa: E402
+    ANNOTATIONS_DIRNAME,
     CLASS_SLUGS,
     GATE_SPLITS,
     Frame,
@@ -406,7 +407,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="report only the sets named with --extras, not the staged hard negatives beside --out",
     )
     ap.add_argument(
-        "--annotations", default="", help="where the labels live (default: <workspace>/annotations-v2)"
+        "--annotations",
+        default="",
+        # Spelled from the store's own constant rather than typed into the help text: a second
+        # copy in prose is a second copy, and this one is read by whoever is deciding where to
+        # point the tool.
+        help=f"where the labels live (default: <workspace>/{ANNOTATIONS_DIRNAME})",
     )
     # One mode at a time: both write nothing, but they answer different questions ("is the file
     # current" versus "is the pass finished") and a run that asked both would have only one exit
@@ -449,7 +455,9 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - exercised 
     if not (out / MANIFEST_NAME).is_file():
         raise SystemExit(f"no manifest at {out} - point --out at a staged set (clean_v2.py clean)")
     annotations = (
-        Path(args.annotations).expanduser() if args.annotations else out.parent / "annotations-v2"
+        Path(args.annotations).expanduser()
+        if args.annotations
+        else out.parent / ANNOTATIONS_DIRNAME
     )
     extras = resolve_extras(out.parent, args.extras, include_defaults=not args.no_extras)
 

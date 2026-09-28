@@ -30,6 +30,7 @@ describe('useSidecarSettings', () => {
           {
             value: 'models/scanncart-grocery-v2.pt',
             resize_mode: 'stretch',
+            imgsz: 640,
             auto_resolves_to: 'stretch',
             source: 'snc-grocery version 2',
             class_names: [],

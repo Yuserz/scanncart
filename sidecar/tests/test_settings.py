@@ -2,6 +2,8 @@ import re
 from dataclasses import fields
 from pathlib import Path
 
+import pytest
+
 from app.settings import Settings, resolve_device
 from app.settings_store import (
     ALLOWED_BACKENDS,
@@ -138,6 +140,7 @@ def _defaults_diff(actual: dict, mirrored: dict) -> str:
     return "the desktop defaults mirror has drifted from Settings:\n  " + "\n  ".join(parts)
 
 
+@pytest.mark.mirror
 def test_the_desktop_defaults_mirror_matches_settings():
     """Every default, both directions: a value that drifted, a key added to one side only.
 
@@ -322,6 +325,7 @@ def _ts_entries(items: list[str]) -> tuple[set[str], set[str]]:
     return literals, names
 
 
+@pytest.mark.mirror
 def test_the_desktop_model_list_mirror_matches_the_sidecar():
     """The picker's list, the sidecar's validator, and the shipped default, as one fact.
 
@@ -348,6 +352,7 @@ def test_the_desktop_model_list_mirror_matches_the_sidecar():
     )
 
 
+@pytest.mark.mirror
 def test_the_desktop_resize_vocabulary_mirror_matches_the_sidecar():
     """The three modes, the order the picker offers them in, and the mode it starts on.
 
@@ -372,6 +377,7 @@ def test_the_desktop_resize_vocabulary_mirror_matches_the_sidecar():
     )
 
 
+@pytest.mark.mirror
 def test_the_desktop_device_and_backend_vocabularies_mirror_the_sidecar():
     """Devices, backends, and which backends are remote.
 
