@@ -4,6 +4,7 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { SidecarSupervisor } from './sidecar'
+import { HEALTH_TIMEOUT_MS, SidecarHealthMonitor, type SidecarHealth } from './sidecarHealth'
 import { handleSecondInstance } from './singleInstance'
 
 // Resolve where the Python sidecar lives. Defaults assume the repo layout
@@ -25,9 +26,42 @@ function resolveSidecarPaths(): { python: string; script: string; cwd: string } 
 let sidecarPort: number | null = null
 let supervisor: SidecarSupervisor | null = null
 let mainWindow: BrowserWindow | null = null
+// The last thing the main process knows about whether the sidecar is answering. Starts at
+// `starting` because that is true: nothing has been asked yet, and a banner at launch would be
+// noise on every healthy start.
+let sidecarHealth: SidecarHealth = 'starting'
+let healthMonitor: SidecarHealthMonitor | null = null
+
+// Whether the sidecar on `port` answers its own health route. A refused connection rejects
+// immediately, which is the case this exists for (a process that is alive with nothing listening),
+// and a request that hangs is what the deadline is for.
+async function probeSidecar(port: number): Promise<boolean> {
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/health`, {
+      signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS)
+    })
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
+// One health state, two read paths, because either alone loses a transition: every window is told
+// about a change as it happens, and a window that mounts later reads the current value over IPC
+// instead of waiting for the next one (which may never come — a sidecar that stays broken sends no
+// further transitions).
+function setSidecarHealth(health: SidecarHealth): void {
+  sidecarHealth = health
+  for (const window of BrowserWindow.getAllWindows()) {
+    window.webContents.send('sidecar:health', health)
+  }
+}
 
 function startSidecar(): void {
   const { python, script, cwd } = resolveSidecarPaths()
+  // A restart must not leave the previous monitor probing a port that is about to change.
+  healthMonitor?.stop()
+  healthMonitor = new SidecarHealthMonitor({ probe: probeSidecar, onChange: setSidecarHealth })
   supervisor = new SidecarSupervisor({
     spawnFn: (command, args, options) => {
       const cp = spawn(command, args, options)
@@ -41,10 +75,18 @@ function startSidecar(): void {
     onPort: (port) => {
       sidecarPort = port
       console.log(`[sidecar] ready on port ${port}`)
+      healthMonitor?.start(port)
     },
     onExit: (code) => {
       console.error(`[sidecar] exited unexpectedly (code ${code})`)
       sidecarPort = null
+      // No probing left to do — the answer is known, and reporting it now rather than after three
+      // failed probes is the difference between "the app is broken" and "the app is broken, and
+      // it says why". `onExit` is suppressed for a stop() we asked for (`before-quit`,
+      // the second-instance repair), so a clean shutdown does not flash this.
+      healthMonitor?.stop()
+      healthMonitor = null
+      setSidecarHealth('unresponsive')
     },
     onStderr: (text) => process.stderr.write(text),
     // The sidecar's own stdout prints, which are the ones an operator needs and no log carried:
@@ -139,6 +181,8 @@ if (!app.requestSingleInstanceLock()) {
 
     // Renderer asks for the sidecar port; returns null until the sidecar reports it.
     ipcMain.handle('sidecar:port', () => sidecarPort)
+    // ...and for whether it is answering, which the push above keeps current from then on.
+    ipcMain.handle('sidecar:health', () => sidecarHealth)
 
     startSidecar()
     createWindow()
@@ -162,6 +206,8 @@ app.on('window-all-closed', () => {
 
 // Ensure the sidecar child is terminated with the app.
 app.on('before-quit', () => {
+  healthMonitor?.stop()
+  healthMonitor = null
   supervisor?.stop()
   supervisor = null
 })

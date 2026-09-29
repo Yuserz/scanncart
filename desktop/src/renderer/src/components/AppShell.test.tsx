@@ -1,7 +1,33 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { AppShell } from './AppShell'
+import type { SidecarHealthDeps } from '../hooks/useSidecarHealth'
+import type { SidecarHealth } from '../../../main/sidecarHealth'
+
+// A stand-in for the preload bridge, so a test can decide what the main process reports and when.
+// Both halves are exposed because the hook needs both and they cover different moments: `read` is
+// what a window that mounts late sees, `push` is what a window that is already open hears.
+function fakeBridge(initial: SidecarHealth): {
+  deps: SidecarHealthDeps
+  push: (health: SidecarHealth) => void
+  unsubscribed: () => boolean
+} {
+  let listener: ((health: SidecarHealth) => void) | null = null
+  return {
+    deps: {
+      read: () => Promise.resolve(initial),
+      subscribe: (cb) => {
+        listener = cb
+        return () => {
+          listener = null
+        }
+      }
+    },
+    push: (health) => listener?.(health),
+    unsubscribed: () => listener === null
+  }
+}
 
 // jsdom has no WebSocket; stub a no-op so LiveView's stream hook can mount.
 class NoopWS {
@@ -104,6 +130,13 @@ describe('AppShell', () => {
         json: async () => bodyForUrl(url)
       }))
     )
+    // The preload bridge, answering healthy. Tests that are about the notice pass their own deps
+    // instead; this is so the rest of the file exercises the default path rather than a hole.
+    vi.stubGlobal('api', {
+      getSidecarPort: async () => 8765,
+      getSidecarHealth: async () => 'ok',
+      onSidecarHealth: () => () => {}
+    })
   })
   afterEach(() => {
     vi.unstubAllGlobals()
@@ -130,5 +163,63 @@ describe('AppShell', () => {
     expect(screen.getByTestId('nav-admin')).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByTestId('nav-live')).toHaveAttribute('aria-pressed', 'false')
     expect(screen.getByText(/Admin Settings/i)).toBeInTheDocument()
+  })
+
+  it('says nothing while the sidecar answers', async () => {
+    render(<AppShell port={8765} healthDeps={fakeBridge('ok').deps} />)
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /start/i })).toBeInTheDocument()
+    })
+
+    expect(screen.queryByTestId('sidecar-unresponsive')).toBeNull()
+  })
+
+  it('says nothing during startup, when nothing has been asked yet', async () => {
+    render(<AppShell port={8765} healthDeps={fakeBridge('starting').deps} />)
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /start/i })).toBeInTheDocument()
+    })
+
+    expect(screen.queryByTestId('sidecar-unresponsive')).toBeNull()
+  })
+
+  it('names the failure for a window that mounted against an already-silent sidecar', async () => {
+    render(<AppShell port={8765} healthDeps={fakeBridge('unresponsive').deps} />)
+
+    // The read half: no transition is ever coming, because the sidecar stays broken, so a notice
+    // that only listened for one would never appear on a reload.
+    const notice = await screen.findByTestId('sidecar-unresponsive')
+    expect(notice).toHaveRole('alert')
+    expect(notice).toHaveTextContent(/not answering/i)
+    expect(notice).toHaveTextContent(/Quit SCANnCART/i)
+  })
+
+  it('raises it when the sidecar stops answering mid-session, and clears it when it returns', async () => {
+    const bridge = fakeBridge('ok')
+    const { unmount } = render(<AppShell port={8765} healthDeps={bridge.deps} />)
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /start/i })).toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('sidecar-unresponsive')).toBeNull()
+
+    // The subscribe half: a window that is already open has to hear the change rather than ask for it.
+    act(() => bridge.push('unresponsive'))
+    expect(screen.getByTestId('sidecar-unresponsive')).toBeInTheDocument()
+
+    act(() => bridge.push('ok'))
+    expect(screen.queryByTestId('sidecar-unresponsive')).toBeNull()
+
+    unmount()
+    expect(bridge.unsubscribed()).toBe(true)
+  })
+
+  it('shows the notice over either view, since neither one can work without the sidecar', async () => {
+    const user = userEvent.setup()
+    render(<AppShell port={8765} healthDeps={fakeBridge('unresponsive').deps} />)
+    await screen.findByTestId('sidecar-unresponsive')
+
+    await user.click(screen.getByTestId('nav-admin'))
+
+    expect(screen.getByTestId('sidecar-unresponsive')).toBeInTheDocument()
   })
 })

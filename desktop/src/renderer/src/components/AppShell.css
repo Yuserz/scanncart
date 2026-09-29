@@ -28,3 +28,21 @@
   color: var(--text);
   background: var(--panel);
 }
+
+/* The failure the app cannot recover from on its own, in the one place both views can see it. Same
+   palette as a view's own error banner (they describe the same class of thing — something is not
+   working and it is not the settings) and stacked as two lines: the condition, then the one
+   action that resolves it. */
+.sidecar-notice {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 10px 16px 0;
+  padding: 8px 12px;
+  border: 1px solid #7f1d1d;
+  border-radius: 6px;
+  background: #2a1113;
+  color: #fca5a5;
+  font-size: 13px;
+  line-height: 1.4;
+}

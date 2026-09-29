@@ -17,6 +17,13 @@ class NoopWS {
 describe('App', () => {
   beforeEach(() => {
     vi.stubGlobal('WebSocket', NoopWS as never)
+    // The preload bridge. `AppShell` reads the sidecar's health through it as soon as it mounts,
+    // so a test that gets as far as a port needs one — the same reason `WebSocket` is stubbed here.
+    vi.stubGlobal('api', {
+      getSidecarPort: async () => 8765,
+      getSidecarHealth: async () => 'ok',
+      onSidecarHealth: () => () => {}
+    })
   })
   afterEach(() => {
     vi.unstubAllGlobals()
