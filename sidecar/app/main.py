@@ -3,6 +3,7 @@ import os
 import queue
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
 
 import numpy as np
 from dataclasses import asdict, dataclass, field
@@ -54,6 +55,7 @@ from app.models import (
 from app.schemas import (
     ApplyPresetRequest,
     CameraInfo,
+    InferenceMessage,
     CameraProfileResponse,
     CameraQualityResponse,
     CamerasResponse,
@@ -78,6 +80,14 @@ from app.camera_caps import CameraProfile, calibrate, device_key_for
 from app.camera_profiles import load_profiles, save_profile
 from app.cameras import CameraDevice, list_cameras, list_device_names, name_for_index
 from app.inference import RoboflowRemoteDetector, YoloDetector
+from app.inference_health import (
+    OK,
+    UNRESPONSIVE,
+    InferenceHealthMonitor,
+    InferenceStatus,
+    monitor_for,
+    probe_url,
+)
 from app.logging_store import LoggingStore
 
 
@@ -119,6 +129,79 @@ def backend_url(settings: Settings) -> str:
         if settings.detector_backend == "local_api"
         else settings.cloud_api_url
     )
+
+
+def _inference_message(status: InferenceStatus) -> InferenceMessage:
+    """The one spelling of the message, used by the handshake and by every transition.
+
+    A second construction at the handshake would be a second place to forget a field, and the
+    handshake is exactly where a forgotten field stays invisible: the transition path is the one a
+    test reaches by watching a server go down.
+    """
+    return InferenceMessage(
+        type="inference",
+        backend=status.backend,
+        url=status.url,
+        state=status.state,
+        detail=status.detail,
+    )
+
+
+def _report_inference_health(state: "AppState", status: InferenceStatus) -> None:
+    """Store a verdict, tell every connected client, and write it to this process's log.
+
+    Called on the monitor's thread for a verdict and on the request thread for a retarget, which is
+    what `WSManager.submit` is for: it hands the message to the event loop whichever thread is
+    calling.
+
+    The print is for the reason `run.py` prints the loop it serves on: when a `local_api` capture
+    detects nothing, the first question is whether the server was ever there, and this process's
+    stdout - which the desktop forwards as `[sidecar] …` - is where that can be answered without
+    instrumenting anything.
+    """
+    state.inference_health = status
+    state.ws_manager.submit(_inference_message(status).model_dump())
+    if status.state == UNRESPONSIVE:
+        print(
+            f"[sidecar] the {status.backend} server at {status.url} is not answering: "
+            f"{status.detail}",
+            flush=True,
+        )
+    elif status.state == OK:
+        print(f"[sidecar] the {status.backend} server at {status.url} is answering", flush=True)
+    elif status.url:
+        # A retarget reports `unknown` (`inference_health` explains why), and a line naming the
+        # endpoint now being watched is what turns that silence into something visible.
+        print(f"[sidecar] watching the {status.backend} server at {status.url}", flush=True)
+
+
+def _start_inference_watch(state: "AppState") -> None:
+    """Start watching the endpoint the configured backend calls, if it calls one at all.
+
+    The backend decides: `native` runs the weights in this process, so there is nothing to watch
+    and no request is ever made - the monitor's `retarget` enforces that, for a remote backend with
+    no URL configured too.
+    """
+    monitor = state.inference_monitor_factory(
+        state.inference_probe,
+        lambda status: _report_inference_health(state, status),
+    )
+    monitor.retarget(state.settings.detector_backend, backend_url(state.settings))
+    monitor.start()
+    state.inference_monitor = monitor
+
+
+def _stop_inference_watch(state: "AppState") -> None:
+    monitor, state.inference_monitor = state.inference_monitor, None
+    if monitor is not None:
+        monitor.stop()
+
+
+def _retarget_inference_watch(state: "AppState") -> None:
+    """Follow a settings change to the endpoint being watched (a no-op when it has not moved)."""
+    monitor = state.inference_monitor
+    if monitor is not None:
+        monitor.retarget(state.settings.detector_backend, backend_url(state.settings))
 
 
 def _default_detector_factory(settings: Settings, device: str):
@@ -300,6 +383,17 @@ class AppState:
     # calibrate request and always cleared in a finally, so an exception
     # cannot strand it true.
     calibrating: bool = False
+    # Whether the server the selected backend calls is answering (`app/inference_health.py`), and
+    # the last thing a client was told about it. Stored for the same reason `class_warnings` is:
+    # the monitor reports transitions, so a client that connects afterwards has no other way to
+    # learn the current verdict - and the handshake replays this field rather than re-probing.
+    inference_health: InferenceStatus = field(default_factory=InferenceStatus)
+    # Injection seam, like `camera_lister`: a test supplies a probe that answers without a socket.
+    inference_probe: Callable[[str], tuple[bool, str]] = probe_url
+    # And the monitor itself, so a test can keep its interval and failure count out of the picture
+    # (`monitor_for` is the app's wiring: which probe, which callback).
+    inference_monitor_factory: Callable[..., InferenceHealthMonitor] = monitor_for
+    inference_monitor: InferenceHealthMonitor | None = None
 
     def __post_init__(self):
         if self.settings is None:
@@ -514,13 +608,39 @@ def _apply_settings_patch(
     if "device" in patch:
         state.device = resolve_device(state.settings.device)
     _push_live_settings(state, patch)
+    # Not a live setting in the `_push_live_settings` sense - no running pipeline picks it up - but
+    # the monitor is watching a *URL*, and a patch that moved the backend or its URL has to move
+    # what is being watched or the notice would describe a server this app no longer calls.
+    _retarget_inference_watch(state)
     if persist:
         save_settings(state.settings, state.settings_path)
     return _settings_response(state)
 
 
 def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
-    app = FastAPI(title="SCANnCART Sidecar")
+    state = state_factory()
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        """Start the one thing here that watches a *foreign* process, and stop it on the way out.
+
+        The monitor is the only work in this app that runs without a request or a capture to drive
+        it, and it is deliberately not started lazily on the first WebSocket connection: an
+        inference server that was never started is the ordinary `local_api` failure, and the
+        operator should be able to see that before they press Start - with the window closed, from
+        the process's own log.
+
+        `TestClient(app)` without a context manager does not run this, which is what keeps the rest
+        of the suite from making requests on a timer; the tests that are *about* the watch use
+        `with TestClient(app)` and an injected probe.
+        """
+        _start_inference_watch(state)
+        try:
+            yield
+        finally:
+            _stop_inference_watch(state)
+
+    app = FastAPI(title="SCANnCART Sidecar", lifespan=lifespan)
     # The renderer's origin varies by mode (Vite dev server port, or a
     # packaged app's file:// origin) and this server only ever binds to
     # 127.0.0.1 as a locally-spawned child process, so allow any origin
@@ -531,7 +651,6 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    state = state_factory()
 
     # Guard the first probe so concurrent callers (AdminPanel mount fires
     # /api/system-info and /api/presets together) don't each spawn a probe;
@@ -1167,8 +1286,14 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
             class_names=list(state.class_names),
             class_warnings=list(state.class_warnings),
         ).model_dump()
+        # ...and whether the server its detections would come from is answering. Sent on every
+        # connect and then only on a change, so this is the client's read of a state that is kept
+        # by a monitor running in the background: without it, a window opened while `local_api`'s
+        # server is down would show a live preview and no detections, with nothing on screen saying
+        # why. `unknown` is the ordinary answer for `native`, and a client renders nothing for it.
         try:
             await ws.send_json(snapshot)
+            await ws.send_json(_inference_message(state.inference_health).model_dump())
             while True:
                 await ws.receive_text()
         except Exception:  # noqa: BLE001

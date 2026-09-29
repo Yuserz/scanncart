@@ -20,6 +20,7 @@ in a document.
 from __future__ import annotations
 
 import re
+from typing import get_args
 
 import pytest
 
@@ -67,6 +68,9 @@ MAIN_TS = REPO_ROOT / "desktop" / "src" / "main" / "index.ts"
 PRELOAD_TS = REPO_ROOT / "desktop" / "src" / "preload" / "index.ts"
 PRELOAD_DTS = REPO_ROOT / "desktop" / "src" / "preload" / "index.d.ts"
 RENDERER_APP_TS = REPO_ROOT / "desktop" / "src" / "renderer" / "src" / "App.tsx"
+RENDERER_HEALTH_TS = (
+    REPO_ROOT / "desktop" / "src" / "renderer" / "src" / "hooks" / "useSidecarHealth.ts"
+)
 MAKEFILE = REPO_ROOT / "Makefile"
 
 # The calibration probe's own copy of the camera-control bounds. It is in `app/`, next to the API's,
@@ -78,9 +82,20 @@ CAMERA_CAPS_PY = REPO_ROOT / "sidecar" / "app" / "camera_caps.py"
 # rename being special-cased inside the comparison.
 RENAMED = {"Stats": "FrameStats"}
 
+# Everything on the WebSocket, read once: the field pairs below and the dispatch branches are two
+# facts about the same list, and a type present in one and not the other is exactly the defect this
+# guard is for.
+STREAM_MESSAGES = (
+    (schemas.Detection, "Detection"),
+    (schemas.Stats, "FrameStats"),
+    (schemas.FrameMessage, "FrameMessage"),
+    (schemas.StatusMessage, "StatusMessage"),
+    (schemas.InferenceMessage, "InferenceMessage"),
+)
+
 
 def test_the_stream_protocol_mirrors_the_sidecar():
-    """The frame and status shapes - the contract with the least room for drift.
+    """The message shapes - the contract with the least room for drift.
 
     A field renamed here is not a compile error anywhere: the sidecar sends `latency_ms`, the
     renderer reads `latency`, and every reading is silently `undefined` on a live preview. That is
@@ -88,17 +103,29 @@ def test_the_stream_protocol_mirrors_the_sidecar():
     rather than as anything the TypeScript side could infer.
     """
     source = read_ts(WS_TS)
-    for model, ts_name in (
-        (schemas.Detection, "Detection"),
-        (schemas.Stats, "FrameStats"),
-        (schemas.FrameMessage, "FrameMessage"),
-        (schemas.StatusMessage, "StatusMessage"),
-    ):
+    for model, ts_name in STREAM_MESSAGES:
         assert_same_fields(
             f"the stream protocol ({model.__name__} vs ws.ts's {ts_name})",
             python_fields(model),
             ts_fields(source, ts_name),
         )
+    # And every declared *message* is also dispatched. A type with no branch is not a compile error
+    # either: the sidecar sends it, `JSON.parse` succeeds, and the renderer drops it on the floor.
+    # For the inference notice that is the whole feature - the one thing that can explain a
+    # `local_api` run where the camera works and nothing is ever detected, discarded in silence.
+    # Read from the model's own `Literal` rather than restated, so a renamed `type` fails here too.
+    dispatch = _flat(source)
+    for model, _ in STREAM_MESSAGES:
+        field = model.model_fields.get("type")
+        if field is None:
+            continue  # `Detection` and `Stats` are payloads, not envelopes.
+        literals = get_args(field.annotation)
+        assert literals, f"{model.__name__}.type is no longer a Literal, so nothing can read it"
+        for name in literals:
+            assert f"msg.type === '{name}'" in dispatch, (
+                f"ws.ts declares a {name!r} message and never dispatches it, so the sidecar's "
+                "message is parsed and thrown away"
+            )
 
 
 def test_the_settings_contracts_mirror_the_sidecar():
@@ -417,7 +444,8 @@ def test_the_spawn_handshake_mirrors_the_sidecar():
 
     `desktop/src/main` spawns `sidecar/run.py` and then knows only what it is told: the port
     arrives as one printed line, the app's own pid as one environment variable, and the renderer
-    asks for the port over one IPC channel. Neither side can import the other and nothing
+    asks for the port - and, since the failure it cannot see for itself, for whether the sidecar is
+    answering at all - over two IPC channels. Neither side can import the other and nothing
     type-checks the pair, so a rename on one side fails in the quietest way this repo has: the
     supervisor waits for a line that never comes while a perfectly healthy sidecar streams beside
     it, and the window sits on "waiting for the sidecar".
@@ -455,12 +483,19 @@ def test_the_spawn_handshake_mirrors_the_sidecar():
         "watchdog would keep a sidecar alive after the app is gone"
     )
 
-    # The IPC chain: main serves it, the preload calls it, its types declare the accessor, and the
-    # renderer is what uses it.
-    channel = _one(r"ipcMain\.handle\('([^']+)'", main, "the IPC channel the main process serves")
-    assert f"invoke('{channel}')" in preload, (
-        f"the main process serves {channel!r} and the preload does not call it"
-    )
+    # The IPC chain: main serves each channel, the preload calls every one of them, the types
+    # declare the accessors, and the renderer is what uses them.
+    #
+    # The channels are read as a *set*, not as the first match. `re.search` here is what a second
+    # channel would slip past, and a channel served by nothing that calls it is the same defect as
+    # a renamed one from the renderer's side - it just fails without a name to grep for.
+    channels = re.findall(r"ipcMain\.handle\('([^']+)'", main)
+    assert channels, "the main process no longer serves an IPC channel"
+    for channel in channels:
+        assert f"invoke('{channel}')" in preload, (
+            f"the main process serves {channel!r} and the preload does not call it"
+        )
+
     accessor = _one(
         r"([A-Za-z_][A-Za-z0-9_]*): \(\): Promise<number \| null>",
         preload,
@@ -471,6 +506,20 @@ def test_the_spawn_handshake_mirrors_the_sidecar():
     )
     assert f".api.{accessor}()" in _flat(_read(RENDERER_APP_TS)), (
         f"the renderer never calls window.api.{accessor}() - nothing asks for the port"
+    )
+
+    # The health pair, the same four steps. Its absence is worse than the port's: an app whose
+    # sidecar has stopped answering looks exactly like a working one that has not been used yet.
+    health = _one(
+        r"([A-Za-z_][A-Za-z0-9_]*): \(\): Promise<SidecarHealth>",
+        preload,
+        "the preload's health accessor",
+    )
+    assert re.search(rf"\b{health}\b", _read(PRELOAD_DTS)), (
+        f"preload/index.d.ts does not declare {health!r}, so the renderer has to restate the union"
+    )
+    assert f"window.api.{health}()" in _flat(_read(RENDERER_HEALTH_TS)), (
+        f"nothing calls window.api.{health}() - the health state reaches no screen"
     )
 
     # Where the sidecar lives: the desktop resolves it and the Makefile launches the same thing.

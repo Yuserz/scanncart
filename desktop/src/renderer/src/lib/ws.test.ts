@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { createStreamClient } from './ws'
-import type { FrameMessage, StatusMessage } from './ws'
+import type { FrameMessage, InferenceMessage, StatusMessage } from './ws'
 
 class FakeWS {
   static instances: FakeWS[] = []
@@ -77,6 +77,24 @@ describe('createStreamClient', () => {
     c.connect()
     FakeWS.instances[0].emitJSON(status)
     expect(onStatus).toHaveBeenCalledWith(status)
+  })
+
+  it('routes inference messages to onInference', () => {
+    // Its own type rather than a status field, because it is a fact about the configured backend
+    // rather than about a capture: a renderer that missed it showed a live preview and an empty
+    // item log with nothing on screen saying why.
+    const onInference = vi.fn()
+    const inference: InferenceMessage = {
+      type: 'inference',
+      backend: 'local_api',
+      url: 'http://127.0.0.1:9001',
+      state: 'unresponsive',
+      detail: 'ConnectError: refused'
+    }
+    const c = createStreamClient({ port: 1, onInference, wsFactory: (u) => new FakeWS(u) as never })
+    c.connect()
+    FakeWS.instances[0].emitJSON(inference)
+    expect(onInference).toHaveBeenCalledWith(inference)
   })
 
   it('ignores malformed JSON without throwing', () => {

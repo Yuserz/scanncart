@@ -3,6 +3,7 @@ import { createApiClient, type ApiClient } from '../lib/api'
 import {
   createStreamClient,
   type FrameMessage,
+  type InferenceMessage,
   type StatusMessage,
   type StreamClient,
   type StreamClientOptions
@@ -41,6 +42,15 @@ export interface SidecarStream {
   // is the process that knows when a detector has inferred. Set from the same messages as
   // `classNames`, and cleared with them for the same reason.
   classWarnings: string[]
+  // Whether the server the selected backend calls is answering, as the sidecar's monitor reports
+  // it. Not derived here and not asked for here: every observable this window has is *established*
+  // rather than live (a capture whose detector is failing still streams frames), so the sidecar is
+  // the one that probes and this holds what it said.
+  //
+  // `null` is "nothing heard yet" — a socket that has not opened, or a sidecar that predates the
+  // message — and is not the same as `unknown`, which is the sidecar saying there is no server to
+  // watch. Neither is a verdict, which is why the notice renders only for `unresponsive`.
+  inference: InferenceMessage | null
   // Last error from the sidecar: a failed start/stop, or a capture that died
   // mid-session (the pipeline reports that as a status message with a detail).
   error: string | null
@@ -72,6 +82,7 @@ export function useSidecarStream(port: number, deps: StreamDeps = {}): SidecarSt
   const [statusState, setStatusState] = useState<string>('idle')
   const [classNames, setClassNames] = useState<string[]>([])
   const [classWarnings, setClassWarnings] = useState<string[]>([])
+  const [inference, setInference] = useState<InferenceMessage | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [connected, setConnected] = useState(false)
   const [items, setItems] = useState<LoggedItem[]>([])
@@ -162,10 +173,15 @@ export function useSidecarStream(port: number, deps: StreamDeps = {}): SidecarSt
       if (msg.state === 'running') void seedFromLogs()
     }
 
+    // Replaced whole rather than merged: the sidecar always sends the current verdict about
+    // whichever endpoint it is watching, so a partial update would be a fact from two servers.
+    const onInference = (msg: InferenceMessage): void => setInference(msg)
+
     const client = streamFactory({
       port,
       onFrame,
       onStatus,
+      onInference,
       onOpen: () => {
         setConnected(true)
         void seedFromLogs()
@@ -226,6 +242,7 @@ export function useSidecarStream(port: number, deps: StreamDeps = {}): SidecarSt
     error,
     clearError,
     classNames,
-    classWarnings
+    classWarnings,
+    inference
   }
 }

@@ -212,6 +212,45 @@ describe('useSidecarStream reconciliation', () => {
     expect(result.current.items).toHaveLength(0)
   })
 
+  it('exposes the inference verdict the sidecar reports, and nothing before it reports one', () => {
+    // `null` until a message arrives, not `unknown`: a socket that has not opened and a sidecar
+    // that predates the message must not read as "there is no server to watch".
+    const { deps, opts } = makeDeps({ session_id: null, events: [] })
+    const { result } = renderHook(() => useSidecarStream(8765, deps))
+    expect(result.current.inference).toBeNull()
+
+    act(() =>
+      opts().onInference?.({
+        type: 'inference',
+        backend: 'local_api',
+        url: 'http://127.0.0.1:9001',
+        state: 'unresponsive',
+        detail: 'ConnectError: refused'
+      })
+    )
+    expect(result.current.inference).toMatchObject({
+      state: 'unresponsive',
+      url: 'http://127.0.0.1:9001'
+    })
+
+    // Replaced whole, like class_names: the sidecar always sends the current verdict about the
+    // endpoint it is watching now, so a merge could describe two servers at once.
+    act(() =>
+      opts().onInference?.({
+        type: 'inference',
+        backend: 'cloud_api',
+        url: 'https://serverless.roboflow.com',
+        state: 'ok',
+        detail: ''
+      })
+    )
+    expect(result.current.inference).toMatchObject({
+      backend: 'cloud_api',
+      state: 'ok',
+      detail: ''
+    })
+  })
+
   it('a new start() resets the log', async () => {
     const { deps, opts, start } = makeDeps({ session_id: null, events: [] })
     const { result } = renderHook(() => useSidecarStream(8765, deps))

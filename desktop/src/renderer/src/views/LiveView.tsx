@@ -169,7 +169,8 @@ export function LiveView({ port, deps }: LiveViewProps): JSX.Element {
     error,
     clearError,
     classNames,
-    classWarnings
+    classWarnings,
+    inference
   } = useSidecarStream(port, deps)
   const running = statusState === 'running'
   // The weights the configured model points at: the geometry they run at, what they scored, and
@@ -271,6 +272,34 @@ export function LiveView({ port, deps }: LiveViewProps): JSX.Element {
 
   return (
     <div className="live-view">
+      {/* The detector's backend has no server behind it, so a capture that starts will stream
+          frames and log nothing - and with `local_api` the ordinary cause is simply that nobody
+          started `local_inference_server.py`, which no button in this app can do.
+          Above the error banner rather than below it because it is the *explanation* for the one
+          underneath: a detector that raises on its first frame stops the capture, and the banner
+          below says that while this one says why.
+          Ungated by `running`, and not dismissible: it is equally true before Start, which is
+          when it is cheapest to act on - and the same condition, not a transient event. The two
+          fixes are named because they are the only two: start the server, or switch the backend
+          in Admin, which knows the URL this notice is about.
+          The sidecar judges it; this renders what it says. Nothing here probes the endpoint, and
+          nothing here could - a capture whose detector is failing still streams frames, so every
+          observable this window has is established rather than live. */}
+      {inference?.state === 'unresponsive' && (
+        <div className="live-error" role="alert" data-testid="inference-unresponsive">
+          <span>
+            <b>
+              The {inference.backend === 'local_api' ? 'local API' : 'cloud API'} server at{' '}
+              {inference.url} is not answering.
+            </b>{' '}
+            Detections will fail while it is down.{' '}
+            {inference.backend === 'local_api'
+              ? 'Start it (python local_inference_server.py), or switch detector_backend in Admin.'
+              : 'Check this machine\u2019s connection, or switch detector_backend in Admin.'}
+            {inference.detail ? ` (${inference.detail})` : ''}
+          </span>
+        </div>
+      )}
       {error !== null && (
         <div className="live-error" role="alert" data-testid="live-error">
           <span>{error}</span>

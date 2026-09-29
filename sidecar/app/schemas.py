@@ -1,6 +1,9 @@
 from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
+# The vocabulary of the inference-health message, imported rather than re-spelled: the module that
+# decides the state is the module that owns what the states are called.
+from app.inference_health import InferenceState
 from app.settings_store import (
     ALLOWED_BACKENDS,
     ALLOWED_DEVICES,
@@ -73,6 +76,32 @@ class StatusMessage(BaseModel):
     # think to press. The difference from the probe's field of the same name is *when*: this one
     # describes a capture in progress, the probe describes a model that has not been started.
     class_warnings: list[str] = []
+
+
+class InferenceMessage(BaseModel):
+    """Whether the server the selected backend calls is answering (`app/inference_health.py`).
+
+    Its own message type rather than two more fields on `StatusMessage`, because it is a fact about
+    the *configured backend* rather than about a capture: it is equally true before one is started,
+    survives a start/stop, and is the one thing on this wire that can describe a `local_api` run
+    where the camera works, the preview streams and nothing is ever detected.
+
+    Sent unconditionally on connect - so a client joining late is not left to infer it from the
+    absence of a message, which is the same reason `class_names` rides on the handshake - and then
+    only on a change of `state`.
+    """
+
+    type: Literal["inference"]
+    #: Which backend this is about, so the sentence can say "the local API" and a client can tell a
+    #: `native` reading (there is nothing to watch) from a remote one that is unresponsive.
+    backend: str
+    url: str = ""
+    #: The closed set from `app/inference_health.py`. `unknown` is a state a client renders
+    #: *nothing* for: it means this backend has no server to watch, or the first probe has not
+    #: landed yet, and neither is a verdict.
+    state: InferenceState = "unknown"
+    #: Why, in the endpoint's own words, when `state` is `unresponsive`. Empty otherwise.
+    detail: str = ""
 
 
 class HealthResponse(BaseModel):

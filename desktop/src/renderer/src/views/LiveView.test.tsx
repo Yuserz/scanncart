@@ -368,6 +368,133 @@ describe('LiveView', () => {
     expect(screen.queryByTestId('live-error')).not.toBeInTheDocument()
   })
 
+  describe('an inference server that has stopped answering', () => {
+    it('names the server, the two ways out, and the sidecar’s own reason', () => {
+      // The sidecar is the only process that can probe the endpoint, and it does so in the
+      // background, so this renders a verdict rather than making one. The two fixes are the only
+      // two: nothing in this window can start `local_inference_server.py`.
+      const h = makeHarness()
+      render(<LiveView port={8765} deps={h.deps} />)
+
+      act(() => {
+        h.opts().onInference?.({
+          type: 'inference',
+          backend: 'local_api',
+          url: 'http://127.0.0.1:9001',
+          state: 'unresponsive',
+          detail: 'ConnectError: connection refused'
+        })
+      })
+
+      const banner = screen.getByTestId('inference-unresponsive')
+      expect(banner).toHaveTextContent('http://127.0.0.1:9001')
+      expect(banner).toHaveTextContent('not answering')
+      expect(banner).toHaveTextContent('local_inference_server.py')
+      expect(banner).toHaveTextContent('detector_backend in Admin')
+      // The sidecar's own detail, because "unreachable" alone cannot tell a stopped server from a
+      // wrong port.
+      expect(banner).toHaveTextContent('ConnectError: connection refused')
+      expect(banner).toHaveAttribute('role', 'alert')
+      // Not dismissible: the condition is still true, and closing the notice would not change it.
+      expect(screen.queryByLabelText('Dismiss error')).not.toBeInTheDocument()
+    })
+
+    it('says nothing until the sidecar has actually judged the endpoint', () => {
+      // `null` is "no verdict yet" — before the first connect, and for the whole life of a native
+      // capture, which has no server to probe. Rendering on `state !== 'ok'` would put a permanent
+      // notice on a working local model.
+      const h = makeHarness()
+      render(<LiveView port={8765} deps={h.deps} />)
+      expect(screen.queryByTestId('inference-unresponsive')).not.toBeInTheDocument()
+
+      act(() => {
+        h.opts().onInference?.({
+          type: 'inference',
+          backend: 'native',
+          url: '',
+          state: 'unknown',
+          detail: ''
+        })
+      })
+      expect(screen.queryByTestId('inference-unresponsive')).not.toBeInTheDocument()
+    })
+
+    it('takes the notice down when the server answers again', () => {
+      // Recovery is a transition too, and the sidecar reports it: without this the operator would
+      // keep reading a failure that ended minutes ago with no way to clear it.
+      const h = makeHarness()
+      render(<LiveView port={8765} deps={h.deps} />)
+
+      act(() => {
+        h.opts().onInference?.({
+          type: 'inference',
+          backend: 'local_api',
+          url: 'http://127.0.0.1:9001',
+          state: 'unresponsive',
+          detail: ''
+        })
+      })
+      expect(screen.getByTestId('inference-unresponsive')).toBeInTheDocument()
+
+      act(() => {
+        h.opts().onInference?.({
+          type: 'inference',
+          backend: 'local_api',
+          url: 'http://127.0.0.1:9001',
+          state: 'ok',
+          detail: 'answering'
+        })
+      })
+      expect(screen.queryByTestId('inference-unresponsive')).not.toBeInTheDocument()
+    })
+
+    it('reads the cloud wording when the backend is the hosted one', () => {
+      // "Start the local server" is not an action for a hosted workflow, so the backend name
+      // decides which sentence is true. A single wording would tell half its readers to do
+      // something they cannot do.
+      const h = makeHarness()
+      render(<LiveView port={8765} deps={h.deps} />)
+      act(() => {
+        h.opts().onInference?.({
+          type: 'inference',
+          backend: 'cloud_api',
+          url: 'https://detect.roboflow.com',
+          state: 'unresponsive',
+          detail: ''
+        })
+      })
+
+      const banner = screen.getByTestId('inference-unresponsive')
+      expect(banner).toHaveTextContent('cloud API server')
+      expect(banner).toHaveTextContent(/connection/)
+      expect(banner).not.toHaveTextContent('local_inference_server.py')
+    })
+
+    it('sits above the error banner it explains', () => {
+      // Position is the point. A detector that raises on its first frame stops the capture, so
+      // `live-error` reports *that* while this one supplies the why — and the why is the half an
+      // operator can act on.
+      const h = makeHarness()
+      const { container } = render(<LiveView port={8765} deps={h.deps} />)
+      act(() => {
+        h.opts().onInference?.({
+          type: 'inference',
+          backend: 'local_api',
+          url: 'http://127.0.0.1:9001',
+          state: 'unresponsive',
+          detail: ''
+        })
+        h.opts().onStatus?.({ type: 'status', state: 'error', detail: 'Capture stopped: …' })
+      })
+
+      const banners = [...container.querySelectorAll('.live-error')]
+      expect(banners.map((b) => b.getAttribute('data-testid'))).toEqual([
+        'inference-unresponsive',
+        'live-error'
+      ])
+    })
+  })
+
   it('shows the camera tuning card in the side rail', async () => {
     const h = makeHarness()
     render(<LiveView port={8765} deps={h.deps} />)

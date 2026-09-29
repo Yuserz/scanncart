@@ -49,7 +49,27 @@ export interface StatusMessage {
   class_warnings?: string[]
 }
 
-export type StreamMessage = FrameMessage | StatusMessage
+// Whether the server the selected backend calls is answering (`app/inference_health.py` on the
+// sidecar side). Its own message type rather than two more fields on StatusMessage, because it is a
+// fact about the *configured backend* rather than about a capture: it is equally true before one is
+// started, survives a start/stop, and is the one thing on this wire that can explain a `local_api`
+// run where the camera works, the preview streams and nothing is ever detected.
+//
+// Sent on every connect (so a window opened mid-session is not left to infer it from silence) and
+// then only when `state` changes.
+export interface InferenceMessage {
+  type: 'inference'
+  backend: string
+  url: string
+  // `unknown` is not "fine" and not "broken": it means this backend has no server to watch
+  // (`native`), or the first probe has not landed yet. Nothing is rendered for it — a verdict that
+  // has not been reached must not be drawn as one.
+  state: 'unknown' | 'ok' | 'unresponsive'
+  // Why, in the endpoint's own words, when `state` is 'unresponsive'. Empty otherwise.
+  detail: string
+}
+
+export type StreamMessage = FrameMessage | StatusMessage | InferenceMessage
 
 // Minimal structural type so a fake or the global WebSocket both satisfy it.
 interface WSLike {
@@ -64,6 +84,7 @@ export interface StreamClientOptions {
   port: number
   onFrame?: (msg: FrameMessage) => void
   onStatus?: (msg: StatusMessage) => void
+  onInference?: (msg: InferenceMessage) => void
   onOpen?: () => void
   onClose?: () => void
   reconnectDelayMs?: number
@@ -96,6 +117,7 @@ export function createStreamClient(opts: StreamClientOptions): StreamClient {
     if (typeof msg !== 'object' || msg === null) return
     if (msg.type === 'frame') opts.onFrame?.(msg)
     else if (msg.type === 'status') opts.onStatus?.(msg)
+    else if (msg.type === 'inference') opts.onInference?.(msg)
   }
 
   function scheduleReconnect(): void {
