@@ -214,6 +214,19 @@ each one before generating the version.
 **50** of them (10 collapsed as near-duplicates, which is what a static mount produces). Eyeball
 them before uploading: they are only worth including if they really are empty counter.
 
+**That set has a producer**, and so does any C2b re-shoot: `tools/capture_hard_negatives.py` saves
+frames off the checkout camera (or a video file) as `images/*.jpg` with an empty `labels/*.txt`
+beside each, continuing a previous run's numbering instead of overwriting it. Pose in the scene
+that produces the false positive while it runs — a face over the counter, close to the lens. It
+opens the device through the app's own capture path, so what gets shot is the camera state the
+model meets at runtime rather than a second OpenCV backend's idea of it, and it writes into
+`sidecar/data/datasets/hard_negatives` by default, which is the source the command below reads.
+
+```bash
+sidecar/.venv/Scripts/python.exe sidecar/tools/capture_hard_negatives.py \
+  --source 0 --interval 2.0 --max-frames 200
+```
+
 ```bash
 # stages 50, batch `negative`, tag `negative` — into its own out dir, no distance needed
 sidecar/.venv/Scripts/python.exe sidecar/tools/clean_v2.py clean \
