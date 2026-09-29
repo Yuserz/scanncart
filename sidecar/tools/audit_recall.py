@@ -111,7 +111,7 @@ from generations import get as generation_for
 # `DISTANCE_ORDER`, and a second copy is how the two tools' `far` comes to mean different files. It
 # is a light module - `httpx` and these same helpers, nothing that loads a model - so importing it
 # costs this tool nothing at start-up.
-from train_model import DISTANCE_ORDER, distance_map
+from train_model import DISTANCE_ORDER, distance_map, require_labels_order
 from workspace import SIDECAR_ROOT
 
 DEFAULT_SPLIT = "test"
@@ -709,7 +709,13 @@ def label_sizes(
     uses. A second reader here is exactly how a dataset gets misdiagnosed: a polygon read as
     `cx cy w h` yields boxes in the wrong place and, on centred objects, zero-width ones - which
     in this table would read as a class that is only ever shot absurdly far away.
+
+    The classes are named by *position*, so this refuses a set in another order for the same reason
+    `collect` does - and here the misdiagnosis is a shooting plan: the table's whole job is "this
+    product is only ever shot far away", which a mismatched index would assert about whichever
+    product happens to sit at that position.
     """
+    require_labels_order(generation, tool="audit_recall.py")
     out: dict[str, SizeTally] = {}
     for _path, instances in load_records_only(generation, split, limit):
         for instance in instances:
@@ -753,10 +759,18 @@ def collect(
 
     Predict, not track - see the module docstring. `conf` should be the *lowest* threshold
     wanted, since higher ones are applied later by `measure`.
+
+    The set's labels are refused unless they are in `generation.classes` order, here rather than only
+    in `main`, because this is the function that reads them: `truth` is a label row's raw index and
+    `measure` reports by position in `generation.classes`, so a set in another order would be scored
+    against a list it does not name (the mismatch `train_model.require_labels_order` describes). The
+    *detections* need no such check - `names[int(k)]` is the model's own list, and that is what makes
+    this able to audit a weight of another generation at all.
     """
     import cv2
     from ultralytics import YOLO
 
+    require_labels_order(generation)
     model = YOLO(weights)
     wanted = {name: i for i, name in enumerate(generation.classes)}
     images, labels = split_dirs(generation, split)
@@ -1192,6 +1206,10 @@ def main(argv: list[str] | None = None) -> int:
             print(line)
         return 0
 
+    # After the histogram branch, deliberately: that mode is asked before a refreshed weight exists
+    # and resolves none, which is a contract of its own. It still reads labels and names classes, so
+    # it is covered where it is read (`label_sizes`), and this refusal is for the passes below.
+    require_labels_order(generation, tool="audit_recall.py")
     if not Path(weights).exists():
         raise SystemExit(f"no such weight: {weights}")
 

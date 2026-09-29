@@ -6,6 +6,7 @@ import {
   type CameraProfileResponse,
   type CameraQualityResponse,
   type DetectorProbeResponse,
+  type InferenceStatusPayload,
   type InstalledModel,
   type PresetInfo,
   type SettingsResponse,
@@ -36,6 +37,12 @@ export interface SidecarSettings {
   presets: PresetInfo[]
   recommended: string | null
   captureState: string
+  // The backend's own server, as the sidecar's watch last saw it, read off the same health poll as
+  // `captureState` — and read rather than streamed because the part the Admin Panel renders is the
+  // *age* of the verdict, which only a fresh read can be honest about (see `InferenceStatusPayload`
+  // in lib/api.ts). `null` means there is no server to watch at all, which is not the same as the
+  // payload's own `unknown` state.
+  inference: InferenceStatusPayload | null
   loading: boolean
   saving: boolean
   error: string | null
@@ -108,6 +115,7 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
   const [presets, setPresets] = useState<PresetInfo[]>([])
   const [recommended, setRecommended] = useState<string | null>(null)
   const [captureState, setCaptureState] = useState('idle')
+  const [inference, setInference] = useState<InferenceStatusPayload | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -222,9 +230,17 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
       if (shouldPollHealth) {
         try {
           const h = await api.health()
-          if (!cancelled) setCaptureState(h.state)
+          if (!cancelled) {
+            setCaptureState(h.state)
+            // Replaced rather than merged, and `null` is a real answer: the sidecar sends the
+            // current verdict about whichever endpoint it is watching, so keeping a field from the
+            // previous one would be a fact from two servers at once.
+            setInference(h.inference ?? null)
+          }
         } catch {
-          // Sidecar not reachable yet; keep the last known capture state.
+          // Sidecar not reachable yet; keep the last known capture state. The verdict goes with it:
+          // an unreachable *sidecar* says nothing about the server it was watching, and replacing
+          // the reading with `null` here would claim there is nothing to watch.
         }
       }
       try {
@@ -475,6 +491,7 @@ export function useSidecarSettings(port: number, deps: SettingsDeps = {}): Sidec
     presets,
     recommended,
     captureState,
+    inference,
     loading,
     saving,
     error,

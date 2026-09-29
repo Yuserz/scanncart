@@ -1,0 +1,819 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Live tab — layout record and candidates</title>
+<style>
+/* ---------------------------------------------------------------------------
+   What this page is
+   ---------------
+   A record of the Live tab's layout decision: the three candidates that were
+   considered, and the measurements that picked the third one. It is not a
+   source of truth — the live layout is
+   desktop/src/renderer/src/views/LiveView.css and
+   desktop/src/renderer/src/components/CameraTuning.css, and the numbers below
+   are a snapshot taken on 2026-09-29, not a claim that re-checks itself.
+
+   Candidate A carries the *shipped* rules verbatim (they were copied out of
+   LiveView.css when the record was written) because A's whole job is to be the
+   honest "before" picture. B is a drawing of what shipped, at the reduced
+   fidelity a static page can manage: it is meant to show the arrangement and
+   the numbers, not to be a second implementation.
+
+   Tokens are copied from desktop/src/renderer/src/assets/theme.css so the
+   page is the same material as the app.
+   --------------------------------------------------------------------------- */
+:root {
+  --bg: #0b0d10;
+  --panel: #14171b;
+  --border: #262a30;
+  --text: #e7e9ea;
+  --dim: #8a9099;
+  --accent: #2dd4a7;
+  --accent-ink: #08130e;
+  --danger-bg: #3a1418;
+  --danger-fg: #ff8a8a;
+  --danger-border: #5a2228;
+  --font-mono: 'JetBrains Mono', 'Cascadia Code', 'SF Mono', Consolas, monospace;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; }
+body {
+  background: #05070a;
+  color: var(--text);
+  font-family: Inter, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+ul { list-style: none; padding: 0; }
+
+/* ---------------------------------------------------------------------------
+   Lab chrome (not part of any candidate)
+   --------------------------------------------------------------------------- */
+.lab { display: flex; gap: 18px; padding: 16px; align-items: flex-start; }
+.picker { width: 260px; flex: none; position: sticky; top: 16px; }
+.picker h1 { font-size: 14px; margin-bottom: 4px; }
+.picker p { font-size: 11.5px; color: var(--dim); margin-bottom: 12px; line-height: 1.5; }
+.picker fieldset {
+  border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
+  margin: 0 0 12px; background: var(--panel);
+}
+.picker legend { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); padding: 0 4px; }
+.picker label { display: flex; gap: 8px; align-items: flex-start; padding: 5px 0; cursor: pointer; font-size: 12px; }
+.picker label input { margin-top: 3px; flex: none; }
+.picker label b { font-weight: 600; }
+.picker label span { display: block; color: var(--dim); font-size: 11px; line-height: 1.45; }
+.score { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+.score th, .score td { text-align: left; padding: 3px 6px 3px 0; border-bottom: 1px solid rgba(255,255,255,.06); }
+.score th { color: var(--dim); font-weight: 500; }
+.score td.n { font-family: var(--font-mono); text-align: right; }
+.score td.ok { color: #6ecb8c; }
+.score td.bad { color: #ffb020; }
+.stage { flex: 1; min-width: 0; }
+.frame-wrap { position: relative; }
+.frame {
+  width: 1024px; height: 768px; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 6px; overflow: hidden; display: flex; flex-direction: column; position: relative;
+}
+.frame.small { width: 768px; height: 576px; }
+.frame-label { position: absolute; top: -22px; left: 0; font-size: 11px; color: var(--dim); font-family: var(--font-mono); }
+.tip { margin-top: 12px; padding: 8px 10px; border: 1px solid #7c5a12; border-radius: 6px; background: #2a2110; color: #ffb020; font-size: 11.5px; line-height: 1.45; max-width: 1000px; }
+
+/* ---------------------------------------------------------------- the record */
+.record { max-width: 1000px; margin-top: 22px; }
+.record h2 { font-size: 14px; margin: 0 0 6px; }
+.record h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); margin: 20px 0 6px; }
+.record p { font-size: 12.5px; color: var(--dim); margin-bottom: 10px; line-height: 1.6; }
+.record p b, .record li b { color: var(--text); font-weight: 600; }
+.record code { font-family: var(--font-mono); color: var(--text); font-size: 12px; }
+.record ol, .record ul.bullets { margin: 0 0 10px 18px; font-size: 12.5px; color: var(--dim); line-height: 1.6; }
+.record ul.bullets { list-style: disc; margin-left: 18px; }
+.record li { margin-bottom: 5px; }
+table.measured { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 10px; }
+table.measured th, table.measured td { text-align: left; padding: 5px 10px 5px 0; border-bottom: 1px solid var(--border); vertical-align: top; }
+table.measured th { color: var(--dim); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+table.measured td.num { font-family: var(--font-mono); white-space: nowrap; }
+table.measured td.was { color: #ffb020; }
+table.measured td.now { color: #6ecb8c; }
+.record .caveat { border-left: 2px solid var(--border); padding-left: 12px; }
+
+/* ---------------------------------------------------------------------------
+   App shell (AppShell.css)
+   --------------------------------------------------------------------------- */
+.app-shell { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+.app-nav { display: flex; gap: 4px; padding: 8px 16px; border-bottom: 1px solid var(--border); flex: none; }
+.app-nav button {
+  padding: 6px 14px; background: transparent; border: none; border-radius: 6px;
+  color: var(--dim); font-weight: 600; font-size: 13px; font-family: inherit;
+}
+.app-nav button.active { color: var(--text); background: var(--panel); }
+
+/* ---------------------------------------------------------------------------
+   LiveView.css — verbatim where the shipped layout depends on it
+   --------------------------------------------------------------------------- */
+.live-view {
+  display: flex; flex-direction: column; gap: 12px; padding: 16px; color: var(--text);
+  background: var(--bg); flex: 1; min-height: 0; overflow: hidden;
+  max-width: 1600px; width: 100%; margin: 0 auto;
+}
+.live-toolbar { display: flex; align-items: center; gap: 12px; flex: none; }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+.live-toolbar .state { font-size: 12px; font-weight: 500; color: var(--dim); text-transform: uppercase; letter-spacing: .04em; }
+.live-toolbar .conn { font-size: 12px; color: var(--dim); }
+.live-toolbar button {
+  margin-left: auto; padding: 6px 18px; font-weight: 600; font-size: 12.5px; border-radius: 6px;
+  border: 1px solid var(--border); background: transparent; color: var(--text); font-family: inherit;
+}
+.live-toolbar .btn-stop { background: var(--danger-bg); color: var(--danger-fg); border-color: var(--danger-border); }
+.live-warning {
+  display: flex; align-items: center; gap: 12px; padding: 8px 12px; border: 1px solid #7c5a12;
+  border-radius: 6px; background: #2a2110; color: #ffb020; font-size: 13px; line-height: 1.4; flex: none;
+}
+.live-warning code { font-family: var(--font-mono); color: inherit; }
+.live-warning .btn {
+  flex: none; margin-left: auto; padding: 4px 10px; font-size: 11.5px; border-radius: 6px;
+  border: 1px solid #7c5a12; background: transparent; color: inherit; font-family: inherit; cursor: pointer;
+}
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
+.card h4 {
+  margin: 0 0 10px; font-size: 11px; line-height: 1.3; text-transform: uppercase; letter-spacing: .08em;
+  color: var(--dim); font-weight: 600; display: flex; align-items: baseline; gap: 8px;
+}
+.preview-wrapper { position: relative; background: #000; border-radius: 8px; overflow: hidden; }
+.preview-frame { width: 100%; height: 100%; display: block; background: linear-gradient(160deg, #1d2530, #0e1116 60%, #171d24); }
+.overlay { position: absolute; inset: 0; }
+.det-box { position: absolute; border: 2px solid var(--accent); }
+.det-label {
+  position: absolute; top: 0; left: -2px; display: flex; flex-direction: column; background: var(--accent);
+  color: var(--accent-ink); font-size: 11px; font-weight: 700; padding: 1px 4px; white-space: nowrap;
+}
+.det-size { font-size: 10px; font-weight: 600; opacity: .9; }
+
+/* ---- A: the shipped rail, rules verbatim ----
+   Including the two rules the console changed, scoped back to A here so A keeps rendering what
+   actually shipped rather than a hybrid of the old rail and the new field rows: fields stacked
+   with nowrap labels, and tiles on the inherited line-height with no ellipsis. */
+.a-tuning .tuning-field { flex-direction: column; align-items: stretch; gap: 2px; }
+.a-tuning .tuning-field-label { flex: none; }
+.a-tuning .tuning-field-label label { flex: none; min-width: 0; white-space: nowrap; }
+.a-tuning input[type='range'] { flex: none; width: 100%; }
+.a-stats-strip .stat-tile b { line-height: 1.6; }
+.a-stats-strip .stat-tile small { line-height: 1.6; white-space: normal; overflow: visible; text-overflow: clip; }
+
+.a-live-body { display: flex; gap: 14px; flex: 1; min-height: 0; container-type: size; --rail-min: 230px; }
+.a-feed-col { flex: none; min-width: 0; min-height: 0; display: flex; align-items: center; }
+.a-feed-col .preview-wrapper {
+  aspect-ratio: 16 / 9;
+  width: min(calc(100cqw - var(--rail-min) - 14px), calc(100cqh * 16 / 9));
+}
+.a-side-rail { flex: 1; min-width: var(--rail-min); min-height: 0; display: flex; flex-direction: column; gap: 12px; overflow: hidden; }
+.a-stats-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 10px 8px; }
+.a-card { padding: 12px 14px; }
+.a-log-card { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.a-item-log { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; }
+.a-tuning { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.a-tuning-body { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+
+/* ---- shared bits ---- */
+.stat-tile { min-width: 0; }
+.stat-tile b { display: block; font-size: 20px; line-height: 1.15; font-weight: 600; font-family: var(--font-mono); letter-spacing: -.01em; }
+.stat-tile small { display: block; color: var(--dim); font-size: 11px; line-height: 1.3; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stat-tile.warn b { color: #ffb020; }
+.stat-tile.unmeasured b { color: var(--dim); }
+.stat-tile.unmeasured small { font-style: italic; }
+.log-row {
+  display: flex; align-items: center; gap: 6px; background: rgba(255,255,255,.03); border-radius: 6px;
+  padding: 5px 9px; line-height: 1.35; font-weight: 500; font-size: 12.5px;
+}
+.log-cls { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-conf { flex: none; font-family: var(--font-mono); font-size: 11px; font-weight: 600; color: var(--accent); }
+.log-age { flex: none; font-family: var(--font-mono); font-size: 10.5px; color: var(--dim); }
+.tuning-group { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.tuning-group h5 { margin: 0; font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); font-weight: 600; }
+.tuning-camera { font-size: 11px; color: var(--dim); font-weight: 400; text-transform: none; letter-spacing: normal; }
+.tuning-field { display: flex; flex-direction: row; align-items: center; gap: 6px; min-width: 0; }
+.tuning-field-label { flex: 1; display: flex; align-items: center; gap: 4px; min-width: 0; }
+.tuning-field-label label { flex: 1; min-width: 0; font-size: 12px; font-weight: 500; }
+.tuning-field-label .q { flex: none; width: 13px; height: 13px; border-radius: 50%; border: 1px solid var(--border); color: var(--dim); font-size: 9px; font-weight: 700; line-height: 1; display: flex; align-items: center; justify-content: center; }
+.tuning-val { display: flex; align-items: baseline; gap: 3px; margin-left: auto; flex: none; }
+.tuning-num { width: 44px; padding: 1px 3px; border: 1px solid transparent; border-radius: 4px; background: transparent; color: var(--text); font-size: 11px; font-variant-numeric: tabular-nums; text-align: right; font-family: inherit; }
+.tuning-unit { font-size: 10px; color: var(--dim); }
+input[type=range] { flex: 0 0 72px; width: 72px; accent-color: var(--accent); margin: 0; height: 16px; }
+.quality-row { display: flex; gap: 18px; flex-wrap: wrap; }
+.quality-metric { display: flex; flex-direction: column; gap: 2px; }
+.quality-label { font-size: 10.5px; color: var(--dim); }
+.quality-value { font-size: 15px; font-weight: 600; font-family: var(--font-mono); }
+.quality-value.bad { color: #ffb020; }
+.btn-primary { padding: 5px 12px; font-size: 11.5px; font-weight: 600; border-radius: 6px; border: 1px solid #1f7d61; background: #12352b; color: #7fe3bf; font-family: inherit; }
+.btn-outline { padding: 5px 12px; font-size: 11.5px; font-weight: 600; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--text); font-family: inherit; }
+.hint { font-size: 10.5px; color: var(--dim); line-height: 1.4; }
+
+/* ---------------------------------------------------------------------------
+   B: the console, as it shipped. Preview + rail on top; the camera controls in a
+   full-width band beneath, one column per group plus the device's own column.
+   --------------------------------------------------------------------------- */
+.b-live-body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 12px; }
+.b-top { flex: 1; min-height: 0; display: flex; gap: 14px; }
+.b-feed { flex: 1; min-width: 0; min-height: 0; display: flex; align-items: center; justify-content: center; container-type: size; }
+.b-feed .preview-wrapper { aspect-ratio: 16 / 9; width: min(100cqw, calc(100cqh * 16 / 9)); }
+.b-rail { width: 327px; flex: none; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+.side-rail .stats-card, .b-stats { padding: 10px 12px; flex: none; display: flex; flex-direction: column; gap: 6px; }
+.b-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 10px; }
+.b-flags {
+  min-height: 18px; line-height: 18px; display: flex; align-items: center; gap: 12px;
+  font-size: 11.5px; flex-wrap: nowrap; overflow: hidden;
+}
+.b-flag { display: inline-flex; align-items: baseline; gap: 4px; color: #ffb020; font-weight: 600; }
+.b-quiet { color: var(--dim); font-size: 11px; font-weight: 400; }
+.b-facts { display: flex; flex-direction: column; gap: 1px; border-top: 1px solid var(--border); padding-top: 6px; }
+.b-fact { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: baseline; font-size: 11px; line-height: 1.35; }
+.b-fact small { color: var(--dim); font-weight: 500; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.b-fact b { font-family: var(--font-mono); font-size: 11.5px; font-weight: 600; text-align: right; }
+.b-fact.warn b { color: #ffb020; }
+.b-log-card { flex: 1; min-height: 108px; display: flex; flex-direction: column; padding: 10px 12px; }
+.b-item-log { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+.b-band { flex: none; display: flex; gap: 16px; padding: 10px 12px; align-items: flex-start; }
+.b-band .tuning-fields { flex: 1; display: flex; align-items: flex-start; gap: 16px; min-width: 0; }
+.b-band .tuning-fields .tuning-group { flex: 1; }
+.b-band .tuning-tools { flex: 0 0 210px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.b-band .tuning-grid { display: grid; grid-template-columns: 1fr; gap: 4px; }
+
+/* ---------------------------------------------------------------------------
+   C: wide two-column rail, everything beside the preview
+   --------------------------------------------------------------------------- */
+.c-live-body { flex: 1; min-height: 0; display: flex; gap: 14px; }
+.c-feed { flex: 1; min-width: 0; min-height: 0; display: flex; align-items: center; justify-content: center; container-type: size; }
+.c-feed .preview-wrapper { aspect-ratio: 16 / 9; width: min(100cqw, calc(100cqh * 16 / 9)); }
+.c-rail { flex: none; width: 420px; display: flex; gap: 12px; min-height: 0; }
+.c-rail-col { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+.c-tiles { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px 10px; padding: 10px 12px; }
+.c-tuning { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; }
+.c-tuning-body { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.c-log-card { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 10px 12px; }
+
+/* Below the width the band's columns need. */
+.narrow .live-view { overflow-y: auto; }
+.narrow .b-live-body, .narrow .b-top { flex: none; }
+.narrow .b-top { flex-direction: column; }
+.narrow .b-feed { container-type: normal; display: block; }
+.narrow .b-feed .preview-wrapper { width: 100%; }
+.narrow .b-rail { width: 100%; }
+.narrow .b-band { flex-wrap: wrap; }
+.narrow .b-band .tuning-fields { flex-direction: column; width: 100%; }
+.narrow .b-band .tuning-tools { flex: 1 1 300px; width: 100%; }
+.narrow .c-live-body { flex-direction: column; }
+.narrow .c-feed { flex: none; container-type: normal; }
+.narrow .c-feed .preview-wrapper { width: 100%; }
+.narrow .c-rail { flex: none; width: 100%; flex-direction: column; }
+.narrow .a-live-body { flex-direction: column; flex: none; container-type: normal; }
+.narrow .a-feed-col { display: block; }
+.narrow .a-feed-col .preview-wrapper { width: 100%; }
+.narrow .a-side-rail { min-width: 0; width: 100%; overflow: visible; }
+.narrow .a-tuning-body, .narrow .a-item-log { overflow-y: visible; flex: none; }
+.narrow .a-log-card { flex: none; min-height: 0; }
+</style>
+</head>
+<body>
+<div class="lab">
+  <aside class="picker">
+    <h1>Live tab — layout record</h1>
+    <p>
+      Three candidates, and the measurements that chose one. Recorded 2026-09-29; the live layout
+      is <code>LiveView.css</code> + <code>CameraTuning.css</code>, and this page is a snapshot,
+      not a source.
+    </p>
+
+    <fieldset>
+      <legend>Layout</legend>
+      <label><input type="radio" name="lay" value="a" /><span><b>A — the shipped rail</b><span>One 230px rail: stats card, tuning card, item log — each scrolling inside the strip.</span></span></label>
+      <label><input type="radio" name="lay" value="b" checked /><span><b>B — console <em>(shipped)</em></b><span>Preview + a 327px rail (stats, log) on top; camera tuning as a full-width band beneath.</span></span></label>
+      <label><input type="radio" name="lay" value="c" /><span><b>C — wide rail</b><span>Preview beside a 2-column rail; tuning keeps a whole column of its own.</span></span></label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Window</legend>
+      <label><input type="radio" name="win" value="1024" checked /><span>1024×768 (tablet default; the window's content area is ~730 high)</span></label>
+      <label><input type="radio" name="win" value="768" /><span>768×576 (window floor — below what the console needs)</span></label>
+    </fieldset>
+
+    <fieldset>
+      <legend>State</legend>
+      <label><input type="checkbox" id="warn" checked /><span>Warning banner up (worst case for height)</span></label>
+      <label><input type="checkbox" id="tune" checked /><span>Camera tuning open</span></label>
+      <label><input type="checkbox" id="flicker" /><span>Simulate the per-frame phantom — watch A's rail jump</span></label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Measured live, in this page</legend>
+      <table class="score" id="score"></table>
+    </fieldset>
+    <p class="note" id="verdict" style="margin-top:0"></p>
+  </aside>
+
+  <main class="stage">
+    <div class="frame-wrap">
+      <span class="frame-label" id="flabel">1024 × 768</span>
+      <div class="frame" id="frame"></div>
+    </div>
+
+    <section class="record">
+      <h2>What the measurements said</h2>
+      <p>
+        The <b>before</b> column is candidate A on this page, which carries the shipped rules
+        verbatim, at 1024×768 with the tuning card expanded. The <b>after</b> column is the running
+        app — Electron behind <code>electron-vite</code>, sidecar with in-process YOLO11,
+        <code>models/scanncart-grocery-v1.pt</code>, capture running — measured at 1024×730, the
+        tablet window's content area. B therefore faced a 38px <em>tighter</em> frame than A did,
+        which is the direction that makes the comparison conservative rather than flattering.
+      </p>
+      <p>
+        The preview row is the app's geometry. This page draws B on a 16:9 preview, so its own
+        readout for that row says 32% of 649×365 where the app measured 33% of 516×387 — the app's
+        camera delivers 4:3, and no amount of CSS changes that.
+      </p>
+
+      <table class="measured">
+        <tr>
+          <th>Claim</th>
+          <th>A — shipped rail</th>
+          <th>B — console</th>
+        </tr>
+        <tr>
+          <td>Tuning controls readable at once</td>
+          <td class="num was">0 / 13</td>
+          <td class="num now">13 / 13</td>
+        </tr>
+        <tr>
+          <td>Tile values drawn over a neighbour</td>
+          <td class="num was">2</td>
+          <td class="num now">0</td>
+        </tr>
+        <tr>
+          <td>Item-log rows on screen</td>
+          <td class="num was">0</td>
+          <td class="num now">2 — and the list scrolls</td>
+        </tr>
+        <tr>
+          <td>Layout movement when <code>suppressed</code> appears</td>
+          <td class="num was">42px</td>
+          <td class="num now">0px</td>
+        </tr>
+        <tr>
+          <td>Regions that scroll</td>
+          <td class="num was">3</td>
+          <td class="num now">1 (the item-log list)</td>
+        </tr>
+        <tr>
+          <td>Preview, as a share of the view</td>
+          <td class="num was">43% (746 × 420)</td>
+          <td class="num now">33% (516 × 387)</td>
+        </tr>
+      </table>
+
+      <h3>Geometry, measured in the app at 1024×730</h3>
+      <table class="measured">
+        <tr><th>Region</th><th>Size</th><th>Note</th></tr>
+        <tr><td>Body</td><td class="num">992 × 614</td><td>row 1 = preview + rail, row 2 = the band</td></tr>
+        <tr><td>Camera band</td><td class="num">992 × 215</td><td>full width, four columns: Image / Detection / Stream / Camera (740 + 210)</td></tr>
+        <tr><td>Preview</td><td class="num">516 × 387</td><td>in a 651-wide column — the capture is 4:3, so height is the binding constraint</td></tr>
+        <tr><td>Rail</td><td class="num">327 × 387</td><td>fixed track; a wider window spends the extra width on the preview</td></tr>
+        <tr><td>Stats card</td><td class="num">327 × 238</td><td>four tiles at 146 × 37 in a fixed 2×2, an 18px flags line, four readout rows</td></tr>
+        <tr><td>Item-log card</td><td class="num">327 × 139</td><td>floor 108px; the list inside it scrolls</td></tr>
+      </table>
+      <p class="caveat">
+        The item log is the one region whose height the layout does not protect: at the window's
+        content area the rail gives it 139px, which is two fully-visible rows. At a 768-tall content
+        area — the same window without a title bar's worth of chrome — the same layout gives it
+        177px and four rows. Everything else on the tab is fixed and visible at both.
+      </p>
+      <p class="caveat">
+        The console also <b>costs</b> preview area: 33% of the view where the rail layout managed
+        43%, because the band takes 215px and the camera delivers 4:3, so the preview is
+        height-bound inside a column it could otherwise fill. That is the trade the layout makes,
+        and it is the one number here that argues for A.
+      </p>
+
+      <h3>The flicker, measured</h3>
+      <p>
+        On an empty counter these weights produce a phantom every few frames, and the shipped
+        conditional tile changed the strip's height by 42px each time — which re-wrapped the
+        <code>auto-fit</code> grid, resized the rail, and dragged the tuning card and the item log
+        with it, two or three times a second. In the console, <code>suppressed</code> and
+        <code>shed</code> moved into a flags line whose height is reserved at a pinned 18px.
+        Injecting one flag and then a second into the running app left every box identical:
+        stats 238, flags 18, log 139, log top 348, preview 387 — in all three states.
+      </p>
+      <p>
+        The reserve has to match the line box exactly, which is why it is <code>18px</code> and not
+        <code>1.5em</code>: 1.5em of 11.5px is 17.25px against an 18.4px line, and the difference
+        was 1px of movement per phantom — small, and exactly the kind of jitter this exists to
+        remove.
+      </p>
+
+      <h3>Four defects the exercise found</h3>
+      <p>None of these were introduced by B; they were in the shipped layout, and rendering it at a known size is what made them visible.</p>
+      <ol>
+        <li>
+          <b>The item log collapsed to zero height</b> whenever the tuning card was expanded. Both
+          were flex items in one column: the tuning card's basis was its full content, the log's was
+          <code>0</code>, and the arithmetic handed the whole shortfall to the log. A working
+          capture looked like a capture that had logged nothing.
+        </li>
+        <li>
+          <b><code>letterbox</code> drew over the tile beside it.</b> At 20px mono the word is about
+          108px wide and the strip's tracks were <code>minmax(90px, 1fr)</code>. Two tiles overlapping
+          read as the two facts in the same place.
+        </li>
+        <li>
+          <b>The "no frames yet" placeholder was a grid item</b>, so it landed in the first of four
+          90px cells and wrapped to three lines — 77px of empty strip where one line was meant.
+        </li>
+        <li>
+          <b>Tiles inherited <code>line-height: 1.6</code></b>, spending 32px on a 20px number and
+          18px on the 11px label under it. In a 320px rail holding four cards' worth of content,
+          that is the difference between an item log and no item log.
+        </li>
+      </ol>
+
+      <h3>What B changed</h3>
+      <ul class="bullets">
+        <li>
+          <b>The camera controls left the rail.</b> 13 controls, three of whose labels are sentences
+          ("Drop whole-frame phantoms (three edges)"), cannot be read in a 320px column. As a band
+          they need 215px of height and no scroll.
+        </li>
+        <li>
+          <b>Fields became rows.</b> Label, value and slider on one line is 19px where a stacked
+          field is 45px, which is what makes 13 of them fit under a preview.
+        </li>
+        <li>
+          <b>Tiles became a fixed set, and stable text became rows.</b> Fast-changing numbers
+          (infer/capture fps, latency, tracked) stay tiles in a fixed 2×2; session-long facts
+          (geometry, requirement, recall, classes) became label/value rows, which cannot reflow and
+          have room for their values.
+        </li>
+        <li>
+          <b>The rail became a fixed track and the preview took the remainder</b>, so a wider window
+          widens the feed instead of stretching a column of numbers.
+        </li>
+      </ul>
+
+      <h3>What this page is not</h3>
+      <p>
+        It is not the app. Candidate B here is a drawing at reduced fidelity: it does not carry the
+        live frame, the item log's real rows, the banner stack, or the tooltips. Candidate A is the
+        shipped rules copied out of <code>LiveView.css</code> at the time of writing, and if that
+        file moves on, A here becomes a picture of a layout nobody ships — which is why the numbers
+        above are stamped with a date rather than asserted as current.
+      </p>
+    </section>
+
+    <div class="tip" id="tip"></div>
+  </main>
+</div>
+
+<script>
+/* ------------------------------------------------------------------ content */
+const TILES = [
+  { t: '21.4', l: 'infer fps' },
+  { t: '30', l: 'capture fps' },
+  { t: '47', l: 'latency ms' },
+  { t: '3', l: 'tracked' }
+];
+const FACTS = [
+  ['geometry (auto)', 'letterbox', ''],
+  ['requirement (recorded)', 'letterbox', ''],
+  ['test recall · 1 below floor', '82%', 'warn'],
+  ['classes · roster ok', '7', '']
+];
+const ITEMS = [
+  ['Bear Brand Fortified Powdered Milk 33g', 87, '0.2s'],
+  ['lucky_me_pancit_canton_calamansi_flavor', 91, '1.4s'],
+  ['555 sardines 155grams', 78, '2.9s'],
+  ['Milo Chocolate Drink 22g Sachet', 93, '4.1s'],
+  ['silver_swan_sukang_puti_200ML', 71, '6.7s'],
+  ['safeguard_pure_white_60g', 66, '8.2s']
+];
+const GROUPS = [
+  ['Image', [
+    ['Brightness', 128, '', 0, 255, false],
+    ['Exposure', -6, 'log2 s', -13, 0, false],
+    ['Autofocus', null, '', 0, 1, true],
+    ['Focus', 415, '', 0, 1023, false]
+  ]],
+  ['Detection', [
+    ['Confidence threshold', .45, '', 0, 1, false],
+    ['Drop frame-edge phantoms', null, '', 0, 1, true],
+    ['Drop whole-frame phantoms (three edges)', null, '', 0, 1, true],
+    ['Drop big unsure boxes (the model is guessing)', null, '', 0, 1, true]
+  ]],
+  ['Stream', [
+    ['Frame skip', 0, '', 0, 30, false],
+    ['Preview height', 480, 'px', 120, 1080, false],
+    ['Preview rate', 30, 'fps', 0, 120, false],
+    ['Mirror preview', null, '', 0, 1, true],
+    ['Track expiry', 1.5, 's', .1, 30, false]
+  ]]
+];
+const CHECKED = {
+  Autofocus: false,
+  'Drop frame-edge phantoms': true,
+  'Drop whole-frame phantoms (three edges)': true,
+  'Drop big unsure boxes (the model is guessing)': true,
+  'Mirror preview': true
+};
+
+/* ------------------------------------------------------------------- pieces */
+const el = (h) => { const d = document.createElement('div'); d.innerHTML = h.trim(); return d.firstElementChild; };
+
+const detBoxes = `
+  <div class="det-box" style="left:12%;top:18%;width:31%;height:46%">
+    <span class="det-label"><span>Milo Chocolate Drink 22g Sachet 93%</span><small class="det-size">249×193 px</small></span>
+  </div>
+  <div class="det-box" style="left:56%;top:34%;width:24%;height:39%">
+    <span class="det-label"><span>555 sardines 155grams 78%</span><small class="det-size">193×164 px</small></span>
+  </div>`;
+
+const preview = () => `
+  <div class="preview-wrapper">
+    <div class="preview-frame"></div>
+    <div class="overlay">${detBoxes}</div>
+  </div>`;
+
+const tile = (t, l, cls) => `<div class="stat-tile ${cls || ''}"><b>${t}</b><small>${l}</small></div>`;
+const logRows = () => ITEMS.map(([n, c, a]) => `
+  <li class="log-row">
+    <span class="log-cls" title="${n}">${n}</span>
+    <span class="log-age" style="margin-left:auto">${a}</span>
+    <span class="log-conf">${c}%</span>
+  </li>`).join('');
+
+const field = ([label, value, unit, min, max, isBool]) => `
+  <div class="tuning-field">
+    <div class="tuning-field-label">
+      <label>${label}</label><span class="q">?</span>
+      ${isBool ? '' : `<span class="tuning-val"><input class="tuning-num" value="${value}" readonly /><span class="tuning-unit">${unit}</span></span>`}
+    </div>
+    ${isBool
+      ? `<label class="hint" style="display:flex;gap:6px;align-items:center"><input type="checkbox" ${CHECKED[label] ? 'checked' : ''} /> <span>${label.startsWith('Drop') ? 'on' : ''}</span></label>`
+      : `<input type="range" min="${min}" max="${max}" step="any" value="${value}" />`}
+  </div>`;
+
+const tuningGroups = () => GROUPS.map(([g, fields]) => `
+  <section class="tuning-group"><h5>${g}</h5>${fields.map(field).join('')}</section>`).join('');
+
+const quality = `
+  <div class="quality-row">
+    <div class="quality-metric"><span class="quality-label">Brightness</span><span class="quality-value">118</span></div>
+    <div class="quality-metric"><span class="quality-label">Sharpness</span><span class="quality-value">241</span></div>
+    <div class="quality-metric"><span class="quality-label">Capture fps</span><span class="quality-value">30</span></div>
+  </div>`;
+
+const banner = `
+  <div class="live-warning">
+    <span><b>These weights are running at the wrong geometry.</b> They need <code>resize_mode: letterbox</code>
+    and the settings have <code>stretch</code>, so every object reaches the model at a different scale than it
+    was trained on — the detections and the item log below are weaker than this model can do.</span>
+    <button class="btn">Stop &amp; fix</button>
+  </div>`;
+
+/* ---------------------------------------------------------------- layouts */
+function layoutA(state) {
+  const suppressed = state.flicker
+    ? `<div class="stat-tile warn" data-tile="suppressed"><b>1</b><small>suppressed</small></div>` : '';
+  return `
+  <div class="live-view">
+    <div class="live-toolbar">
+      <span class="status-dot"></span><span class="state">running</span><span class="conn">connected</span>
+      <button class="btn-stop">Stop</button>
+    </div>
+    ${state.warn ? banner : ''}
+    <div class="a-live-body">
+      <div class="a-feed-col">${preview()}</div>
+      <div class="a-side-rail">
+        <div class="card a-card">
+          <h4>Model &amp; performance</h4>
+          <div class="a-stats-strip" data-scroll>
+            ${TILES.map((t) => tile(t.t, t.l)).join('')}
+            ${suppressed}
+            ${FACTS.map(([k, v, c]) => tile(v, k, c)).join('')}
+          </div>
+        </div>
+        <div class="card a-card a-tuning">
+          <h4>▾ Camera tuning <span class="tuning-camera">Logitech StreamCam</span></h4>
+          <div class="a-tuning-body" data-scroll>
+            ${quality}
+            ${tuningGroups()}
+            <section class="tuning-group"><h5>Calibration</h5>
+              <button class="btn-outline">Calibrate camera</button>
+              <p class="hint">Measured 30 fps on automatic exposure, 30 fps with it capped.</p>
+            </section>
+          </div>
+        </div>
+        <div class="card a-log-card" style="padding:12px 14px">
+          <h4>Item log <span style="text-transform:none;letter-spacing:0;font-weight:500">(${ITEMS.length})</span></h4>
+          <ul class="a-item-log" data-scroll>${logRows()}</ul>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function layoutB(state) {
+  const flags = state.flicker
+    ? `<span class="b-flag"><b>1</b> suppressed</span>`
+    : `<span class="b-quiet">no flags this frame</span>`;
+  return `
+  <div class="live-view">
+    <div class="live-toolbar">
+      <span class="status-dot"></span><span class="state">running</span><span class="conn">connected</span>
+      <button class="btn-stop">Stop</button>
+    </div>
+    ${state.warn ? banner : ''}
+    <div class="b-live-body">
+      <div class="b-top">
+        <div class="b-feed">${preview()}</div>
+        <div class="b-rail">
+          <div class="card b-stats">
+            <h4 style="margin-bottom:8px">Model &amp; performance</h4>
+            <div class="b-tiles">${TILES.map((t) => tile(t.t, t.l)).join('')}</div>
+            <div class="b-flags" data-flags>${flags}</div>
+            <div class="b-facts">
+              ${FACTS.map(([k, v, c]) => `<div class="b-fact ${c}"><small>${k}</small><b>${v}</b></div>`).join('')}
+            </div>
+          </div>
+          <div class="card b-log-card">
+            <h4>Item log <span style="text-transform:none;letter-spacing:0;font-weight:500">(${ITEMS.length})</span></h4>
+            <ul class="b-item-log" data-scroll>${logRows()}</ul>
+          </div>
+        </div>
+      </div>
+      ${state.tune ? `
+      <div class="card b-band">
+        <div class="tuning-fields">
+          ${GROUPS.map(([g, fields]) => `<section class="tuning-group"><h5>${g}</h5>${fields.map(field).join('')}</section>`).join('')}
+        </div>
+        <div class="tuning-tools">
+          <div class="tuning-group">
+            <h5>Camera <span class="tuning-camera">StreamCam</span></h5>
+            ${quality}
+            <button class="btn-outline">Calibrate camera</button>
+            <p class="hint">Measured 30 fps on automatic exposure, 30 fps with it capped.</p>
+          </div>
+        </div>
+      </div>` : `
+      <div class="card b-band" style="color:var(--dim);font-size:11.5px">▸ Camera tuning — 13 controls hidden; the preview and the item log keep the height.</div>`}
+    </div>
+  </div>`;
+}
+
+function layoutC(state) {
+  return `
+  <div class="live-view">
+    <div class="live-toolbar">
+      <span class="status-dot"></span><span class="state">running</span><span class="conn">connected</span>
+      <button class="btn-stop">Stop</button>
+    </div>
+    ${state.warn ? banner : ''}
+    <div class="c-live-body">
+      <div class="c-feed">${preview()}</div>
+      <div class="c-rail">
+        <div class="c-rail-col">
+          <div class="card c-tiles">${TILES.map((t) => tile(t.t, t.l)).join('')}</div>
+          <div class="card" style="padding:10px 12px">
+            <div class="b-facts" style="border-top:none;padding-top:0">
+              ${FACTS.map(([k, v, c]) => `<div class="b-fact ${c}"><small>${k}</small><b>${v}</b></div>`).join('')}
+            </div>
+            <div class="b-flags" style="margin-top:7px">${state.flicker
+              ? '<span class="b-flag"><b>1</b> suppressed</span>'
+              : '<span class="b-quiet">no flags this frame</span>'}</div>
+          </div>
+          <div class="card c-log-card">
+            <h4>Item log <span style="text-transform:none;letter-spacing:0;font-weight:500">(${ITEMS.length})</span></h4>
+            <ul class="b-item-log" data-scroll>${logRows()}</ul>
+          </div>
+        </div>
+        <div class="c-rail-col">
+          <div class="card c-tuning">
+            <h4 style="margin-bottom:0">Camera tuning</h4>
+            <div class="c-tuning-body" data-scroll>
+              ${quality}${tuningGroups()}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+/* --------------------------------------------------------------- rendering */
+const state = { lay: 'b', win: 1024, warn: true, tune: true, flicker: false };
+const frame = document.getElementById('frame');
+
+function render() {
+  frame.className = state.win === 768 ? 'frame small narrow' : 'frame';
+  frame.innerHTML = `
+    <div class="app-shell">
+      <nav class="app-nav">
+        <button class="active">Live</button><button>Admin</button>
+      </nav>
+      ${state.lay === 'a' ? layoutA(state) : state.lay === 'c' ? layoutC(state) : layoutB(state)}
+    </div>`;
+  document.getElementById('flabel').textContent = `${state.win} × ${state.win === 768 ? 576 : 768}`;
+  measure();
+}
+
+function visibleInScroll(node) {
+  let p = node.parentElement;
+  while (p && p !== document.body) {
+    const st = getComputedStyle(p);
+    if (/(auto|scroll)/.test(st.overflowY) || /(auto|scroll)/.test(st.overflow)) {
+      const pr = p.getBoundingClientRect(), nr = node.getBoundingClientRect();
+      return nr.top >= pr.top - 1 && nr.bottom <= pr.bottom + 1;
+    }
+    p = p.parentElement;
+  }
+  return true;
+}
+
+function measure() {
+  const fields = [...frame.querySelectorAll('.tuning-field')];
+  const onScreen = fields.filter(visibleInScroll).length;
+  const colliding = [...frame.querySelectorAll('.stat-tile b')]
+    .filter((b) => b.scrollWidth > b.clientWidth + 1).length;
+  const scrollers = [...frame.querySelectorAll('*')]
+    .filter((e) => !e.classList.contains('sr-only') && e.scrollHeight > e.clientHeight + 1).length;
+  const pv = frame.querySelector('.preview-wrapper');
+  const pr = pv ? pv.getBoundingClientRect() : null;
+  const body = frame.querySelector('.live-view');
+  const br = body.getBoundingClientRect();
+  const pvArea = pr ? Math.round(pr.width * pr.height) : 0;
+  const bodyArea = Math.round(br.width * br.height);
+  const logRowsVisible = [...frame.querySelectorAll('.log-row')].filter(visibleInScroll).length;
+
+  const rows = [
+    ['Preview', pr ? `${Math.round(pr.width)}×${Math.round(pr.height)}` : '—'],
+    ['Preview share of frame', pvArea && bodyArea ? `${Math.round((pvArea / bodyArea) * 100)}%` : '—'],
+    ['Controls visible', `${onScreen}/13`, onScreen === 13],
+    ['Tile values colliding', String(colliding), colliding === 0],
+    ['Item-log rows visible', `${logRowsVisible}/${ITEMS.length}`],
+    ['Regions that scroll', String(scrollers)]
+  ];
+  document.getElementById('score').innerHTML =
+    `<tr><th>Metric</th><th style="text-align:right">Value</th></tr>` +
+    rows.map(([k, v, ok]) =>
+      `<tr><td>${k}</td><td class="n ${ok === undefined ? '' : ok ? 'ok' : 'bad'}">${v}</td></tr>`).join('');
+
+  const verdicts = {
+    a: 'A: one 230px column for four cards\' worth of content. With the card expanded not one of its 13 controls is fully in view and the rest scroll; the item log is handed whatever height the flex arithmetic leaves, which is none; and `letterbox` is wider than a 90px tile.',
+    b: 'B: the controls leave the rail for a full-width band (one column per group, fields on one line), the rail keeps stats and the item log at full height, and the tile set is fixed with a reserved flags line so a phantom cannot move anything.',
+    c: 'C: nothing scrolls in the tuning card, but the rail competes with the preview for width and the tuning column still has to wrap the long labels — and at 768 wide the rail is wider than the feed.'
+  };
+  document.getElementById('verdict').textContent = verdicts[state.lay];
+
+  const tips = {
+    a: 'This is the 42px jump the record measures: `repeat(auto-fit, minmax(90px, 1fr))` plus a tile that appears on one frame in twenty re-wraps the strip, which resizes the flex column and drags the tuning card and the item log with it.',
+    b: 'The flags line under the tiles is reserved at a pinned 18px whether or not anything fired, so `suppressed` and `shed` can come and go without moving anything — the same job `OVERLAY_HOLD_MS` does for the overlay boxes.',
+    c: 'Worth comparing with B at 768×576: with the rail taking a share of the width, both the preview and the tuning column are squeezed at the window floor.'
+  };
+  document.getElementById('tip').textContent = tips[state.lay];
+}
+
+/* ------------------------------------------------------------------ wiring */
+document.querySelectorAll('input[name=lay]').forEach((r) =>
+  r.addEventListener('change', () => { state.lay = r.value; render(); }));
+document.querySelectorAll('input[name=win]').forEach((r) =>
+  r.addEventListener('change', () => { state.win = Number(r.value); render(); }));
+document.getElementById('warn').addEventListener('change', (e) => { state.warn = e.target.checked; render(); });
+document.getElementById('tune').addEventListener('change', (e) => { state.tune = e.target.checked; render(); });
+document.getElementById('flicker').addEventListener('change', (e) => { state.flicker = e.target.checked; render(); });
+
+render();
+
+/* The per-frame phantom, at roughly the rate an empty counter produces one.
+   A: the tile is inserted and removed, exactly as the shipped `{suppressed > 0 && …}` does.
+   B and C: only the reserved line's text changes. */
+const PHANTOM_TILE = '<div class="stat-tile warn" data-tile="suppressed"><b>1</b><small>suppressed</small></div>';
+setInterval(() => {
+  if (!state.flicker) return;
+  if (state.lay === 'a') {
+    const strip = frame.querySelector('.a-stats-strip');
+    if (!strip) return;
+    const existing = strip.querySelector('[data-tile=suppressed]');
+    if (existing) existing.remove();
+    else {
+      const anchor = strip.children[3];
+      strip.insertBefore(el(PHANTOM_TILE), anchor ? anchor.nextSibling : null);
+    }
+  } else {
+    const flags = frame.querySelector('[data-flags]') || frame.querySelector('.b-flags');
+    if (flags) {
+      flags.innerHTML = flags.textContent.includes('suppressed')
+        ? '<span class="b-quiet">no flags this frame</span>'
+        : '<span class="b-flag"><b>1</b> suppressed</span>';
+    }
+  }
+}, 350);
+</script>
+</body>
+</html>

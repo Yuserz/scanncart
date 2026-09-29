@@ -115,6 +115,40 @@ def test_process_once_builds_frame_message():
     assert msgs and msgs[0] is out
 
 
+class _SheddingDetector:
+    """The remote shape of a refused round trip: no detections, and a flag saying so."""
+
+    names = {0: "banana"}
+
+    def __init__(self):
+        self.last_shed = True
+
+    def infer(self, frame):
+        self.last_shed = True
+        return []
+
+
+def test_a_shed_frame_is_reported_as_shed_rather_than_as_a_clean_counter():
+    """The detector answers a refused frame with nothing, which is exactly what an empty counter
+    looks like. The stat is the only thing that separates them, and without it an overloaded
+    inference server reads as a scene with no items on it."""
+    msgs = []
+    pipe = Pipeline(_StubSource(), _SheddingDetector(), Settings(), on_message=msgs.append)
+    out = pipe.process_once()
+
+    assert out["detections"] == []
+    assert out["stats"]["shed"] is True
+
+
+def test_a_detector_with_no_such_attribute_reports_no_shed():
+    """The native shape - no server to refuse anything - and the default an older detector gets.
+    `getattr` rather than a protocol member, because only the remote backend can be shed."""
+    pipe = Pipeline(_StubSource(), _StubDetector(), Settings(), on_message=lambda _m: None)
+    out = pipe.process_once()
+
+    assert out["stats"]["shed"] is False
+
+
 def test_process_once_returns_none_without_frame():
     class Empty:
         width = 1

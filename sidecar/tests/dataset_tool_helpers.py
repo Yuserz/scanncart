@@ -280,9 +280,25 @@ def _report_with_distances(
 
 def _fake_generation(root: Path) -> generations.Generation:
     """A generation whose export lives in `tmp_path`, so the readers can be tested with no
-    workspace on disk. Only `export_dir` and `classes` are ever consulted by the readers below."""
+    workspace on disk. `export_dir`, `classes` and the set's own declared names are what the
+    readers below consult - the third because a label row's class column is a position in the
+    set's list, which `train_model.require_labels_order` checks against the generation's.
+
+    So the directory gets the `data.yaml` a real export has, declaring these classes in this order:
+    a set of images and label files with no class list is a shape no export produces, and a fixture
+    that has one would be testing a refusal rather than the reader it is here for.
+    """
+    import yaml
+
+    # `v1`'s classes under `v1`'s name, because that is how the callers drive the tools: a set whose
+    # declared names are anybody else's is a mismatch rather than a fixture.
+    classes = generations.V1.classes
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "data.yaml").write_text(
+        yaml.safe_dump({"nc": len(classes), "names": list(classes)}), encoding="utf-8"
+    )
     return generations.Generation(
-        name="fake", classes=("a", "b"), export_dir=root, manifest=None,
+        name="v1", classes=classes, export_dir=root, manifest=None,
         resize_mode="stretch", roboflow_project="none",
     )
 

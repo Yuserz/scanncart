@@ -430,8 +430,15 @@ def inspect_project(args: argparse.Namespace, settings: dict, key: str, generate
     # roster and the *order* or the *count* is the mistake. It is still printed loudly, because a
     # version bakes in every class it is given and the app then reports the outputs it cannot name.
     wanted = list(generation.classes) if generation is not None else []
-    extra = [name for name in names or [] if name not in set(wanted)]
-    missing = [name for name in wanted if name not in set(names or [])]
+    # Imported here rather than at the top because `generations.py` imports this module
+    # (`REQUIRED_RESIZE_MODE`), which is why `declaring_generation` above does the same.
+    import generations
+
+    # The relation is `generations.class_gaps`' - the one owner of every class-list difference in
+    # this tree - and the headings below are this caller's own words.
+    gaps = generations.class_gaps(names or [], wanted)
+    extra = list(gaps.source_only)
+    missing = list(gaps.target_only)
 
     # Everything the POST would bake in, in one read and before the number is spent: the class
     # list in the order the export will index it, the geometry being sent, and how many of the

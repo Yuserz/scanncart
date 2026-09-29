@@ -40,6 +40,17 @@ class Stats(BaseModel):
     # that travels with the frame makes the rule's activity a readout rather than an assumption
     # about the code.
     suppressed: int = 0
+    # Whether this frame's inference was refused by a server that is up but at capacity
+    # (`RoboflowShed` in `app/roboflow.py`, HTTP 503/429 — the statuses uvicorn's own
+    # `limit_concurrency` answers with, see `app/loops.py`). The detector drops that frame rather
+    # than the capture, so this is the only thing that distinguishes it from a frame the model
+    # found nothing in — which is exactly the reading an operator takes from an empty item log.
+    #
+    # Per-frame, like the three timings above and unlike `suppressed`'s count of boxes: at most one
+    # round trip happens per frame, so the honest answer here is a yes or no. False on the native
+    # backend and on any remote server that is not refusing requests, which is every ordinary
+    # frame of every capture.
+    shed: bool = False
 
 
 class FrameMessage(BaseModel):
@@ -78,8 +89,39 @@ class StatusMessage(BaseModel):
     class_warnings: list[str] = []
 
 
-class InferenceMessage(BaseModel):
+class InferenceStatusPayload(BaseModel):
     """Whether the server the selected backend calls is answering (`app/inference_health.py`).
+
+    The body only. It is sent two ways, which is why it is a model of its own rather than fields on
+    the message below: as `InferenceMessage` on a change (and replayed on the handshake), and inside
+    `HealthResponse` on every health read, so the Admin Panel can say how recently the standing
+    verdict was re-confirmed. One shape either way, so the two surfaces cannot describe one state
+    differently - and both build their `age_seconds` from the same live reading, so the number means
+    one thing everywhere: how long ago this verdict was last probed, not when it changed.
+    """
+
+    #: Which backend this is about, so the sentence can say "the local API" and a client can tell a
+    #: `native` reading (there is nothing to watch) from a remote one that is unresponsive.
+    backend: str
+    url: str = ""
+    #: The closed set from `app/inference_health.py`. `unknown` is a state a client renders
+    #: *nothing* for: it means this backend has no server to watch, or the first probe has not
+    #: landed yet, and neither is a verdict.
+    state: InferenceState = "unknown"
+    #: Why, in the endpoint's own words, when `state` is `unresponsive`. Empty otherwise. This is
+    #: the evidence an operator needs to tell a wrong port from a server that is not running: a
+    #: refused connection, a timeout and an unresolvable host are three different sentences.
+    detail: str = ""
+    #: Seconds since the last completed probe, or `None` when there has not been one. Computed when
+    #: the payload is built, from a reading the monitor re-stamps on *every* probe - so a verdict
+    #: that has stood for an hour still reports seconds, which is the truth about it: it was checked
+    #: seconds ago. This is what says a reading is live rather than the relic of a transition that
+    #: happened before the operator started looking.
+    age_seconds: float | None = None
+
+
+class InferenceMessage(InferenceStatusPayload):
+    """The transition form: the payload, plus the discriminator a client dispatches on.
 
     Its own message type rather than two more fields on `StatusMessage`, because it is a fact about
     the *configured backend* rather than about a capture: it is equally true before one is started,
@@ -92,22 +134,19 @@ class InferenceMessage(BaseModel):
     """
 
     type: Literal["inference"]
-    #: Which backend this is about, so the sentence can say "the local API" and a client can tell a
-    #: `native` reading (there is nothing to watch) from a remote one that is unresponsive.
-    backend: str
-    url: str = ""
-    #: The closed set from `app/inference_health.py`. `unknown` is a state a client renders
-    #: *nothing* for: it means this backend has no server to watch, or the first probe has not
-    #: landed yet, and neither is a verdict.
-    state: InferenceState = "unknown"
-    #: Why, in the endpoint's own words, when `state` is `unresponsive`. Empty otherwise.
-    detail: str = ""
 
 
 class HealthResponse(BaseModel):
     state: str
     active_model: str
     device: str
+    # The backend's own server, as of the last probe, or `None` when there is nothing to watch
+    # (`native`, or a remote backend with no URL configured). Here rather than only on the stream
+    # because this endpoint is the one the Admin Panel already polls every couple of seconds: the
+    # verdict's *state* is a transition a client should hear the moment it happens, but its *age* is
+    # a reading, and a reading has to be fresh. `None` and `state: "unknown"` are different answers
+    # - "no server to watch" and "configured, not checked yet" - and the panel says so.
+    inference: InferenceStatusPayload | None = None
 
 
 class LogEvent(BaseModel):

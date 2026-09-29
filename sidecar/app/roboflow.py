@@ -23,6 +23,20 @@ DEFAULT_MAX_RETRIES = 2
 BACKOFF_BASE_S = 0.2
 BACKOFF_CAP_S = 2.0
 
+#: The statuses that mean "the server is alive and refusing *this* request because it is at
+#: capacity" — 503 from uvicorn's `limit_concurrency` (see app/loops.py), 429 from a hosted
+#: gateway. They are deliberately read apart from the other 5xx: a 500 says the server is broken,
+#: which is the caller's cue to stop, and these say it is busy, which is the cue to wait. A shed is
+#: therefore retried, and the failure it finally raises is its own type, so a caller can keep
+#: running rather than treating a momentary refusal as a dead detector.
+SHED_STATUSES = (429, 503)
+
+#: A ceiling on the server's own `Retry-After`, and the reason it cannot be obeyed as given: the
+#: value arrives from whoever is in front of the model (a proxy, a gateway) and a mistaken 3600
+#: would stall the frame holding it for an hour while `track_expiry_s` (1.5 s by default) expired
+#: every track in view. Waiting the cap out and trying again is the honest version of obedience.
+RETRY_AFTER_CAP_S = BACKOFF_CAP_S
+
 _BOX_KEYS = ("x", "y", "width", "height")
 _MAX_SEARCH_DEPTH = 6
 
@@ -43,6 +57,17 @@ class RoboflowTimeout(RoboflowError):
     """Exceeded the request timeout on every attempt."""
 
 
+class RoboflowShed(RoboflowError):
+    """The server is up and refused this request because it is at capacity (HTTP 503/429).
+
+    Distinct from every other failure on purpose: nothing is wrong with the server, the key or
+    the workflow, and the same request is expected to succeed once the load passes — so this is
+    the one remote failure a caller can absorb rather than report. `RoboflowRemoteDetector`
+    drops the frame and keeps the capture; a caller that has no next frame to try still gets a
+    sentence naming capacity rather than a 5xx that reads as a broken server.
+    """
+
+
 def _httpx():
     import httpx
 
@@ -51,6 +76,31 @@ def _httpx():
 
 def _default_client_factory(timeout_s: float):
     return _httpx().Client(timeout=timeout_s)
+
+
+def _retry_after_s(response: Any) -> float | None:
+    """The server's own `Retry-After`, in seconds, when it sent a readable one.
+
+    Only the delta-seconds form is honoured. An HTTP-date would have to be parsed against the
+    server's idea of now, and a clock skew turns a correct parse into a wrong wait — worse than
+    the backoff it would have replaced. Anything unreadable is None, which leaves the exponential
+    backoff to answer on its own; a test double with no `headers` at all is the ordinary case of
+    that, not an error.
+    """
+    headers = getattr(response, "headers", None)
+    if headers is None:
+        return None
+    try:
+        raw = headers.get("retry-after")
+    except Exception:  # noqa: BLE001 - an exotic header mapping is not worth a failure
+        return None
+    if raw is None:
+        return None
+    try:
+        seconds = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return max(0.0, seconds)
 
 
 def workflow_url(api_url: str, workspace: str, workflow_id: str) -> str:
@@ -187,11 +237,26 @@ class WorkflowClient:
             headers["Authorization"] = f"Bearer {self._api_key}"
         return headers
 
+    def _wait_before(self, attempt: int, retry_after: float | None) -> float:
+        """How long to wait before attempt number `attempt` (1-based).
+
+        The exponential backoff is the floor; a server that named its own `Retry-After` is waited
+        for at least that long (`RETRY_AFTER_CAP_S` bounds how long that can become), because
+        retrying *sooner* than the server asked is how one shed request becomes three.
+        """
+        backoff = min(BACKOFF_BASE_S * (2 ** (attempt - 1)), BACKOFF_CAP_S)
+        if retry_after is None:
+            return backoff
+        return min(max(backoff, retry_after), RETRY_AFTER_CAP_S)
+
     def run(self, image_b64: str, parameters: dict | None = None) -> Any:
         """POST one base64 JPEG and return the first image's output dict.
 
-        Retries only on timeout, connection failure, and 5xx — never on 4xx,
-        which will fail identically however many times it is sent.
+        Retries on timeout, connection failure, and 5xx — never on 4xx, which
+        will fail identically however many times it is sent. 503/429 are the
+        one pair read apart from the rest: they say the server is at capacity
+        rather than broken, so they are waited out (honouring `Retry-After`)
+        and finally raised as `RoboflowShed`, which a capture can survive.
         """
         httpx = _httpx()
         inputs: dict[str, Any] = {"image": {"type": "base64", "value": image_b64}}
@@ -200,9 +265,10 @@ class WorkflowClient:
         body = {"inputs": inputs}
 
         last_error: Exception | None = None
+        retry_after: float | None = None
         for attempt in range(self._max_retries + 1):
             if attempt:
-                self._sleep(min(BACKOFF_BASE_S * (2 ** (attempt - 1)), BACKOFF_CAP_S))
+                self._sleep(self._wait_before(attempt, retry_after))
             try:
                 response = self._client.post(self._url, json=body, headers=self._headers())
             except httpx.TimeoutException as exc:
@@ -232,6 +298,19 @@ class WorkflowClient:
                     f"Workflow not found (HTTP 404) at {self._url}. Check "
                     "roboflow_workspace and roboflow_workflow_id."
                 )
+            if status in SHED_STATUSES:
+                # Checked before the generic 4xx/5xx branches because it is the one status that
+                # is *evidence* that sending the same request again is the right move: the
+                # server answered, and the answer is "not now". Nothing about the request, the
+                # key or the workflow is wrong, so this does not raise the way a 4xx does and
+                # does not read like a 5xx when the retries run out.
+                retry_after = _retry_after_s(response)
+                last_error = RoboflowShed(
+                    f"The Roboflow server is at capacity (HTTP {status}) at {self._url}. "
+                    "The request was not processed and is expected to succeed once the load "
+                    "passes; nothing about this capture's configuration is wrong."
+                )
+                continue
             if 400 <= status < 500:
                 raise RoboflowError(f"Roboflow rejected the request (HTTP {status}).")
             if status >= 500:

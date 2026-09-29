@@ -432,17 +432,27 @@ Both weights are measured here, on the merged set's own `test` split, at each we
 `imgsz` — the baseline is not a number quoted from v1's export. It answers five questions and
 **exits 1 with the reasons** rather than printing a verdict:
 
+Each weight is also measured **in its own class order**. A label row's class index is a position in
+the *set's* declared list, and a model's head emits indices into the order **it** was trained on, so
+the two generations do not share an index-to-name mapping: the run prints which order each weight
+used, measures a weight whose order differs from the set's on a remapped view of the same frames
+(the class column moves, nothing else does), and **refuses** a weight with no class list recorded
+beside it. A baseline scoring ~0 for every class but one is that mismatch, not a weak model — read
+the `baseline class order` line before the per-class table.
+
 | Question | Fails when |
 |---|---|
 | is the set internally consistent? | the doctor refuses it — a wrong class order, a label row the loader drops, a frame drawn under a class other than the one it was staged as, a test frame duplicating a train one. This one exits *before* any measurement, so those numbers are never produced at all |
 | is the set fit to be measured? | the merge report says any `machine_only` decision is left in `valid` or `test` (§4's confirm step), or the report does not carry the field at all, or it carries no stamp naming the `provenance.json` those counts came from — or the stamp no longer matches it, which is what a decision saved *after* the build looks like. A gate that cannot be evaluated is a *failure*, not a pass |
 | is every class above the floor? | either weight below 0.85 on any class |
 | did anything regress? | a class more than the tolerance below v1 |
-| **is crowding better?** | the candidate finds no more frames with **two or more items** than the baseline. `CROWD_MIN=2` over the same file list is the claim this dataset exists to make — v1 misses items when several are side by side, and `far` frames are where it is worst |
+| **is crowding better, on the cells it was re-shot for?** | the candidate finds no more frames with **two or more items** than the baseline, on the whole split **and** on every distance in `--claim-distances` (default `mid,far`) — the count is cut by the distance each frame was filed under, because a total can rise while the cell the re-shoot was paid for gets worse (`close` frames are cheap to gain). A claimed distance the split files **no frame at** is a failure, not a pass: `-` in the table means nothing was asked, so `mid` unmeasured is not `mid` held. `CROWD_MIN=2` over the same file list is the claim this dataset exists to make — v1 misses items when several are side by side, and `far` frames are where it is worst |
 
-`--iou-sweep` reports the same count at several NMS thresholds, which is what separates "these
-weights find the second item" from "the threshold let a duplicate through" — a count that only
-appears at one threshold is the threshold's, not the model's.
+`--iou-sweep` reports the same count at several NMS thresholds **in each claimed distance's own
+row**, which is what separates "these weights find the second item" from "the threshold let a
+duplicate through" — a count that only appears at one threshold is the threshold's, not the
+model's, and the row it is quoted for is the one that has to say so. `--claim-distances none` is
+the run that is not making the per-distance claim at all (the whole-split count only).
 
 ## 12. Prove the class-list guard fires, before you trust its silence
 
@@ -563,5 +573,5 @@ roster cannot name. (When this was last checked, the project still held `Palmoli
 | set | `build_dataset.py` exits 0, `make doctor` says `[ok]` (and §8/§11 refuse without it), the contact sheet reads right |
 | weights | `scanncart-grocery-v2.pt` + its record, `auto` honouring `stretch`, `imgsz` matching the run |
 | measured | every class ≥ 0.85 **and** every distance cell reported, unbracketed by `!` |
-| accepted | `make accept-v2` exits 0: the gate clean, no class below the floor, and **more crowded frames found than v1** |
+| accepted | `make accept-v2` exits 0: the gate clean, no class below the floor, and **more crowded frames found than v1** — whole split **and** on every claimed distance, with the `mid`/`far` rows present rather than `-` |
 | quoted | the `test` score, labelled with the capture session it came from |

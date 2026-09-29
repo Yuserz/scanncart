@@ -173,6 +173,46 @@ describe('LiveView', () => {
     expect(screen.getByTestId('stat-suppressed')).toHaveTextContent('suppressed')
   })
 
+  it('shows the shed tile when the inference server refused the frame', () => {
+    // The frame is dropped rather than the capture, so an empty frame here is *not* evidence of an
+    // empty counter — this tile is the only thing on screen that says so.
+    const h = makeHarness()
+    render(<LiveView port={8765} deps={h.deps} />)
+    act(() => {
+      h.opts().onOpen?.()
+      h.opts().onFrame?.(frameWith([], { shed: true }))
+    })
+
+    expect(screen.getByTestId('stat-shed')).toHaveTextContent('shed')
+  })
+
+  it('leaves the shed tile off on an ordinary frame', () => {
+    const h = makeHarness()
+    render(<LiveView port={8765} deps={h.deps} />)
+    act(() => {
+      h.opts().onOpen?.()
+      h.opts().onFrame?.(frameWith([], { shed: false }))
+    })
+
+    expect(screen.getByTestId('stats')).toBeInTheDocument()
+    expect(screen.queryByTestId('stat-shed')).not.toBeInTheDocument()
+  })
+
+  it('treats a sidecar that omits the shed field as a frame that was analysed', () => {
+    // Same reasoning as the suppress field: it is newer than the wire, and `undefined` has to read
+    // as the healthy default rather than light up a notice nobody can act on.
+    const h = makeHarness()
+    render(<LiveView port={8765} deps={h.deps} />)
+    const frame = frameWith([])
+    delete frame.stats.shed
+    act(() => {
+      h.opts().onOpen?.()
+      h.opts().onFrame?.(frame)
+    })
+
+    expect(screen.queryByTestId('stat-shed')).not.toBeInTheDocument()
+  })
+
   it('leaves the suppressed tile off when nothing was dropped', () => {
     // Zero is the healthy reading, so a tile showing it would be one nobody looks at by the time
     // it says 1 — and the setting's own state is legible in the tuning card either way.

@@ -290,12 +290,32 @@ cd desktop && npm run dev   # electron-vite dev with HMR, opens a window
   `[data-testid="inference-unresponsive"]` above the error banner, ungated by
   capture state and not dismissible, naming the two fixes (`python
   local_inference_server.py`, or `detector_backend` in Admin) plus the probe's
-  own detail. Two consequences for a driver: an empty item log on a `local_api`
+  own detail. The same verdict is on the **Admin Panel**, beside the backend picker
+  (`[data-testid="inference-watch"]`), as the standing reading rather than a
+  notice: the address actually being probed, the failure in the endpoint's own
+  words, and how long ago it was checked. That is the line to read when the
+  question is "wrong port, or server not started?" — the URL there is the *saved*
+  setting, so a port typed into the field but not saved shows as two different
+  addresses on one screen, and an age of minutes means the verdict predates the
+  server you just started. Two consequences for a driver: an empty item log on a `local_api`
   run is a failure state rather than a quiet scene, so check that notice before
   believing an empty-counter measurement; and because it is also sent on connect
   (the handshake replays it, like the capture state and the class list), asserting
   it *absent* is a legitimate readiness check for `local_api` even though nothing
   in the window can probe the endpoint for itself.
+- **A busier middle state: the same server, up and refusing.** A server that has
+  answered *none* of the last few probes is the notice above; a server that is
+  answering and turning requests away — its own connection cap (503), which is
+  what `SERVER_CONCURRENCY_LIMIT` in `app/loops.py` exists to produce when
+  something else is hammering it — is a different reading and must not be
+  reported as the first one. The sidecar's client retries each refusal with
+  backoff and drops only the frame, so the capture keeps running, and the dropped
+  frame shows up as `[data-testid="stat-shed"]` in the Live stats strip (the
+  suppressed tile's sibling, shown while it is happening). Treat it as a
+  *partially* analysed run rather than a clean one: frames the server refused
+  were never looked at, so an item log that is short or empty beside that tile is
+  not evidence about the counter. Finding the flood is the fix — usually another
+  tab or tool pointed at the same server — and it clears on its own.
 - **This machine intermittently kills processes during native DLL loads**
   (observed July 2026: even `import ctypes` died ~20% of tries in bad windows,
   correlating with `LiveKernelEvent` 141 GPU resets in the Application event
@@ -348,7 +368,9 @@ cd desktop && npm run dev   # electron-vite dev with HMR, opens a window
 capture that died, e.g. a stalled camera), `inference-unresponsive` (the notice
 that the selected backend's server is not answering, above `live-error` in the
 Live view, present without pressing anything), `sidecar-unresponsive` (the notice
-that the sidecar is not answering, over both views), and for the dataset panel
+that the sidecar is not answering, over both views), `inference-watch` (the standing
+verdict beside the backend picker in the Admin Panel, with `inference-watch-url`
+and `inference-watch-detail` inside it), and for the dataset panel
 `dataset-progress` → `dataset-summary` / `dataset-unavailable` +
 `dataset-backlog` (one `dataset-backlog-row` per cell, with `dataset-backlog-left`
 and `dataset-backlog-null` inside them) / `dataset-backlog-summary` /

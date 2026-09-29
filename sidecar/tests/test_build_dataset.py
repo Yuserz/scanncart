@@ -18,12 +18,14 @@ import annotate.store
 import build_dataset
 import clean_v2
 import dataset_doctor
+import generations
 import label_classes
 import label_progress
 import plan_split
+import train_model
 import workspace
 
-from tests.dataset_tool_helpers import _staged_local
+from tests.dataset_tool_helpers import _export_with_names, _staged_local
 
 
 # --------------------------------------------------------------------------
@@ -77,6 +79,41 @@ def test_a_row_that_cannot_be_translated_is_a_problem_and_not_a_dropped_box():
         [],
         0,
     )
+
+
+def test_the_translation_verdict_is_one_rule_for_both_sides():
+    """One rule and one sentence, asked of v1's export and of the annotator's tree alike.
+
+    The fatal direction is a name the source declares with no position in this dataset's order - a
+    box that can be filed under no product, so the frame cannot enter the set. The other direction
+    is deliberately *not* symmetric, and the asymmetry is the rule: a class this dataset declares
+    that a source has no frames of is a capture gap when the source is v1's export (`check_export`
+    prints it as a note about the other generation), and a tooling mismatch when the source is the
+    annotator - which draws the frames, so a class it cannot draw is one no v2 frame can ever be
+    labelled as. Only that side is asked with `coverage`.
+    """
+    names = list(build_dataset.CANONICAL_NAMES)
+    short = names[:-1]
+    extra = [*names, "Palmolive Naturals Bar Soap 85g"]
+
+    assert build_dataset.translation_problem(names, source="v1") is None
+    # v1's export missing a class this dataset declares: a gap, not a refusal - and the annotator's
+    # list in the same shape is a refusal, because nobody there can draw it.
+    assert build_dataset.translation_problem(short, source="v1") is None
+    uncovered = build_dataset.translation_problem(short, source="the annotator", coverage=True)
+    assert "can never draw" in uncovered and repr(names[-1]) in uncovered
+
+    problem = build_dataset.translation_problem(extra, source="v1")
+    assert problem.startswith("v1 declares class(es) this dataset does not have")
+    assert "'Palmolive Naturals Bar Soap 85g'" in problem
+    # The same list judged for the annotator: the same sentence with the other subject, which is what
+    # "reported the same way on either side" means for the two builders.
+    assert build_dataset.translation_problem(extra, source="the annotator", coverage=True) == (
+        problem.replace("v1", "the annotator")
+    )
+    # And the annotator's own list translates into *either* generation's order, which is the freedom
+    # the by-name remap bought: v1's names are the same products in another order.
+    assert build_dataset.annotator_class_problem(list(generations.V1.classes)) is None
 
 
 def test_the_contact_sheet_shows_every_split_not_only_the_largest(tmp_path):
@@ -744,6 +781,219 @@ def test_a_merge_whose_gate_splits_hold_unread_boxes_never_becomes_the_set(tmp_p
     assert "did not pass the human pass's gate" in str(refused.value)
     assert _tree(out) == before  # the previous set never moved
     assert not build_dataset.staging_dir(out).exists()
+
+
+def test_the_declaration_is_read_back_off_the_set_before_it_can_land(tmp_path, monkeypatch):
+    """Two fields of one file, written by one function - and the read-back is what makes them agree.
+
+    `dataset_doctor --generation auto` (its default, and what `make doctor` runs) resolves which
+    generation's order the labels index **from the set's own `data.yaml`**, so a set whose `names`
+    are one generation's list while its `generation` names another is refused a minute after the
+    build reported success. The build's own doctor run cannot see it: that run is handed the
+    generation the build *meant*. Each shape below is a file no build should write, and each
+    sentence names the two lists so the reader can see which one moved.
+    """
+    import yaml
+
+    out = tmp_path / "merged-v2"
+    staging = build_dataset.staging_dir(out)
+    staging.mkdir(parents=True)
+    splits = {}
+    for split in label_classes.SPLIT_NAMES:
+        images = build_dataset.split_dirs(out, split)[0]
+        images.mkdir(parents=True)
+        splits[split] = images
+    declaration = staging / workspace.DATA_YAML_NAME
+
+    # What the build writes: the two fields agree, and the lists name the same products, so the
+    # translation every row goes through has a destination for each of them.
+    build_dataset.write_names_yaml(out, splits, path=declaration)
+    assert build_dataset.declared_order_problem(staging, out) is None
+
+    def problem(body: dict) -> str:
+        declaration.write_text(yaml.safe_dump(body, sort_keys=False), encoding="utf-8")
+        return build_dataset.declared_order_problem(staging, out) or ""
+
+    v1, v2 = list(generations.V1.classes), list(generations.V2.classes)
+    recorded = problem({"names": v2, "generation": "v1"})
+    assert "records `v1`" in recorded and "v2's order" in recorded
+    assert "v1 lists: " + ", ".join(v1) in recorded
+    listed = problem({"names": v1, "generation": "v2"})
+    assert "records `v2`" in listed and "v1's order" in listed
+    # A permutation that is nobody's list is the other half: the names themselves are the problem.
+    assert "no generation's list" in problem({"names": list(reversed(v2)), "generation": "v2"})
+    # And an unrecorded or unreadable declaration is refused too - the list only means something
+    # against a generation, so a set naming none could only be read by guessing.
+    assert "names no generation" in problem({"nc": 7, "names": v2})
+    assert "names no generation" in problem({"nc": 7, "names": v2, "generation": "v9"})
+    assert "declares no class list" in problem({"nc": 7, "generation": "v2"})
+    assert "declares no class list" in problem({"nc": 7})
+
+    # A build for the *other* generation's order is legal now, and that is what the remap bought:
+    # both sides are translated by name, so the declaration is a choice rather than a constraint on
+    # whatever order the annotator happens to write in.
+    assert problem({"names": v1, "generation": "v1"}) == ""
+
+    def register(name: str, classes: tuple[str, ...]) -> None:
+        """A generation neither of today's two is - the roster shape the next addition makes."""
+        monkeypatch.setitem(
+            generations.GENERATIONS,
+            name,
+            generations.Generation(
+                name=name,
+                classes=classes,
+                export_dir=tmp_path / f"export-{name}",
+                manifest=None,
+                resize_mode="stretch",
+                roboflow_project="snc-grocery",
+            ),
+        )
+
+    # The second clause, on its own: a declaration that agrees with the generation it records and
+    # whose two lists do not name the same products. That is a roster change rather than a labelling
+    # one, and it is the state the translation cannot cover - so it is refused with both directions
+    # named. Registered rather than used from disk because both of *today's* generations name the
+    # annotator's seven, which is exactly why this clause is a tripwire for the next one.
+    extra = generations.V2.classes + ("Palmolive Naturals Bar Soap 85g",)
+    register("v3", extra)
+    added = problem({"names": list(extra), "generation": "v3"})
+    # The sentence is the shared rule's own, asked here with the artifact's names as the target: a
+    # reader meets the same wording here and in the merge that would have refused the source list.
+    assert build_dataset.annotator_class_problem(list(extra)) in added
+    assert "this dataset declares class(es) the annotator can never draw" in added
+    assert "Palmolive Naturals Bar Soap 85g" in added
+
+    fewer = generations.V2.classes[:-1]
+    register("v4", fewer)
+    dropped = problem({"names": list(fewer), "generation": "v4"})
+    assert build_dataset.annotator_class_problem(list(fewer)) in dropped
+    assert "this dataset does not have" in dropped
+    assert generations.V2.classes[-1] in dropped
+
+
+def test_both_sides_ask_the_translation_rule_before_writing_a_frame(tmp_path, capsys, monkeypatch):
+    """Asked up front on either side, by the same function, and by the dry run - not row by row.
+
+    A source list is checked against this dataset's order before the first frame is written, so a
+    refusal costs nothing and leaves no half-written side behind; and it is the same rule and the
+    same sentence on both sides, so an operator who has met one refusal recognises the other.
+    `build_v2`'s source is the annotator's tree (`annotate.store.CLASS_NAMES`), patched here into the
+    two shapes a roster change makes: a class it can draw that this dataset has no position for, and
+    a class this dataset declares that it can never draw.
+    """
+    import yaml
+
+    # v1's export, declaring a name with no position here.
+    v1 = _export_with_names(tmp_path / "export-v1", {"train": ["a.jpg"]})
+    body = yaml.safe_load((v1 / "data.yaml").read_text(encoding="utf-8"))
+    body["names"] = [*body["names"], "Palmolive Naturals Bar Soap 85g"]
+    body["nc"] = len(body["names"])
+    (v1 / "data.yaml").write_text(yaml.safe_dump(body, sort_keys=False), encoding="utf-8")
+
+    staging = tmp_path / "staging"
+    side = build_dataset.build_v1(v1, staging)
+    assert side.problems == [
+        build_dataset.translation_problem(
+            [*build_dataset.CANONICAL_NAMES, "Palmolive Naturals Bar Soap 85g"], source="v1"
+        )
+    ]
+    assert list(staging.rglob("*")) == []  # the check runs before the frames do
+
+    v2 = _staged_with_real_frames(tmp_path, ["milo_0001.jpg"], {"milo_0001.jpg": "train"})
+    _decide_all(tmp_path / "annotations-v2", ["milo_0001.jpg"])
+    out = tmp_path / "merged-v2"
+    assert build_dataset.main(["--dry-run", "--v1", str(v1), "--v2", str(v2), "--out", str(out)]) == 2
+    assert "v1 declares class(es) this dataset does not have" in capsys.readouterr().out
+
+    # And the v2 side, whose list the annotator owns: a class it can draw that this dataset cannot
+    # hold, which is the *same* refusal with the other subject.
+    monkeypatch.setattr(
+        annotate.store, "CLASS_NAMES", (*generations.V2.classes, "Palmolive Naturals Bar Soap 85g")
+    )
+    problem = build_dataset.annotator_class_problem()
+    assert problem and "the annotator declares class(es) this dataset does not have" in problem
+    staging2 = tmp_path / "staging2"
+    assert build_dataset.build_v2(v2, tmp_path / "annotations-v2", staging2).problems == [problem]
+    assert list(staging2.rglob("*")) == []
+    # The dry run refuses it too: it is `build_v2` without the writes, so a run that reported this
+    # set fine a second before the build stopped would be worse than no dry run at all.
+    assert build_dataset.main(["--dry-run", "--no-v1", "--v2", str(v2), "--out", str(out)]) == 2
+    assert "the annotator declares class(es) this dataset does not have" in capsys.readouterr().out
+
+    # The reverse shape: a class this dataset declares that the annotator can never draw. Nothing is
+    # untranslatable - the refusal is about coverage, which is the direction only this side is asked.
+    monkeypatch.setattr(annotate.store, "CLASS_NAMES", generations.V2.classes[:-1])
+    uncovered = build_dataset.annotator_class_problem()
+    assert uncovered and "can never draw" in uncovered
+    assert build_dataset.build_v2(v2, tmp_path / "annotations-v2", tmp_path / "staging3").problems == [
+        uncovered
+    ]
+    assert not build_dataset.translation_problem(
+        [generations.V2.classes[-1]], source="the annotator"
+    )  # the same list without `coverage` is silent, which is what keeps v1 free of this refusal
+
+
+def test_a_build_for_another_order_translates_v2s_rows_into_it(tmp_path, capsys, monkeypatch):
+    """`DECLARED_GENERATION` is a choice, and the by-name remap is what makes it one.
+
+    v1's rows always were translated into `CANONICAL_NAMES` by name; v2's used to be copied
+    verbatim, on the argument that the annotator already writes the canonical order - so a build
+    declaring any other order filed every v2 row under a neighbouring product, with the doctor and
+    every measuring tool still passing, because all of them read the declaration rather than the
+    rows. Both sides go through `remap_row` now, so the same edit produces a set whose v2 rows carry
+    *v1's* indices and which the doctor judges cleanly as v1. The last third is the half that must
+    not change: while the two lists agree the translation is the identity, so the rows written are
+    the annotator's own rows byte for byte - the copy this replaced.
+    """
+    frames = ["milo_0001.jpg", "milo_0002.jpg", "milo_0003.jpg"]
+    v2 = _staged_with_real_frames(tmp_path, frames, dict(zip(frames, ("train", "valid", "test"))))
+    annotations = tmp_path / "annotations-v2"
+    # Drawn *before* the constants move: these rows are in the annotator's own order, and translating
+    # them is the build's job - so the fixture must not follow the declaration.
+    _decide_all(annotations, frames)
+
+    slug = label_classes.SLUG_TO_CLASS["milo"]
+    annotator_index = generations.V2.classes.index(slug)
+    v1_index = generations.V1.classes.index(slug)
+    assert annotator_index != v1_index  # or this test would pass on an identity remap
+
+    # First the shipped path, unchanged: today's constants make the translation the identity.
+    same = tmp_path / "merged-default"
+    assert build_dataset.main(["--no-v1", "--v2", str(v2), "--out", str(same)]) == 0
+    capsys.readouterr()
+    from annotate.store import box_from_row
+
+    drawn = (annotations / "milo_0001.txt").read_text(encoding="utf-8").strip()
+    assert (same / "train" / "labels" / "milo_0001.txt").read_text(encoding="utf-8").strip() == (
+        box_from_row(drawn).as_row()
+    )
+
+    out = tmp_path / "merged-v2"
+    monkeypatch.setattr(build_dataset, "DECLARED_GENERATION", generations.V1)
+    monkeypatch.setattr(build_dataset, "CANONICAL_NAMES", generations.V1.classes)
+    monkeypatch.setattr(
+        build_dataset, "INDEX_BY_NAME", {name: i for i, name in enumerate(generations.V1.classes)}
+    )
+
+    assert build_dataset.main(["--no-v1", "--v2", str(v2), "--out", str(out)]) == 0
+    printed = capsys.readouterr().out
+    # Judged as the generation it declares, and clean - the labels agree with the frames' tags
+    # because the build *translated* them, not because the two orders happened to coincide.
+    assert "judged against v1's order" in printed
+    assert "[ok] the set is internally consistent" in printed
+    assert train_model.read_export_generation(out) == "v1"
+
+    assert drawn.split()[0] == str(annotator_index)  # the row the annotator wrote...
+    for name, split in zip(frames, ("train", "valid", "test")):
+        row = (out / split / "labels" / f"{Path(name).stem}.txt").read_text(encoding="utf-8")
+        assert row.split()[0] == str(v1_index)  # ...written out as v1's position for it
+
+    # And the measuring tools, which read the declaration: this set is one they accept as v1's and
+    # refuse as v2's, which is the honest reading of a set whose rows are in v1's order.
+    assert train_model.require_labels_order(generations.V1, out) == generations.V1.classes
+    with pytest.raises(SystemExit) as refused:
+        train_model.require_labels_order(generations.V2, out)
+    assert "another class order" in str(refused.value)
 
 
 def test_allow_machine_only_lands_the_reading_and_says_what_it_produced(tmp_path, capsys):

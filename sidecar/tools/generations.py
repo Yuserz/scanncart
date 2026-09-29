@@ -27,10 +27,21 @@ re-derives. A label row's `cls` column is a *position* in it, so two datasets de
 names in different orders are two different labelings - which is not hypothetical here: v1 and v2
 declare the same seven names and differ only in order. So `build_dataset.CANONICAL_NAMES` reads
 `V2.classes` instead of a second `tuple(SLUG_TO_CLASS.values())` that agreed only while the two
-expressions did, the merged set records which generation it was built for, and `dataset_doctor`
+expressions did, the merge *translates* every row into that order by **name** - v1's export's
+positions through its own `data.yaml`, the annotator's through `label_classes.SLUG_TO_CLASS`'s order,
+which is the list its own positions index - so the merged order is a choice rather than an
+assumption about what the annotator happens to write, the merged set records which generation it was
+built for, and `dataset_doctor`
 asks `order_of` which generation a set's own declared names index rather than assuming the one it
 was told - because judging a v1 set against v2's order is a verdict about the wrong expectation,
-and it names a fix that would corrupt the labels.
+and it names a fix that would corrupt the labels. **Membership** is the other half of that question
+and it lives here too: `class_gaps(names, expected)` is what each list declares that the other does
+not, asked by `train_model.check_export`, by `clean_v2`'s project sanity rows, by `build_dataset` for
+both sides of a merge - and by this module's own `added_over`, which used to be a second derivation
+of one direction of it. Nothing in the tree re-derives it, and that is enforced rather than asked for:
+`tests/test_class_order.py` scans every file under `tools/` for the shape and fails with the file and
+the line, tolerating exactly this function's body. The sentences stay with the callers, because an
+untranslatable label row and a head with an output the roster cannot name are different findings.
 
 **manifest.** Distance is a Roboflow *tag* and a YOLO export carries none, so the per-distance
 breakdown reads a filename -> distance map from the dataset tooling's manifest. v2's set is staged
@@ -170,6 +181,66 @@ def order_of(names) -> Generation | None:
     return None
 
 
+@dataclass(frozen=True)
+class ClassGaps:
+    """What each of two class lists declares that the other does not.
+
+    The one owner of the relation every class-list judgement is made of, because a *membership*
+    mismatch is one fact and it has two independent directions - a name the source declares with no
+    position in the target, and a name the target declares with no position in the source. Which of
+    the two is fatal, and what follows from it, is the caller's: an untranslatable label row in the
+    merge (`build_dataset`), the head's own outputs in a training run (`train_model.check_export`),
+    work not done yet against a class nothing can ever match (`clean_v2`'s sanity rows). The two
+    directions are two different failures, so each caller keeps its own sentence about the answer -
+    the split `label_classes.tag_mismatch` already has, one decision and the callers' own words,
+    because the action a reader has to take is not the same one.
+
+    What no caller gets to do is derive the difference itself: that is how one tool ends up judging
+    membership where another judges order, or forgetting a direction - and the scan in
+    `tests/test_class_order.py` is the half of that rule a call log cannot see, since a copy calls
+    nobody.
+    """
+
+    source_only: tuple[str, ...]
+    target_only: tuple[str, ...]
+
+    @property
+    def any(self) -> bool:
+        return bool(self.source_only or self.target_only)
+
+
+def class_gaps(names, expected) -> ClassGaps:
+    """The two class lists' declarations, split by which one is missing what.
+
+    Asked, rather than re-derived, by every judgement of two class lists in the tools: by
+    `train_model.check_export` (an export against its generation's roster), by
+    `clean_v2.class_list_rows` (the live project's list against the roster, the earliest of them),
+    by `build_dataset` for each side of the merge (a source's list against the set's order) and for
+    the label rows it counts, by `label_classes`' own rows (v1 continuity, and both absences around
+    `--create-classes`), by `generate_version`'s report, by `accept_v2.order_view`'s "these two
+    orders must name the same products" and by `added_over` below. Position is deliberately not
+    part of it - two lists holding the same names in another order are `order_of`'s question, and
+    conflating the two is what would make a correctly-ordered set look like a membership failure.
+
+    A hand-rolled copy of this is invisible to a call log - it calls nothing - which is why
+    `tests/test_class_order.py` scans the whole tools tree for the shape (a comprehension that
+    walks one class list and keeps the names the other lacks, or the set difference of two lists)
+    and fails with the file and the line. Only this function's own body is tolerated - the scan is
+    the *tools* tree's rule, since `app/roster.py` holds both directions of the same relation by
+    hand on purpose (the runtime may not import `tools/`; `tests/test_roster.py` mirrors it).
+
+    Each tuple keeps the order of the list it was read from (`source_only` follows `names`,
+    `target_only` follows `expected`), because every caller prints its findings: an operator reading
+    a missing-class list wants the roster's own order, not a set's.
+    """
+    have = set(names)
+    wanted = set(expected)
+    return ClassGaps(
+        source_only=tuple(name for name in names if name not in wanted),
+        target_only=tuple(name for name in expected if name not in have),
+    )
+
+
 def added_over(earlier: Generation, later: Generation) -> tuple[str, ...]:
     """Classes `later` declares that `earlier` does not.
 
@@ -178,6 +249,9 @@ def added_over(earlier: Generation, later: Generation) -> tuple[str, ...]:
     for v1 -> v2 today, because both declare the same seven names (Palmolive was the entry here
     until it was dropped) - which is the honest reading, not a broken check: there is no class a
     v1 weight is missing that a v2 one knows.
+
+    One direction of `class_gaps` and not a second derivation of it: this was the last hand-rolled
+    copy of that relation in the tree, and the scan in `tests/test_class_order.py` is what keeps a
+    new one from appearing - so the only difference-shaped code left here is inside the owner.
     """
-    have = set(earlier.classes)
-    return tuple(name for name in later.classes if name not in have)
+    return class_gaps(later.classes, earlier.classes).source_only

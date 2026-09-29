@@ -3,7 +3,7 @@ import sys
 from dataclasses import dataclass
 from typing import Protocol
 import numpy as np
-from app.roboflow import RoboflowError, find_image_size, find_predictions
+from app.roboflow import RoboflowError, RoboflowShed, find_image_size, find_predictions
 from app.schemas import Detection
 
 
@@ -288,6 +288,12 @@ class RoboflowRemoteDetector:
         # `POST /api/detector/probe` — see RemoteGeometry for why it is recorded here rather than
         # computed by the caller.
         self.last_geometry: RemoteGeometry | None = None
+        # Whether the *last* round trip was refused by a server that is up but at capacity
+        # (`RoboflowShed`). Per call rather than cumulative, because that is how it is consumed:
+        # `Pipeline` puts it on the frame message's stats, which describe one frame. Read with
+        # `getattr` by that caller, since this is a remote-detector extra rather than part of the
+        # `Detector` protocol — the native path has no server that can shed.
+        self.last_shed = False
 
     def set_conf(self, value: float) -> None:
         """Change the confidence threshold on a running detector.
@@ -322,8 +328,21 @@ class RoboflowRemoteDetector:
         return base64.b64encode(buf).decode("ascii"), w, h
 
     def infer(self, frame: np.ndarray) -> list[Detection]:
+        self.last_shed = False
         image_b64, sent_w, sent_h = self._encode(frame)
-        result = self._client.run(image_b64)
+        try:
+            result = self._client.run(image_b64)
+        except RoboflowShed:
+            # The frame is dropped; the capture is not. This is the one remote failure that says
+            # nothing is wrong with the server - it answered, and the answer was "not now" - so
+            # the recovery is another frame's attempt rather than an ended capture, which is what
+            # letting it propagate did. The tracker is deliberately *not* advanced here: a shed
+            # frame is not an observation of an empty counter, and sweeping expiry on it would
+            # expire tracks for the time the server spent refusing rather than for any item
+            # having left. `Pipeline` carries `last_shed` to the frame message so the dropped
+            # frame is a readout instead of a silence.
+            self.last_shed = True
+            return []
         predictions = find_predictions(result)
         # Recorded before the no-predictions return below: a workflow that found nothing still
         # answered with a geometry, and a blank frame is exactly what the probe sends — so bailing

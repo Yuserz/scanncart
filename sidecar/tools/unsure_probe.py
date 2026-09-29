@@ -98,6 +98,7 @@ import resources  # must precede numpy/torch: sets OMP/MKL thread limits
 
 import audit_recall
 from audit_recall import FrameRecord, match_instances
+from train_model import require_labels_order
 from clamp_probe import (
     NEGATIVES_DIR,
     REAL_SAMPLE,
@@ -1075,6 +1076,9 @@ def main(argv: list[str] | None = None) -> int:
     weights = args.weights or str(SIDECAR_ROOT / "models" / generation.weight_name)
     if not Path(weights).exists():
         raise SystemExit(f"no such weight: {weights}")
+    # The export census names every priced detection through the generation's class list, and the
+    # price is a share of the labelled frames - so the labels and that list have to be the one list.
+    require_labels_order(generation, tool="unsure_probe.py")
 
     budget = resources.measure(args.max_use_percent, args.disk_reserve_gb, args.max_vram_percent)
     device = resources.resolve_device(args.device)

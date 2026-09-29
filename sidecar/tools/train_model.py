@@ -528,6 +528,63 @@ def pass_gate(dataset: Path) -> tuple[bool, list[str]]:
     return accept_v2.machine_only_verdict(report)
 
 
+def labels_class_order(generation: Generation, dataset: Path | None = None) -> list[str] | None:
+    """The order the labels at `dataset` index their classes in, or `None` when it declares none.
+
+    The set's own `data.yaml` is the only artifact that says which position means which product -
+    it is the same read `check_export` judges and the same list a training run indexes a head by -
+    so this is `read_export_names` with the generation's directory as the default.
+    """
+    return read_export_names(Path(dataset) if dataset is not None else generation.export_dir)
+
+
+def require_labels_order(
+    generation: Generation, dataset: Path | None = None, *, tool: str = ""
+) -> tuple[str, ...]:
+    """Refuse a set whose labels are not in `generation.classes` order, or return that order.
+
+    This is the hole `check_export` names in its own docstring and then leaves open: it compares the
+    export's names to the generation's by *membership*, so two lists holding the same products in
+    different positions pass it - and every reader downstream takes a label row's first column as a
+    **position in `generation.classes`**. The rows are then attributed to the wrong products, and
+    nothing anywhere errors: `audit_recall.py --generation v2 --dataset-dir <v1's export>` printed
+    `0.000` recall for every class, counted 97 instances of a product that set holds none of, and
+    read out like a model that had learned nothing rather than a set read through another list. The
+    tools that train do not need this (an export's order *is* the order its head was trained in), but
+    the tools that *measure* one against labels do, which is why every one of them asks here.
+
+    What this deliberately does **not** claim: that a weight from another generation cannot be
+    measured. `audit_recall.collect` re-keys every detection through the *model's own* names before
+    anything is scored, and reports what it cannot - so a v1 head audited against a v2-ordered set
+    scores correctly, and refusing it would be the cry-wolf guard `check_export` warns about. What no
+    re-keying can repair is the labels, which carry a bare index and no name at all: that is the
+    one side of the comparison whose order has to be known rather than noticed.
+    """
+    where = Path(dataset) if dataset is not None else generation.export_dir
+    names = labels_class_order(generation, dataset)
+    prefix = f"{tool}: " if tool else ""
+    if names is None:
+        raise SystemExit(
+            f"{prefix}no class list could be read from {where}"
+            " - either there is no export there (generate or download it first) or its `data.yaml`"
+            " names no classes, and either way nothing says which product a label row's index means."
+        )
+    if list(names) != list(generation.classes):
+        raise SystemExit(
+            f"{prefix}the labels at {where} are in another class order than "
+            f"`{generation.name}`'s, so every label row would be read as a position in the wrong "
+            "list and the products below it would be somebody else's. Both lists hold the same "
+            "names; that is exactly why this is silent.\n"
+            f"  the set declares {len(names)}: " + ", ".join(names) + "\n"
+            f"  {generation.name} lists {len(generation.classes)}: " + ", ".join(generation.classes)
+            + "\n"
+            "Measure the set with its own generation (`--generation <that set's>`, or the "
+            "`--dataset-dir` that pairs with this one), or regenerate the export with this "
+            "generation's class order."
+        )
+    return tuple(names)
+
+
 def check_export(
     export_dir: Path, generation: Generation = DEFAULT_GENERATION
 ) -> tuple[dict[str, Path], list[str]]:
@@ -541,6 +598,13 @@ def check_export(
     and a per-generation list is what stops a future addition from refusing a correct v1 set (or
     waving through a v2 head that lost a class). A check that cries wolf is how the real mismatch
     gets waved through.
+
+    The membership half is `generations.class_gaps`, the same owner the merge judges each of its
+    source lists with (`build_dataset.translation_problem`) - one implementation of "what does each
+    list declare that the other does not", so an export cannot be judged one way here and the other
+    way there. Only the sentences are this caller's, because what follows from a mismatch in a
+    training run is about the head's outputs (a class the app cannot name, a product it can never
+    predict) rather than about label rows.
 
     Note what this check does *not* do: it compares names by membership, so it cannot see a
     mis-mapped class *index* in the labels. For a Roboflow export that never mattered (the export's
@@ -570,21 +634,24 @@ def check_export(
         problems.append("could not read `names` from the export's data.yaml")
     else:
         print(f"  classes {len(names)}: " + ", ".join(names))
-        missing = [n for n in expected if n not in names]
-        extra = [n for n in names if n not in set(expected)]
-        if missing:
-            problems.append(f"the export has no class for: {', '.join(missing)}")
-        if extra:
+        # The relational half is `generations.class_gaps` - the same owner the merge judges each of
+        # its source lists with (`build_dataset.translation_problem`) - and the sentences below are
+        # this caller's, because what follows from a mismatch here is about a *head* rather than
+        # about label rows: an output the roster cannot name, or a product it can never predict.
+        gaps = generations.class_gaps(names, expected)
+        if gaps.target_only:
+            problems.append(f"the export has no class for: {', '.join(gaps.target_only)}")
+        if gaps.source_only:
             problems.append(
                 f"the export declares classes that are not {generation.name} classes: "
-                + ", ".join(extra)
+                + ", ".join(gaps.source_only)
             )
             # The most likely cause, named, because the symptom does not point at it: a version
             # generated from a project whose class list has distances in it (one product split
             # into `close`/`mid`/`far`) trains a head with an output per product-and-distance.
             # Left as "extra classes", this reads as a project-id mix-up and sends the operator
             # to check the wrong thing - and the fix is a regenerate, not an edit here.
-            tainted = {name: distance_tokens_in(name) for name in extra}
+            tainted = {name: distance_tokens_in(name) for name in gaps.source_only}
             tainted = {name: words for name, words in tainted.items() if words}
             if tainted:
                 problems.append(
@@ -603,9 +670,8 @@ def check_export(
         # hour of GPU time than discovered afterwards. Read off the spec table rather than named
         # here, so it stays true if a third generation ever declares something neither of these
         # has.
-        elsewhere = sorted(
-            {n for g in generations.GENERATIONS.values() for n in g.classes} - set(expected)
-        )
+        declared_anywhere = {n for g in generations.GENERATIONS.values() for n in g.classes}
+        elsewhere = sorted(generations.class_gaps(declared_anywhere, expected).source_only)
         if elsewhere:
             print(
                 f"  note  {len(elsewhere)} class(es) another generation declares are not in this"

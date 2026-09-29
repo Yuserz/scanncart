@@ -1,10 +1,26 @@
 // REST client for the SCANnCART sidecar. The renderer talks to the sidecar
 // directly over localhost HTTP; see the Phase 2 plan for the contract (spec §4.2).
 
+/** The backend's own server, as the sidecar's watch last judged it (`app/inference_health.py`).
+ *
+ * The same body the WebSocket's `InferenceMessage` carries, read here instead of pushed because the
+ * *age* is the part that has to be fresh: a pushed copy reports how long ago the verdict changed,
+ * while this one reports how long ago it was last re-confirmed, which is the honest reading of a
+ * standing verdict. `null` means there is no server to watch (`native`, or no URL configured) —
+ * different from `unknown`, which is a configured endpoint nobody has asked yet. */
+export interface InferenceStatusPayload {
+  backend: string
+  url?: string
+  state?: 'unknown' | 'ok' | 'unresponsive'
+  detail?: string
+  age_seconds?: number | null
+}
+
 export interface HealthResponse {
   state: string
   active_model: string
   device: string
+  inference?: InferenceStatusPayload | null
 }
 
 export interface StateResponse {

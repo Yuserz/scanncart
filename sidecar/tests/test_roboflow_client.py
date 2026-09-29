@@ -4,12 +4,16 @@ import httpx
 import pytest
 
 from app.roboflow import (
+    BACKOFF_BASE_S,
     BACKOFF_CAP_S,
+    RETRY_AFTER_CAP_S,
     RoboflowAuthError,
     RoboflowError,
+    RoboflowShed,
     RoboflowTimeout,
     RoboflowUnavailable,
     WorkflowClient,
+    _retry_after_s,
     find_predictions,
     first_result,
     workflow_url,
@@ -19,10 +23,12 @@ PRED = {"x": 10.0, "y": 20.0, "width": 4.0, "height": 6.0, "confidence": 0.9, "c
 
 
 class FakeResponse:
-    def __init__(self, status_code=200, payload=None, raises_value_error=False):
+    def __init__(self, status_code=200, payload=None, raises_value_error=False, headers=None):
         self.status_code = status_code
         self._payload = payload
         self._raises = raises_value_error
+        # A real httpx response always has one; these carry the `Retry-After` a shed may come with.
+        self.headers = headers or {}
 
     def json(self):
         if self._raises:
@@ -208,6 +214,87 @@ def test_5xx_is_retried():
     client, fake, _ = make_client([FakeResponse(500), FakeResponse(200, [{}])])
     client.run("B")
     assert len(fake.calls) == 2
+
+
+# --- sheds: at capacity, not broken --------------------------------------
+#
+# 503 (uvicorn's `limit_concurrency`, see app/loops.py) and 429 say the same thing: the server
+# answered, and the answer is "not now". They are the only statuses the client treats as a reason
+# to wait *and* reports as their own failure, because the two facts they carry — retry, and nothing
+# is wrong with this request — are what lets a capture survive one.
+
+
+@pytest.mark.parametrize("status", [429, 503])
+def test_a_shed_is_retried(status):
+    client, fake, _ = make_client([FakeResponse(status), FakeResponse(200, [{}])])
+    assert client.run("B") == {}
+    assert len(fake.calls) == 2
+
+
+def test_an_exhausted_shed_names_capacity_rather_than_a_broken_server():
+    client, fake, _ = make_client([FakeResponse(503)] * 3)
+    with pytest.raises(RoboflowShed, match="capacity"):
+        client.run("B")
+    assert len(fake.calls) == 3
+
+
+def test_a_shed_is_not_a_plain_server_error():
+    """The distinction the caller relies on: a 500 is the cue to stop, a 503 to wait."""
+    client, _, _ = make_client([FakeResponse(500)] * 3)
+    with pytest.raises(RoboflowError) as caught:
+        client.run("B")
+    assert not isinstance(caught.value, RoboflowShed)
+
+
+def test_retry_after_is_waited_out_when_it_is_longer_than_the_backoff():
+    """Retrying sooner than the server asked is how one shed request becomes three."""
+    client, fake, slept = make_client(
+        [FakeResponse(429, headers={"retry-after": "1.5"}), FakeResponse(200, [{}])]
+    )
+    client.run("B")
+    assert slept == [1.5]
+
+
+def test_retry_after_never_shortens_the_backoff():
+    client, _, slept = make_client(
+        [FakeResponse(503, headers={"retry-after": "0"}), FakeResponse(200, [{}])]
+    )
+    client.run("B")
+    assert slept == [BACKOFF_BASE_S]
+
+
+def test_retry_after_is_capped():
+    """A gateway's 3600 must not stall the frame holding it for an hour."""
+    client, _, slept = make_client(
+        [FakeResponse(503, headers={"retry-after": "3600"}), FakeResponse(200, [{}])]
+    )
+    client.run("B")
+    assert slept == [RETRY_AFTER_CAP_S]
+
+
+def test_an_unreadable_retry_after_leaves_the_backoff_to_answer():
+    """HTTP-date form, which would need the server's clock: a wrong parse is worse than the
+    backoff it would replace."""
+    client, _, slept = make_client(
+        [FakeResponse(503, headers={"retry-after": "Wed, 21 Oct 2015 07:28:00 GMT"})]
+    )
+    client.run("B")
+    assert slept == [BACKOFF_BASE_S]
+
+
+def test_a_response_without_headers_at_all_is_tolerated():
+    """Defensive: the helper reads headers, and a test double or another client need not have
+    them. Nothing here should turn a shed into a crash."""
+
+    class Bare:
+        status_code = 200
+
+    assert _retry_after_s(Bare()) is None
+
+
+def test_retry_after_reads_the_delta_seconds_form():
+    assert _retry_after_s(FakeResponse(503, headers={"retry-after": "2"})) == 2.0
+    assert _retry_after_s(FakeResponse(503, headers={})) is None
 
 
 def test_backoff_grows_and_is_capped():

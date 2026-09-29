@@ -72,11 +72,20 @@ def test_both_generations_declare_the_same_seven_names():
 
 def test_every_dataset_writer_reads_the_order_from_the_spec(tmp_path):
     """One order per generation, and no second derivation of it. `build_dataset` writes the merged
-    set's `names` and remaps v1's indices into it, and the annotator writes the `cls` column that
-    the merged set copies verbatim - so both have to be *this* list, in this order. The merged order
-    used to be a second `tuple(SLUG_TO_CLASS.values())` here, which agreed with `generations.V2`
-    only while the two expressions did; a reorder in one of them would have made the doctor's order
-    finding fire on a set whose own builder wrote it.
+    set's `names` and translates **both** sides' rows into it by name - v1's export's positions
+    through v1's `data.yaml`, the annotator's through `annotate.store.CLASS_NAMES` - so the two
+    lists below are what those translations start from: the annotator's has to be a list of the same
+    products, and this generation's has to be the order the merged set declares. The merged order
+    used to be a second `tuple(SLUG_TO_CLASS.values())` in `build_dataset`, which agreed with
+    `generations.V2` only while the two expressions did, and v2's rows used to be copied verbatim on
+    the strength of this equality - a reorder in one of them would have filed every copied row under
+    a neighbouring product.
+
+    Asserted here as a property of the constants, and enforced at build time on the artifact:
+    `build_dataset.declared_order_problem` reads the set's own `names` back before the swap and
+    refuses one this list does not match, or one whose rows the other list cannot be translated
+    into - which is what keeps a locally built set from reaching a tool that would have to refuse it
+    (`test_build_dataset.py`).
     """
     assert build_dataset.CANONICAL_NAMES == V2.classes
     assert build_dataset.INDEX_BY_NAME == {name: i for i, name in enumerate(V2.classes)}

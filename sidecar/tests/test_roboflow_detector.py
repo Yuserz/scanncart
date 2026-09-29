@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 from app.inference import RoboflowRemoteDetector
-from app.roboflow import RoboflowAuthError, RoboflowError, find_image_size
+from app.roboflow import RoboflowAuthError, RoboflowError, RoboflowShed, find_image_size
 from app.tracking import IouTracker
 
 REAL_RESPONSE = {
@@ -351,6 +351,49 @@ def test_client_errors_propagate():
     det, _ = make(raises=RoboflowError("boom"))
     with pytest.raises(RoboflowError):
         det.infer(frame())
+
+
+# --- a shed frame is dropped, not the capture ----------------------------
+#
+# The one remote failure the detector absorbs. It is the server saying "not now" while it is
+# alive, so ending a capture over it is the wrong trade — but a dropped frame is a frame nothing
+# was detected on, which is indistinguishable from a clean counter unless it is said so. Hence
+# both halves: no detections returned, and `last_shed` set for the frame message to carry.
+
+
+def test_a_shed_returns_no_detections_and_marks_the_frame():
+    det, _ = make(raises=RoboflowShed("at capacity"))
+    assert det.infer(frame()) == []
+    assert det.last_shed is True
+
+
+def test_an_ordinary_frame_clears_the_shed_mark():
+    """Per call, not sticky: the tile describes the frame on screen, and a shed that has passed
+    must stop being reported the moment a frame gets through."""
+    det, client = make(raises=RoboflowShed("at capacity"))
+    det.infer(frame())
+    client.raises = None
+    det.infer(frame())
+    assert det.last_shed is False
+
+
+def test_a_shed_frame_does_not_age_out_tracks():
+    """A refused round trip is not an observation of an empty counter. Sweeping expiry on it
+    would expire a track for the time the server spent refusing, which is how a stationary item
+    ends up logged twice."""
+    tracker = IouTracker(expiry_s=1.0, clock=iter([0.0, 5.0, 5.0]).__next__)
+    det, client = make(tracker=tracker)
+    det.infer(frame())
+    assert tracker.active_count == 1
+
+    client.raises = RoboflowShed("at capacity")
+    det.infer(frame())
+    assert tracker.active_count == 1
+
+
+def test_nothing_is_shed_before_the_first_call():
+    det, _ = make()
+    assert det.last_shed is False
 
 
 def test_close_closes_the_client():

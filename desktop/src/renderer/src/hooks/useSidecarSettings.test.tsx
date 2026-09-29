@@ -73,6 +73,60 @@ describe('useSidecarSettings', () => {
     await waitFor(() => expect(result.current.captureState).toBe('running'))
   })
 
+  it("exposes the backend watch's reading off the same health poll", async () => {
+    // Read here rather than streamed, because the part the Admin Panel renders is the verdict's
+    // *age* — and only a fresh read can be honest about that (see lib/api.ts). It rides the poll
+    // `captureState` already uses instead of running a second timer.
+    const { deps } = makeDeps({
+      health: vi.fn(async () => ({
+        state: 'idle',
+        active_model: 'yolo11n.pt',
+        device: 'cpu',
+        inference: {
+          backend: 'local_api',
+          url: 'http://127.0.0.1:9001',
+          state: 'unresponsive' as const,
+          detail: 'ConnectError: refused',
+          age_seconds: 2
+        }
+      }))
+    })
+    const { result } = renderHook(() => useSidecarSettings(8765, deps))
+
+    await waitFor(() => expect(result.current.inference?.state).toBe('unresponsive'))
+    expect(result.current.inference?.url).toBe('http://127.0.0.1:9001')
+    expect(result.current.inference?.detail).toBe('ConnectError: refused')
+  })
+
+  it('keeps the reading when the sidecar itself stops answering', async () => {
+    // An unreachable *sidecar* says nothing about the server it was watching. Clearing the reading
+    // here would claim there is no endpoint to watch, which is a different (and wrong) fact, and it
+    // is the moment an operator is most likely to be reading this line.
+    const health = vi
+      .fn()
+      .mockResolvedValueOnce({
+        state: 'idle',
+        active_model: 'yolo11n.pt',
+        device: 'cpu',
+        inference: {
+          backend: 'local_api',
+          url: 'http://127.0.0.1:9001',
+          state: 'unresponsive' as const,
+          detail: 'ConnectError: refused',
+          age_seconds: 2
+        }
+      })
+      .mockRejectedValue(new Error('sidecar gone'))
+    const { deps } = makeDeps({ health })
+    const { result } = renderHook(() => useSidecarSettings(8765, { ...deps, healthPollMs: 10 }))
+    await waitFor(() => expect(result.current.inference?.state).toBe('unresponsive'))
+
+    await new Promise((r) => setTimeout(r, 60))
+
+    expect(result.current.inference?.url).toBe('http://127.0.0.1:9001')
+    expect(result.current.captureState).toBe('idle')
+  })
+
   it('update() calls updateSettings and merges the response', async () => {
     const { deps, api } = makeDeps()
     const { result } = renderHook(() => useSidecarSettings(8765, deps))

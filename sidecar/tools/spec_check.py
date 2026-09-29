@@ -71,6 +71,7 @@ import resources  # must precede numpy/torch: sets OMP/MKL thread limits
 import audit_recall
 from generations import DEFAULT, GENERATIONS, Generation
 from generations import get as generation_for
+from train_model import require_labels_order
 from workspace import SIDECAR_ROOT
 
 # This is the one dataset tool that drives `app` code, and run as a script Python puts `tools/`
@@ -506,6 +507,9 @@ def main(argv: list[str] | None = None) -> int:
     weights = args.weights or str(SIDECAR_ROOT / "models" / generation.weight_name)
     if not Path(weights).exists():
         raise SystemExit(f"no such weight: {weights}")
+    # The accuracy half scores this set's label rows, and its index space is the generation's class
+    # list - so the two have to be the same list, in the same order, before a frame is timed.
+    require_labels_order(generation, tool="spec_check.py")
 
     budget = resources.measure(args.max_use_percent, args.disk_reserve_gb, args.max_vram_percent)
     device = resources.resolve_device(args.device)

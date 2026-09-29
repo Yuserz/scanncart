@@ -76,50 +76,57 @@
   border-color: var(--danger-border);
 }
 
+/* Two rows and two columns: the first row is what the operator watches and reads (the preview,
+   its numbers, the item log), the second is the camera controls, which need the width to be
+   readable at all (see the band comment in LiveView.tsx). Grid rather than nested flex because
+   the band has to span both columns, and a grid can place three children into two rows without
+   a wrapper element whose only job is to hold the first row together.
+
+   Row 1 keeps a floor: if the band ever wants more height than is left, the preview stops
+   shrinking before it disappears. Both are reachable only below the widths the window standard
+   allows, which is what the 900px query at the end of this file covers. */
 .live-body {
-  display: flex;
-  gap: var(--body-gap);
-  /* Claim all window height left under the toolbar so the preview and
-     side rail can grow into it instead of leaving dead space below.
-     Size container: the preview wrapper sizes itself against this box
-     with cqw/cqh units. */
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(280px, 33%, 340px);
+  grid-template-rows: minmax(200px, 1fr) auto;
+  gap: 12px var(--body-gap);
+  /* Claim all window height left under the toolbar so the preview and side rail can grow into
+     it instead of leaving dead space below. */
   flex: 1;
   min-height: 0;
-  container-type: size;
   --body-gap: 14px;
-  --rail-min: 230px;
 }
 
-/* Hugs the preview wrapper's computed size; the side rail (flex: 1)
-   takes all remaining width. Flex centering splits any leftover height
-   around the preview (video-player letterbox) instead of stacking it
-   below. */
+/* Hugs the preview wrapper's computed size; the side rail takes the second column. Flex
+   centering splits any leftover height around the preview (video-player letterbox) instead of
+   stacking it below. */
 .feed-col {
-  flex: none;
+  grid-column: 1;
+  grid-row: 1;
   min-width: 0;
   min-height: 0;
   display: flex;
   align-items: center;
+  justify-content: center;
+  /* The preview's cqw/cqh resolve against this box, which is now the feed column itself rather
+     than the whole body — the rail is a fixed track, so there is no longer a rail minimum to
+     subtract from the preview's width. A grid item's size is settled before its contents are
+     laid out, which is what `container-type: size` requires. */
+  container-type: size;
 }
 
-/* The wrapper is the largest box with the frame's own aspect ratio that
-   fits the body: width is capped by the body width left after reserving
-   the side rail's minimum (100cqw - rail - gap) and by the width implied
-   by the full body height (100cqh * ratio); height then follows from
-   aspect-ratio. --preview-w/--preview-h are the decoded frame's real
-   dimensions, set inline from the img's onLoad (LiveView state), so a
-   non-16:9 capture resolution renders undistorted -- 16/9 is only the
-   idle-placeholder fallback. The overlay (inset:0) stays 1:1 with the
-   image at any window size because the img fills the wrapper exactly
-   (width/height 100% of a box that already has the img's ratio), so the
+/* The wrapper is the largest box with the frame's own aspect ratio that fits the feed column:
+   width is capped by that column's width and by the width implied by its height (100cqh *
+   ratio); height then follows from aspect-ratio. --preview-w/--preview-h are the decoded
+   frame's real dimensions, set inline from the img's onLoad (LiveView state), so a non-16:9
+   capture resolution renders undistorted -- 16/9 is only the idle-placeholder fallback. The
+   overlay (inset:0) stays 1:1 with the image at any window size because the img fills the
+   wrapper exactly (width/height 100% of a box that already has the img's ratio), so the
    wrapper's box IS the image's box. */
 .preview-wrapper {
   position: relative;
   aspect-ratio: calc(var(--preview-w, 16) / var(--preview-h, 9));
-  width: min(
-    calc(100cqw - var(--rail-min) - var(--body-gap)),
-    calc(100cqh * var(--preview-w, 16) / var(--preview-h, 9))
-  );
+  width: min(100cqw, calc(100cqh * var(--preview-w, 16) / var(--preview-h, 9)));
   background: #000;
   border-radius: 8px;
   overflow: hidden;
@@ -180,14 +187,29 @@
   opacity: 0.9;
 }
 
+/* A fixed track rather than `flex: 1`, so a wider window spends the extra width on the preview
+   instead of stretching a column of numbers.
+
+   `overflow-y: auto` rather than `hidden`: with two banners up the column is shorter than the
+   stats card plus a readable item log, and the item log is the one card that must stay
+   reachable. Silent clipping looked exactly like a capture that had logged nothing. */
 .side-rail {
-  flex: 1;
-  min-width: var(--rail-min);
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  overflow: hidden;
+  gap: 10px;
+  overflow-y: auto;
+}
+
+/* The camera controls own the full-width second row. `overflow: hidden` here would clip every
+   field's tooltip — they hang below and to the side of the `?` — so the card lets them out and
+   the first row's floor is what keeps the layout honest instead. */
+.live-body > .tuning-card {
+  grid-column: 1 / -1;
+  grid-row: 2;
 }
 
 .side-rail .card {
@@ -203,15 +225,52 @@
   font-weight: 600;
 }
 
+/* Tighter than the other cards on purpose: this one sits above the item log in a rail that is
+   only as tall as the preview beside it, and every pixel it keeps is a row the log loses. */
+.side-rail .stats-card {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+}
+
+.side-rail .stats-card h4 {
+  margin-bottom: 8px;
+}
+
+/* A fixed 2×2, not `repeat(auto-fit, minmax(90px, 1fr))`. The set of tiles is a constant — the
+   four numbers a frame carries — and `auto-fit` is what let a per-frame tile re-wrap the strip,
+   resize the rail and drag the item log with it. A fixed track also means a value wider than its
+   cell ellipsises instead of drawing over its neighbour, which is what `letterbox` in a 90px
+   track did. Two columns rather than four because the rail fits four only by making each cell
+   68px — narrower than `capture fps` — and two rows of two is the shape the rail was drawn for. */
 .stats-strip {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
-  gap: 10px 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 10px;
+}
+
+/* The placeholder is a grid item like a tile, so without this it lands in the first of four
+   68px cells and wraps to three lines — 77px of empty strip where one line is meant. It is a
+   sentence about the whole strip, so it spans the whole strip. */
+.stats-strip > span {
+  grid-column: 1 / -1;
+  color: var(--dim);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.stat-tile {
+  min-width: 0;
 }
 
 .stat-tile b {
   display: block;
   font-size: 20px;
+  /* Not the inherited `line-height: 1.6`, which spends 32px of a 320px-wide rail's height on a
+     20px number and 18px on the 11px label under it. */
+  line-height: 1.15;
   font-weight: 600;
   color: var(--text);
   letter-spacing: -0.01em;
@@ -219,32 +278,123 @@
 }
 
 .stat-tile small {
+  display: block;
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1.3;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Reserved at one line of height whether or not a flag is in it. A count of 0 is the healthy
+   reading, so nothing is shown — but the *box* cannot depend on that: `suppressed` and `shed`
+   come and go per frame on an empty counter, and a strip whose height followed them re-wrapped
+   itself, resized the rail and shifted the item log two or three times a second. */
+/* 18px, not `1.5em`, and `line-height` pinned to the same figure: the reserve has to match the
+   line box the flags draw in, or the card still moves by the difference. Measured both ways —
+   `min-height: 1.5em` left 1px of movement where a phantom appears, because 1.5em of 11.5px is
+   17.25px and the line box is 18.4px. Nowrap is part of it too: a wrapped flag would be taller
+   than the line it is reserving. */
+.stats-flags {
+  min-height: 18px;
+  line-height: 18px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 11.5px;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.stat-flag {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  color: #ffb020;
+  font-weight: 600;
+}
+
+/* What the line says when nothing is wrong. The height is reserved either way, and a reserved
+   box with nothing in it reads as a rendering fault rather than as a clean frame — so the
+   healthy state is stated, at the weight of a note rather than of a finding. */
+.stat-flag-quiet {
+  color: var(--dim);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.stat-flag b {
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+
+/* The standing readouts: one row each, label left and value right, because their values are
+   text that lasts the whole session (`letterbox`, `test recall`, `roster ok`) rather than a
+   number that changes every frame. Rows also cannot reflow the way a variable set of tiles
+   can, which is the other half of the flicker the flags line above answers.
+
+   One column, not two: pair two per row in a 300px card and `geometry (auto)` ellipsises to
+   `geometry (a…`, which is a label that names nothing. The rows are 15px each — cheaper than a
+   readout nobody can read. */
+.stats-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+
+.stat-fact {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.stat-fact small {
   color: var(--dim);
   font-size: 11px;
   font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-/* The weights readout's two states. Amber is a standing condition rather than a failure - the same
+.stat-fact b {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 600;
+  text-align: right;
+}
+
+/* The readouts' two states. Amber is a standing condition rather than a failure - the same
    meaning it carries in the banner above - and dim italic is "not measured", which is a gap in
    what is known rather than a bad score. Deliberately different: one sends you to a setting or the
    dataset, the other to `train_model.py --val`. */
-.stat-tile.warn b {
+.stat-fact.warn b {
   color: #ffb020;
 }
 
-.stat-tile.unmeasured b {
+.stat-fact.unmeasured b {
   color: var(--dim);
 }
 
-.stat-tile.unmeasured small {
+.stat-fact.unmeasured small {
   font-style: italic;
 }
 
+/* A floor of four rows. The log is the only region that scrolls by nature — it grows for the
+   whole session — but a *container* too short to show a single row is not a scrolled log, it is
+   a missing one, and `min-height: 0` on a `flex: 1` card is exactly how that happens. */
 .log-card {
   display: flex;
   flex-direction: column;
   flex: 1;
-  min-height: 0;
+  min-height: 108px;
 }
 
 .log-count {
@@ -267,14 +417,31 @@
   font-size: 12.5px;
 }
 
+/* One line per row, name ellipsised with the full name in its `title`. The roster's names are
+   long ("Bear Brand Fortified Powdered Milk 33g") and a wrapping row costs two lines on the
+   rail's narrowest column — which is a third of the rows, in the one card that is a running
+   record of the session. */
 .log-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   background: rgba(255, 255, 255, 0.03);
   border-radius: 6px;
-  padding: 7px 9px;
+  padding: 5px 9px;
+  line-height: 1.35;
   font-weight: 500;
 }
 
+.log-cls {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .log-conf {
+  flex: none;
   font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 600;
@@ -283,19 +450,21 @@
 
 /* Stacked (narrow) layout. Kept as ONE block at the end of the file: these
    overrides share specificity with the base rules above, so source order is
-   what makes them win inside the media query -- don't move them earlier. */
+   what makes them win inside the media query -- don't move them earlier.
+
+   This is the width below which the band's columns stop fitting: the grid is a two-column
+   layout, so it gives way to the source order -- the preview, then the rail, then the camera
+   controls -- and the page itself scrolls. `LiveView` documents the width the console needs. */
 @media (max-width: 900px) {
   .live-body {
-    flex-direction: column;
     /* Stacked mode keeps natural content height (live-view scrolls);
-       there is no height budget to distribute vertically. container-type:
-       size would collapse the now content-driven height to 0 -- revert. */
+       there is no height budget to distribute vertically. */
+    display: flex;
+    flex-direction: column;
     flex: none;
-    container-type: normal;
   }
 
-  /* feed-col's flex:2/side-rail's flex:1 are a width ratio for the row
-     layout above. In column mode the same values would apply as a
+  /* Both are grid tracks above; in column mode they would apply as a
      vertical grow ratio instead, claiming leftover height as blank
      padding. Reset both to their natural content height when stacked. */
   .feed-col,
@@ -304,9 +473,11 @@
   }
 
   /* Plain block in stacked mode; the wrapper goes width-driven
-     (aspect-ratio still supplies the height). */
+     (aspect-ratio still supplies the height). `container-type: size` would
+     collapse the now content-driven height to 0 -- revert it. */
   .feed-col {
     display: block;
+    container-type: normal;
   }
 
   .preview-wrapper {
@@ -323,6 +494,15 @@
 
   .live-view {
     overflow-y: auto;
+  }
+
+  .live-warning.has-action {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .live-warning.has-action > button {
+    margin-left: 0;
   }
 
   .tuning-card {
@@ -364,12 +544,15 @@
   color: inherit;
 }
 
-/* The sentence and the control that answers it, stacked: the prose is long enough to wrap, and a
-   button centred beside a four-line paragraph reads as belonging to no particular line. Same shape
-   the Admin Panel's actionable entry uses. */
-.live-warning.has-action {
-  flex-direction: column;
-  align-items: flex-start;
+/* The sentence and the control that answers it, on one row: the banner is as wide as the window,
+   so the prose wraps to two lines and the button sits at the end of them. Stacked, this banner
+   was 147px of a 730px window — which is the height the preview and the item log are competing
+   for, in the one state where an operator is looking at both. The narrow layout below puts it
+   back under the prose, where a button beside a four-line paragraph reads as belonging to no
+   particular line. */
+.live-warning.has-action > button {
+  flex: none;
+  margin-left: auto;
 }
 
 /* The other outcome of the same click, in the slot the warning vacated. Green because nothing is

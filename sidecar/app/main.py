@@ -56,6 +56,7 @@ from app.schemas import (
     ApplyPresetRequest,
     CameraInfo,
     InferenceMessage,
+    InferenceStatusPayload,
     CameraProfileResponse,
     CameraQualityResponse,
     CamerasResponse,
@@ -131,6 +132,54 @@ def backend_url(settings: Settings) -> str:
     )
 
 
+def _inference_payload(status: InferenceStatus) -> InferenceStatusPayload:
+    """The verdict's body, as both surfaces spell it.
+
+    One builder for the stream message and the health read, so neither can describe the state, the
+    endpoint or the failure differently from the other. The two differ in exactly one way, and
+    deliberately: `age_seconds` is computed here, when the payload is built, so the pushed copy
+    carries the age of the change and the polled copy carries the age of the most recent probe.
+    """
+    return InferenceStatusPayload(
+        backend=status.backend,
+        url=status.url,
+        state=status.state,
+        detail=status.detail,
+        age_seconds=status.age_seconds(),
+    )
+
+
+def _inference_read(status: InferenceStatus) -> InferenceStatusPayload | None:
+    """The verdict for a *read*, or None when there is no server to watch.
+
+    `None` on a blank URL, which is how `retarget` spells "nothing to watch" (`native`, or a remote
+    backend with no endpoint configured) - and the panel needs that told apart from `unknown`, which
+    is a configured endpoint that has not been asked yet. The message path keeps the blank URL
+    instead: a client receives it on the handshake and renders nothing for an `unknown` state
+    either way, so there is nothing there for the absence to add.
+    """
+    if not status.url:
+        return None
+    return _inference_payload(status)
+
+
+def _current_inference_status(state: "AppState") -> InferenceStatus:
+    """The freshest verdict there is: the running monitor's, else the last one stored.
+
+    The two cannot disagree about the verdict - the monitor replaces its copy only when it reports
+    the replacement, so the stored one is a prefix of the same history. They differ in exactly one
+    field, which is why this exists: `checked_at` is re-stamped on *every* probe, including the ones
+    that merely re-confirm a standing verdict and therefore tell no client anything. Reading the
+    stored copy instead would date a server that has been down all afternoon from the moment it went
+    down, when it was in fact checked seconds ago. The monitor is None only where nothing is
+    watching (no lifespan, or after shutdown), and then the stored verdict is all there is.
+    """
+    monitor = state.inference_monitor
+    if monitor is not None:
+        return monitor.status
+    return state.inference_health
+
+
 def _inference_message(status: InferenceStatus) -> InferenceMessage:
     """The one spelling of the message, used by the handshake and by every transition.
 
@@ -138,13 +187,7 @@ def _inference_message(status: InferenceStatus) -> InferenceMessage:
     handshake is exactly where a forgotten field stays invisible: the transition path is the one a
     test reaches by watching a server go down.
     """
-    return InferenceMessage(
-        type="inference",
-        backend=status.backend,
-        url=status.url,
-        state=status.state,
-        detail=status.detail,
-    )
+    return InferenceMessage(type="inference", **_inference_payload(status).model_dump())
 
 
 def _report_inference_health(state: "AppState", status: InferenceStatus) -> None:
@@ -670,6 +713,10 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
             state=state.state,
             active_model=state.settings.active_model,
             device=state.device,
+            # Read here rather than pushed, because this endpoint is polled: the age of a standing
+            # verdict is only honest if it is recomputed, and a client has no way to know the
+            # monitor went on probing after the message it last received.
+            inference=_inference_read(_current_inference_status(state)),
         )
 
     @app.get("/api/settings", response_model=SettingsResponse)
@@ -1293,7 +1340,7 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
         # why. `unknown` is the ordinary answer for `native`, and a client renders nothing for it.
         try:
             await ws.send_json(snapshot)
-            await ws.send_json(_inference_message(state.inference_health).model_dump())
+            await ws.send_json(_inference_message(_current_inference_status(state)).model_dump())
             while True:
                 await ws.receive_text()
         except Exception:  # noqa: BLE001

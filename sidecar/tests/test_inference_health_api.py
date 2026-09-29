@@ -127,6 +127,72 @@ def test_the_handshake_says_unknown_for_a_native_backend(tmp_path):
     assert probe.urls == []
 
 
+def test_the_health_read_carries_the_verdict_and_when_it_was_checked(tmp_path):
+    """The Admin Panel's half of the verdict.
+
+    The push reports a *change*; this is the standing reading beside the backend picker, and the age
+    is the part that has to come from here: the endpoint is polled, so the number is recomputed each
+    time, where a pushed copy would age from the moment of the change.
+    """
+    probe = _Probe()
+    state = _state(tmp_path, probe, detector_backend="local_api", local_api_url=LOCAL)
+    state.inference_health = InferenceStatus(
+        backend="local_api",
+        url=LOCAL,
+        state=UNRESPONSIVE,
+        detail="ConnectError: refused",
+        checked_at=time.time() - 4.0,
+    )
+
+    body = TestClient(build_app(lambda: state)).get("/api/health").json()
+
+    assert body["inference"]["url"] == LOCAL
+    assert body["inference"]["state"] == UNRESPONSIVE
+    assert body["inference"]["detail"] == "ConnectError: refused"
+    assert 4.0 <= body["inference"]["age_seconds"] < 60.0
+
+
+def test_a_native_backend_reports_no_server_to_watch(tmp_path):
+    """`null` rather than a verdict: the panel needs "there is no endpoint" told apart from "there is
+    one and nobody has asked it yet", and an empty-url payload would be neither."""
+    probe = _Probe()
+    state = _state(tmp_path, probe)
+
+    body = TestClient(build_app(lambda: state)).get("/api/health").json()
+
+    assert body["inference"] is None
+
+
+def test_the_age_is_recomputed_on_every_read(tmp_path):
+    """The reading stays fresh while nothing is broadcast.
+
+    Once the verdict is `ok` the monitor stops telling clients about it - that is the transitions-only
+    design - so if this number were the one from the push, a server confirmed seconds ago would show
+    the age of the change. It is instead recomputed from the last probe, which the loop keeps
+    refreshing, so the age stays near zero however long the verdict stands.
+    """
+    probe = _Probe()
+    state = _state(tmp_path, probe, detector_backend="local_api", local_api_url=LOCAL)
+
+    with TestClient(build_app(lambda: state)) as client:
+        assert probe.wait_for(LOCAL)
+        probe.release.set()
+        deadline = time.monotonic() + 5.0
+        while state.inference_health.state != OK and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert state.inference_health.state == OK
+
+        first = client.get("/api/health").json()["inference"]["age_seconds"]
+        # Several probe intervals (the factory uses 0.01 s), during which nothing is broadcast.
+        time.sleep(0.2)
+        second = client.get("/api/health").json()["inference"]["age_seconds"]
+
+    assert first is not None and second is not None
+    # If the age came from the transition it would now read ~0.2 s plus however long the verdict had
+    # already stood. Re-stamped every probe, it is under the probe timeout and does not grow.
+    assert second < 0.15, f"the age of a standing verdict grew between reads: {first} -> {second}"
+
+
 def test_the_lifespan_starts_the_watch_and_stops_it(tmp_path):
     probe = _Probe()
     state = _state(tmp_path, probe, detector_backend="local_api", local_api_url=LOCAL)

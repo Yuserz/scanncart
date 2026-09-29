@@ -221,6 +221,9 @@ export function LiveView({ port, deps }: LiveViewProps): JSX.Element {
   // Absent on a sidecar that predates the field, which reads as "nothing suppressed" — the same
   // reading as a clean frame, and the honest one: there is no evidence to the contrary.
   const suppressed = stats?.suppressed ?? 0
+  // Absent on a sidecar that predates the field, which reads as "not shed" — the healthy default,
+  // and the only honest reading of a message that says nothing about refusals.
+  const shed = stats?.shed ?? false
   // Real decoded frame size, read on img load — drives the wrapper's
   // aspect-ratio and fit-to-column sizing in CSS (falls back to 16/9
   // while idle). Same-value updates bail out, so per-frame loads are free.
@@ -504,26 +507,6 @@ export function LiveView({ port, deps }: LiveViewProps): JSX.Element {
                     <b>{trackedCount}</b>
                     <small>tracked</small>
                   </div>
-                  {/* Rendered only when it fires, unlike `tracked` above. A count of 0 IS the
-                      healthy reading here, and a tile that always showed 0 would be one nobody
-                      looks at by the time it says 1. Absence therefore means "no phantom this
-                      frame", and the setting's own state is legible where it is set, in the
-                      tuning card's checkbox. */}
-                  {suppressed > 0 && (
-                    <div
-                      className="stat-tile warn"
-                      data-testid="stat-suppressed"
-                      title={
-                        'Detections whose box was pinned to all four frame edges, dropped before ' +
-                        'they reached the item log. These weights produce that shape on an empty ' +
-                        'counter. If a real item that fills the frame stops being detected, turn ' +
-                        'off “Drop frame-edge phantoms” in Camera tuning.'
-                      }
-                    >
-                      <b>{suppressed}</b>
-                      <small>suppressed</small>
-                    </div>
-                  )}
                 </>
               ) : (
                 // Renamed from "no stats yet": with the weights readout below always present, the
@@ -531,68 +514,118 @@ export function LiveView({ port, deps }: LiveViewProps): JSX.Element {
                 // two numbers that are on screen.
                 <span>no frames yet</span>
               )}
-              {/* The weights readout: what geometry these weights run at, what the record says they
-                  were trained at (or that nothing recorded it), and what they scored. Rendered
-                  whenever the backend actually runs them — `geometry` is `null` for a remote
-                  backend, whose workflow holds its own model and resizes server-side, so there is
-                  nothing local to describe and no score of *these* weights to show. */}
-              {weights !== null && weights.geometry !== null && (
-                <>
-                  <div
-                    className={`stat-tile${resizeMismatch !== null ? ' warn' : ''}`}
-                    data-testid="stat-geometry"
-                    title={geometryTitle}
-                  >
-                    <b>{weights.geometry}</b>
-                    <small>{weights.setting === 'auto' ? 'geometry (auto)' : 'geometry'}</small>
-                  </div>
-                  {requirement !== null && (
-                    <div
-                      className={`stat-tile${requirement.assumed ? ' unmeasured' : ''}`}
-                      data-testid="stat-requirement"
-                      title={requirement.title}
-                    >
-                      <b>{requirement.value}</b>
-                      <small>{requirement.label}</small>
-                    </div>
-                  )}
-                  <div
-                    className={`stat-tile${recall.warn ? ' warn' : ''}${
-                      recall.unmeasured ? ' unmeasured' : ''
-                    }`}
-                    data-testid="stat-recall"
-                    title={recall.title}
-                  >
-                    <b>{recall.value}</b>
-                    <small>{recall.label}</small>
-                  </div>
-                </>
-              )}
-              {/* The running model's class count and roster verdict. Outside the gate above on
-                  purpose: the tiles there describe the *configured* weights (restart-required
-                  settings, readable while idle), while this one describes what the sidecar actually
-                  loaded, and a remote backend has classes but no local geometry. */}
-              {classes !== null && (
-                <div
-                  className={`stat-tile${classes.warn ? ' warn' : ''}`}
-                  data-testid="stat-classes"
-                  title={classes.title}
+            </div>
+            {/* Reserved at one line of height whether or not anything fired, unlike the tiles
+                above it. A count of 0 IS the healthy reading here, so an operator should not
+                have to read one — but the *geometry* must not change when it appears either:
+                these two come and go per frame (an empty counter produces a phantom every few
+                frames), and a strip whose height followed that re-wrapped the tiles, resized the
+                rail and shifted the item log a couple of times a second. Prose that is not there
+                when nothing is wrong, in a box that is always the same size.
+
+                The `stat-shed` flag describes a *missing* frame rather than a decision about
+                detections: the inference server answered, and its answer was "not now". Its
+                prose names the two causes in the order worth checking — the server's own
+                connection cap, and whatever else is talking to it. */}
+            <div className="stats-flags" data-testid="stats-flags">
+              {suppressed > 0 && (
+                <span
+                  className="stat-flag"
+                  data-testid="stat-suppressed"
+                  title={
+                    'Detections whose box was pinned to all four frame edges, dropped before ' +
+                    'they reached the item log. These weights produce that shape on an empty ' +
+                    'counter. If a real item that fills the frame stops being detected, turn ' +
+                    'off “Drop frame-edge phantoms” in Camera tuning.'
+                  }
                 >
-                  <b>{classes.value}</b>
-                  <small>{classes.label}</small>
-                </div>
+                  <b>{suppressed}</b> suppressed
+                </span>
+              )}
+              {shed && (
+                <span
+                  className="stat-flag"
+                  data-testid="stat-shed"
+                  title={
+                    'The inference server is up but refused this frame — it is at capacity ' +
+                    '(HTTP 503/429), so the frame was dropped rather than the capture. ' +
+                    'Nothing is wrong with the model or the backend setting: the server is ' +
+                    'busy, which is what its connection limit answers when something else ' +
+                    'is talking to it. Requests are retried as frames go by.'
+                  }
+                >
+                  <b>!</b> shed
+                </span>
+              )}
+              {/* The healthy reading, said rather than left blank. The line is reserved at the
+                  same height either way, and a reserved box with nothing in it reads as a
+                  rendering fault instead of as a frame with nothing to report.
+
+                  Gated on `stats` as well, because "this frame" is a claim about a frame: an
+                  idle view has sent none, and the strip beside this line says so. */}
+              {stats && suppressed === 0 && !shed && (
+                <span className="stat-flag-quiet">no flags this frame</span>
               )}
             </div>
-          </div>
+            {/* The standing readouts: what geometry these weights run at, what the record says
+                they were trained at (or that nothing recorded it), what they scored, and what the
+                running model predicts. Rows rather than tiles, because they are text that is
+                stable for the whole session — a `letterbox` in a 90px `minmax` track drew over
+                the tile beside it — and because a fixed set of rows cannot reflow the way a
+                variable set of tiles can.
 
-          <CameraTuning
-            port={port}
-            running={running}
-            start={start}
-            stop={stop}
-            onCameraBusy={setCameraBusy}
-            deps={deps?.settingsDeps}
-          />
+                The first three are gated on the backend actually running local weights:
+                `geometry` is `null` for a remote backend, whose workflow holds its own model and
+                resizes server-side, so there is nothing local to describe and no score of
+                *these* weights to show. The class count is not gated that way — it describes
+                what the sidecar actually loaded, and a remote workflow declares classes too. */}
+            {classes !== null || (weights !== null && weights.geometry !== null) ? (
+              <div className="stats-facts">
+                {weights !== null && weights.geometry !== null && (
+                  <>
+                    <div
+                      className={`stat-fact${resizeMismatch !== null ? ' warn' : ''}`}
+                      data-testid="stat-geometry"
+                      title={geometryTitle}
+                    >
+                      <small>{weights.setting === 'auto' ? 'geometry (auto)' : 'geometry'}</small>
+                      <b>{weights.geometry}</b>
+                    </div>
+                    {requirement !== null && (
+                      <div
+                        className={`stat-fact${requirement.assumed ? ' unmeasured' : ''}`}
+                        data-testid="stat-requirement"
+                        title={requirement.title}
+                      >
+                        <small>{requirement.label}</small>
+                        <b>{requirement.value}</b>
+                      </div>
+                    )}
+                    <div
+                      className={`stat-fact${recall.warn ? ' warn' : ''}${
+                        recall.unmeasured ? ' unmeasured' : ''
+                      }`}
+                      data-testid="stat-recall"
+                      title={recall.title}
+                    >
+                      <small>{recall.label}</small>
+                      <b>{recall.value}</b>
+                    </div>
+                  </>
+                )}
+                {classes !== null && (
+                  <div
+                    className={`stat-fact${classes.warn ? ' warn' : ''}`}
+                    data-testid="stat-classes"
+                    title={classes.title}
+                  >
+                    <small>{classes.label}</small>
+                    <b>{classes.value}</b>
+                  </div>
+                )}
+              </div>
+            ) : null}
+          </div>
 
           <div className="card log-card">
             <h4>
@@ -601,13 +634,35 @@ export function LiveView({ port, deps }: LiveViewProps): JSX.Element {
             <ul className="item-log" data-testid="item-log">
               {items.map((it) => (
                 <li className="log-row" key={it.track_id}>
-                  <span className="log-cls">{it.cls}</span>{' '}
+                  {/* `title` carries the whole name: the row ellipsises it, and a product
+                      name cut to "Bear Brand Fortified Powd…" identifies nothing. */}
+                  <span className="log-cls" title={it.cls}>
+                    {it.cls}
+                  </span>{' '}
                   <span className="log-conf">({Math.round(it.conf * 100)}%)</span>
                 </li>
               ))}
             </ul>
           </div>
         </div>
+
+        {/* The camera controls, as a band under both columns rather than the bottom card of
+            the rail. This is the one move the whole layout rests on: 13 controls, three of
+            whose labels are full sentences ("Drop whole-frame phantoms (three edges)"), cannot
+            be read in a 320px column — in the rail the card showed two of them and scrolled the
+            other eleven behind it, so "all of it on one screen" was never on the table.
+
+            It is a sibling of the two columns, not a child of either, and `LiveView.css` places
+            it in its own full-width grid row: the band is as wide as the window, which is what
+            lets the three groups stand side by side at their natural width. */}
+        <CameraTuning
+          port={port}
+          running={running}
+          start={start}
+          stop={stop}
+          onCameraBusy={setCameraBusy}
+          deps={deps?.settingsDeps}
+        />
       </div>
     </div>
   )

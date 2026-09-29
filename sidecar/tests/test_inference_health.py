@@ -57,6 +57,66 @@ def _answering(answers):
     return probe, calls
 
 
+# --- the age of the reading ---------------------------------------------------
+#
+# `checked_at` is re-stamped on every probe, not only when the verdict moves, and the difference is
+# the whole point of the field: this monitor re-confirms a standing verdict every interval, so a
+# server that has been down for an hour was still checked five seconds ago. A number that only moved
+# on a *transition* would describe a monitor nobody is running - and it is the number the Admin
+# Panel shows beside the backend picker, where the operator decides whether to trust the verdict.
+
+
+def test_age_is_computed_at_read_time_rather_than_carried():
+    """A value computed when the verdict was reached is wrong the moment it is read."""
+    assert InferenceStatus(checked_at=1000.0).age_seconds(now=1002.5) == 2.5
+    # An unprobed target is not "checked a very long time ago".
+    assert InferenceStatus().age_seconds(now=1000.0) is None
+
+
+def test_a_verdict_carries_when_its_probe_completed():
+    probe, _ = _answering([True])
+    monitor, _ = _monitor(probe, failures=1)
+    monitor.retarget("local_api", "http://127.0.0.1:9001")
+    monitor.probe_once("local_api", "http://127.0.0.1:9001")
+
+    age = monitor.status.age_seconds()
+    assert age is not None and 0.0 <= age < 5.0
+
+
+def test_the_reading_is_re_stamped_even_when_the_verdict_does_not_change():
+    """Both halves at once: the stored reading moves, the broadcast does not.
+
+    A second success is not news to a client - it already knows the server answers - but it *is*
+    fresh evidence for the age, and dropping it would make a standing verdict look un-checked.
+    """
+    probe, _ = _answering([True])
+    monitor, seen = _monitor(probe, failures=1)
+    monitor.retarget("local_api", "http://127.0.0.1:9001")
+    monitor.probe_once("local_api", "http://127.0.0.1:9001")
+    first = monitor.status.checked_at
+
+    time.sleep(0.02)
+    monitor.probe_once("local_api", "http://127.0.0.1:9001")
+
+    assert monitor.status.checked_at > first
+    assert monitor.status.state == OK
+    assert seen.states == [UNKNOWN, OK], "a re-confirmation was broadcast as a change"
+
+
+def test_a_new_target_forgets_when_the_old_one_was_checked():
+    """The same rule as the state, in the time dimension: the old endpoint's last check says nothing
+    about the new one, and an age carried across would date the new verdict from the old server."""
+    probe, _ = _answering([True])
+    monitor, _ = _monitor(probe, failures=1)
+    monitor.retarget("local_api", "http://127.0.0.1:9001")
+    monitor.probe_once("local_api", "http://127.0.0.1:9001")
+    assert monitor.status.age_seconds() is not None
+
+    monitor.retarget("local_api", "http://127.0.0.1:9002")
+
+    assert monitor.status.age_seconds() is None
+
+
 # --- the verdict -------------------------------------------------------------
 
 

@@ -6,6 +6,7 @@ import icon from '../../resources/icon.png?asset'
 import { SidecarSupervisor } from './sidecar'
 import { HEALTH_TIMEOUT_MS, SidecarHealthMonitor, type SidecarHealth } from './sidecarHealth'
 import { handleSecondInstance } from './singleInstance'
+import { tabletWindowBounds } from './windowSize'
 
 // Resolve where the Python sidecar lives. Defaults assume the repo layout
 // (desktop/ and sidecar/ side by side) and the sidecar's local venv; override
@@ -102,12 +103,11 @@ function startSidecar(): void {
 }
 
 function createWindow(): void {
-  // Create the browser window.
+  // Create the browser window at the tablet standard — one canvas that supplies the opening size
+  // and both bounds, rather than four numbers here that can disagree with the layout
+  // (`windowSize.ts`).
   mainWindow = new BrowserWindow({
-    width: 1000,
-    height: 760,
-    minWidth: 720,
-    minHeight: 480,
+    ...tabletWindowBounds(),
     show: false,
     autoHideMenuBar: true,
     ...(process.platform === 'linux' ? { icon } : {}),

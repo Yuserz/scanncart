@@ -71,6 +71,7 @@ from pathlib import Path
 import resources  # must precede numpy/torch: sets OMP/MKL thread limits
 
 import audit_recall
+from train_model import require_labels_order
 from generations import DEFAULT, GENERATIONS, Generation
 from generations import get as generation_for
 from workspace import SIDECAR_ROOT
@@ -644,6 +645,10 @@ def main(argv: list[str] | None = None) -> int:
     weights = args.weights or str(SIDECAR_ROOT / "models" / generation.weight_name)
     if not Path(weights).exists():
         raise SystemExit(f"no such weight: {weights}")
+    # Two of the three populations are read out of this generation's export - the control frames and
+    # `training_labels`, the boxes the weights were taught - and the claims here are statements about
+    # *that* population, so a set in another class order would be priced under somebody else's name.
+    require_labels_order(generation, tool="clamp_probe.py")
 
     budget = resources.measure(args.max_use_percent, args.disk_reserve_gb, args.max_vram_percent)
     device = resources.resolve_device(args.device)

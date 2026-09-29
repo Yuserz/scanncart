@@ -35,9 +35,14 @@ already square needs no resampling at train time, so the requirement becomes a f
 rather than a setting someone has to get right. YOLO labels are normalized, so stretching needs no
 label change - which is exactly why this is safe to do once, here, instead of on every batch.
 
-**v2's labels are copied unchanged.** The annotator writes the canonical order
-(`annotate/store.py` derives it from the same `SLUG_TO_CLASS` this file reads), so there is nothing
-to translate - and a second remapping here would be a second chance to disagree with it.
+**v2's labels are translated by name too.** The annotator writes each row's `cls` column as a
+position in *its own* list (`annotate.store.CLASS_NAMES`, derived from the same `SLUG_TO_CLASS` this
+file reads), and the merged set declares a generation's order - so those are two facts, and the row
+has to be translated between them exactly as v1's are. Today the two lists hold the same names in the
+same order, which makes the translation the identity and the written rows byte-identical to the copy
+this used to do; that is now a *result* rather than the reason, and the reason was the problem: a
+build declaring any other order used to mislabel every v2 row with nothing downstream able to see it,
+because the declaration still agreed with the generation it recorded (see `declared_order_problem`).
 
 **The frames' tags are copied too.** Each v2 frame was filed under a product by `clean_v2.py`,
 which recorded that folder as the manifest's `class` - the tag every other tool treats as what the
@@ -73,7 +78,14 @@ report that read `v2: test 83` on one line and `test close 36` on the next.
 column is interpreted, and a second derivation of it (this file used to do
 `tuple(SLUG_TO_CLASS.values())`) is a second answer that only agrees while both expressions do. The
 build writes the generation down beside it (`data.yaml`, `merge_report.json`), so a reader - a
-person or `dataset_doctor.py` - can see which order the rows index rather than infer it.
+person or `dataset_doctor.py` - can see which order the rows index rather than infer it. Both sides
+of the merge are translated into that order by name, which is what makes it a choice: what
+`declared_order_problem` refuses before the swap is a declaration the rows cannot be translated into,
+not a declaration that is not the annotator's. Whether a source list can be translated at all is one
+rule (`translation_problem`, with `annotator_class_problem` for the side the annotator owns), asked
+by each side before it writes a frame and by the dry run in the same words - so v1's export and the
+annotator's tree cannot be judged differently, or a run's report disagree with the build that follows
+it.
 
 HOW IT WRITES, AND WHAT THAT BUYS
 ---------------------------------
@@ -113,6 +125,18 @@ WHAT IT REFUSES
   make those two splits a measurement of the annotator, so `train_model.py --yes/--val` and
   `accept_v2.py` both refuse this set - the build is refused at the same door, and one door earlier,
   because the alternative is an unusable set replacing a usable one. Work the pass, then build again.
+* A source class list that cannot be translated into this dataset's order (exit 2, in the v1/v2
+  side's own problems *before* a frame is written, and reported by `--dry-run` the same way):
+  `translation_problem` is one rule and one sentence for a question both sides ask, so a v1 export
+  declaring a name with no position here and an annotator that can draw one are the same refusal.
+  It is asked once up front rather than per row, so the verdict does not depend on which frames
+  happen to be staged.
+* A set whose *own* class declaration does not hold together (exit 2, `declared_order_problem` on
+  the staging copy, and deliberately outside the two flags below): the `names` and the `generation`
+  written into `data.yaml` must agree, and the annotator's list must be translatable into those names
+  by the same rule the merge already asked (see the bullet above) - the order a measuring tool reads
+  off the declaration is the order it scores against, so a set that is wrong here is one
+  `audit_recall`/`spec_check`/`accept_v2` refuse after the previous set is gone.
 * A merge that fails the doctor (exit 2, `dataset_doctor.check_and_report` on the staging copy):
   the set §7 would refuse a minute later is refused here instead, before it has replaced anything.
 * A `--v2` that is not a staged set at all (exit 2, `v2_set_problem`): this is the failure with no
@@ -148,9 +172,9 @@ import resources  # noqa: F401  (must precede numpy/PIL work: sets thread limits
 from PIL import Image, ImageDraw
 import numpy as np
 from clean_v2 import NEAR_HAMMING, NEAR_MSE, NEGATIVE_CLS, _hamming, _mse, dhash64, grey_thumb
-from generations import V1, V2
+import generations
 from label_classes import FIT_SPLITS, SPLIT_NAMES
-from train_model import read_export_names, write_data_yaml
+from train_model import read_export_generation, read_export_names, write_data_yaml
 from workspace import (
     ANNOTATIONS_DIRNAME,
     DATA_YAML_NAME,
@@ -171,8 +195,11 @@ IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
 # expressions happened to name the same seven in the same order. The set also *records* this name
 # (`data.yaml`, `merge_report.json`), so `dataset_doctor` can tell what it is looking at instead of
 # being told.
-DECLARED_GENERATION = V2
+DECLARED_GENERATION = generations.V2
 CANONICAL_NAMES: tuple[str, ...] = DECLARED_GENERATION.classes
+# Both are read back off the built set before it is swapped in (`declared_order_problem`), and the
+# label rows of both sides are translated into `CANONICAL_NAMES` by name - which is what lets this
+# order be a choice rather than a constraint on the annotator, and what the read-back then checks.
 INDEX_BY_NAME: dict[str, int] = {name: i for i, name in enumerate(CANONICAL_NAMES)}
 
 DEFAULT_OUT = WORKSPACE / "merged-v2"
@@ -224,6 +251,74 @@ def list_images(directory: Path) -> list[Path]:
     return sorted(p for p in directory.iterdir() if p.suffix.lower() in IMAGE_SUFFIXES)
 
 
+def translation_problem(
+    names: list[str],
+    target: list[str] | tuple[str, ...] = CANONICAL_NAMES,
+    *,
+    source: str,
+    coverage: bool = False,
+) -> str | None:
+    """Why rows written against `names` cannot all be translated into `target`, or None if they can.
+
+    One rule for a question every part of this merge asks - `build_v1` of v1's export, `build_v2`
+    and `preview_v2` of the annotator's tree, `dry_run` of the same two lists, and
+    `declared_order_problem` of the set's own declaration once it has been written - because a label
+    row is a *position* in the list that wrote it, so "has this list got a position for every name
+    that one declares" has one answer and one wording. Asked before any frame is written, which is
+    why the same situation does not also have to be discovered row by row while the merge runs.
+
+    A name the source declares and `target` has no position for is the fatal direction: that box can
+    be filed under no product, so the frame it sits on cannot enter the set at all.
+
+    `coverage` adds the other direction - a `target` class `names` can never produce. Asked of the
+    annotator's tree, because that side draws the frames: a class it cannot draw is one no staged
+    frame can ever be labelled as, and the set would learn it from v1 alone. Deliberately *not*
+    asked of v1's export, where a class with no frames is a capture gap rather than a translation
+    failure - the shape `check_export` reports as a note about the other generation, and a refusal
+    here would block a merge that is not wrong.
+
+    `source` is what the sentence calls the list that wrote the rows (`v1`, `the annotator`), so a
+    reader can see which of the two moved.
+
+    The relation itself is `generations.class_gaps`, the same owner `train_model.check_export`
+    judges an export with - one implementation of "what does each list declare that the other does
+    not", so the two tools cannot read the same pair of lists two ways. Only the sentences are this
+    caller's, and that is deliberate: what follows from a mismatch here is about *label rows*, where
+    a training run's is about the head's outputs.
+    """
+    gaps = generations.class_gaps(names, target)
+    lines: list[str] = []
+    if gaps.source_only:
+        lines.append(
+            f"{source} declares class(es) this dataset does not have, so its label rows cannot be "
+            "translated: " + ", ".join(repr(name) for name in gaps.source_only)
+        )
+    if coverage and gaps.target_only:
+        lines.append(
+            f"this dataset declares class(es) {source} can never draw: "
+            + ", ".join(repr(name) for name in gaps.target_only)
+        )
+    return "\n".join(lines) or None
+
+
+def annotator_class_problem(target: list[str] | tuple[str, ...] = CANONICAL_NAMES) -> str | None:
+    """Whether the annotator's own class list can be translated into `target`, or None if it can.
+
+    Its rows' `cls` column is a position in `annotate.store.CLASS_NAMES`, which is a runtime fact
+    rather than a file this tool owns, so the list is read here and judged by the one rule above -
+    with `coverage`, because this is the side that draws the frames. `target` is `CANONICAL_NAMES`
+    for the merge, asked by `build_v2` before it writes a frame and by `preview_v2` so the dry run
+    refuses what a build would refuse, and the *set's own declared names* for
+    `declared_order_problem`'s read-back, because that is the list the artifact carries.
+
+    The import is local for the direction `read_v2` explains: `annotate/` is the authoring tool, and
+    this script imports it, never the other way round.
+    """
+    from annotate.store import CLASS_NAMES
+
+    return translation_problem(list(CLASS_NAMES), target, source="the annotator", coverage=True)
+
+
 def remap_row(parts: list[str], names: list[str] | None) -> tuple[str | None, str, bool]:
     """One label row as `cls cx cy w h`, with the class translated by name.
 
@@ -239,8 +334,9 @@ def remap_row(parts: list[str], names: list[str] | None) -> tuple[str | None, st
 
     A row that maps to nothing is a *problem* rather than a dropped row: silently losing a box
     changes what the model is trained on, which is the class of failure this file exists to make
-    impossible. `names` is the source export's own class list - the only thing that can say what
-    its indices mean - and `None` (an unreadable `data.yaml`) is reported once by the caller.
+    impossible.    `names` is the source's own class list - v1's export's, or the annotator's
+    `CLASS_NAMES` for the v2 side - because it is the only thing that can say what those positions
+    mean, and `None` (an unreadable `data.yaml`) is reported once by the caller.
     """
     try:
         index = int(float(parts[0]))
@@ -332,6 +428,11 @@ def write_frame(
 def build_v1(v1_dir: Path, out: Path, size: int = SIZE) -> Side:
     """Copy v1's export in, remapping its class indices by name.
 
+    The export's own class list is checked against this dataset's order before a frame is written
+    (`translation_problem`), because a row says which product it is by *position*: a name with no
+    position here cannot be translated at all, and finding that one label file at a time would leave
+    a half-written side behind.
+
     The split directories are v1's own: the merged set inherits the split each frame already had,
     which is what keeps the comparison honest - v1's numbers were measured on those frames in
     those splits, and moving them here would make the two weights' scores incomparable.
@@ -351,12 +452,12 @@ def build_v1(v1_dir: Path, out: Path, size: int = SIZE) -> Side:
                     "be translated, so nothing was merged"
                 )
                 return side
-            missing = [n for n in names if n not in INDEX_BY_NAME]
-            if missing:
-                side.problems.append(
-                    "v1 declares class(es) this dataset does not have, so its label rows cannot be "
-                    f"translated: {', '.join(repr(n) for n in missing)}"
-                )
+            # The source list against this dataset's order, asked once here rather than per row:
+            # v1's export declares its seven in another order, and a name this dataset has no
+            # position for cannot be translated at all (`translation_problem`).
+            problem = translation_problem(names, source="v1")
+            if problem:
+                side.problems.append(problem)
                 return side
         for image in list_images(images):
             label_path = labels / f"{image.stem}.txt"
@@ -557,7 +658,8 @@ def build_v2(
     size: int = SIZE,
     allow_unassigned: bool = False,
 ) -> Side:
-    """Copy v2's decided frames in, with the labels the annotator wrote and the split the plan set.
+    """Copy v2's decided frames in, with the labels the annotator wrote translated by name against
+    the set's declared order, and the split the plan set.
 
     Only *decided* frames enter. An outstanding frame has no label file, and copying it as an empty
     one is how "nobody has looked yet" turns into "there is nothing here" - the exact state
@@ -578,6 +680,19 @@ def build_v2(
         # not be written before `main` refuses them. `build_v1` returns early for the same reason.
         side.problems.append(problem)
         return side
+    # The annotator's own class list, and whether the merge can translate it at all - the same
+    # question `build_v1` asks of v1's export, asked through the same rule and answered in the same
+    # sentence (`translation_problem`), so one side's refusal cannot read like the other's absence.
+    # Asked up front rather than per row: a class this dataset has no position for is one refusal
+    # here, not one per label file while the merge runs. Rows are translated by name below, and the
+    # annotator's list is read there because it is what their `cls` column indexes.
+    from annotate.store import CLASS_NAMES as ANNOTATOR_ORDER
+
+    problem = annotator_class_problem()
+    if problem:
+        side.problems.append(problem)
+        return side
+
     splits = store.splits()
     unassigned: list[str] = []
 
@@ -588,7 +703,19 @@ def build_v2(
         if split not in SPLIT_NAMES:
             unassigned.append(frame.name)
             continue
-        rows = [box.as_row() for box in store.read_boxes(frame.name)]
+        # Translated by name, row by row, exactly as v1's are: a `cls` column is a *position* in the
+        # list that wrote it, and this set declares another generation's list. The rows come from the
+        # store already reduced to boxes (`Box.as_row`), so there is nothing here for the polygon
+        # branch of `remap_row` to reduce - what it does is the translation, and a row that cannot be
+        # translated is a problem rather than a dropped box: writing the frame without it would turn
+        # a product into background, which is the failure this file exists to refuse.
+        rows, row_problems, _polygons = remap_rows(
+            "\n".join(box.as_row() for box in store.read_boxes(frame.name)), ANNOTATOR_ORDER
+        )
+        for detail in row_problems[:3]:
+            side.problems.append(f"{split}/{frame.name}: {detail}")
+        if row_problems:
+            continue
         write_frame(frame.image, rows, out, split, frame.name, size)
         if frame.slug:
             # `frame.slug` is the manifest's `class` - the class the frame was staged as, which is
@@ -731,6 +858,99 @@ def write_names_yaml(out: Path, splits: dict[str, Path], path: Path | None = Non
     target = path or (out / DATA_YAML_NAME)
     target.write_text(yaml.safe_dump(body, sort_keys=False), encoding="utf-8")
     return target
+
+
+def declared_order_problem(staging: Path, out: Path) -> str | None:
+    """Why a tool that measures a weight against the set in `staging` would refuse it, or None.
+
+    Every tool that measures a weight against labelled frames asks
+    `train_model.require_labels_order` before it measures anything (`audit_recall`, `spec_check`,
+    `clamp_probe`, `unsure_probe` and `accept_v2` in one form or another), and what that rule
+    refuses is a set whose declared class list is not the generation's: a label row's class column
+    is a bare *position* in that list, so a set measured against another order has every box
+    attributed to whichever product sits at that position, and `check_export` cannot see it because
+    it compares names by membership. This build writes that list and the rows in the same pass, from
+    the same constants - so the check is on the artifact rather than on the intent: read the class
+    list and the generation back off the `data.yaml` about to be swapped in, and refuse when the
+    file does not hold together. A build that emitted one would have spent 2,300 frames rewriting a
+    usable set into one that every tool able to say what is in it refuses - the same argument the
+    doctor is run on the staging copy for, taken one door further back. It is deliberately not
+    inside the `--allow-machine-only`/`--allow-unassigned` branch: those flags land a set for
+    *reading*, and the order is a fact about the artifact rather than about how much of the
+    annotation pass has been worked, so a set that is not worth training still has to be a set whose
+    own two fields agree.
+
+    Two things can disagree, and each needs its own sentence because the remedies are opposite:
+
+    **The declaration and the set's own record.** `write_names_yaml` writes `generation` beside
+    `names`, and a reader resolves the first to read the second - `dataset_doctor --generation auto`
+    (its default) does exactly that. A set whose `names` are one generation's list while its
+    `generation` names another is therefore one `make doctor` rejects a minute later, and the
+    build's own doctor run cannot see it: that run is handed the generation the build *meant*,
+    which is the one thing the set's record and the set's list can disagree about.
+
+    **The declaration and the translation table.** Both sides go through `remap_row`: a source row's
+    `cls` is a *position* in the list that wrote it (`v1`'s export for one side,
+    `annotate.store.CLASS_NAMES` for the other), `remap_row` turns that into a product name, and the
+    name into a position in the declared list. That translation is total - and so cannot refuse a row
+    it should have kept, nor silently file one under a neighbour - exactly when the two lists name
+    the same products, which is what `translation_problem` answers and what this clause asks here
+    (via `annotator_class_problem`, against the names the artifact declares rather than against
+    `CANONICAL_NAMES`). It is checked rather than assumed from "the annotator writes our order"
+    because that assumption was the thing worth removing: while the two orders agree the remap is
+    the identity, and the day a roster moves (a class added to the annotator's list, or a literal
+    generation like `V1_CLASSES` left behind by one) a declaration that is right about its own names
+    can still be a set whose rows cannot all be translated. A build declaring an order the annotator
+    does *not* write in is fine now - that is what the remap is for.
+
+    Neither remedy is in the data: both are constants disagreeing with each other, so the message
+    names the two lists and the build stops before `out` is touched.
+    """
+    names = read_export_names(staging)
+    if not names:
+        return (
+            f"the set built in {staging} declares no class list, so nothing says which product a "
+            "label row's class position means - `write_names_yaml` is what writes it, so this is a "
+            "defect in this file rather than in the data (or this is not a set this build made), "
+            f"and {out} was not touched"
+        )
+
+    declared = read_export_generation(staging)
+    if declared is None:
+        return (
+            f"the set built in {staging} names no generation its rows index (`generation:` in "
+            f"{DATA_YAML_NAME}), so its class list could only be read by guessing which generation "
+            "it is - `write_names_yaml` records that name, so this is a defect in this file (or "
+            f"this is not a set this build made), and {out} was not touched"
+        )
+    found = generations.order_of(names)
+    if found is None or found.name != declared:
+        return (
+            f"the set built in {staging} records `{declared}` but declares names that are "
+            + (f"{found.name}'s order" if found is not None else "no generation's list")
+            + ", so its own two fields disagree - a `--generation auto` reader (which is what "
+            "`make doctor` runs) would judge these labels against the order they are not in and "
+            "refuse the set. Both fields are written by `write_names_yaml` from "
+            "`DECLARED_GENERATION` and `CANONICAL_NAMES`, so this is a defect in this file; "
+            f"{out} was not touched.\n"
+            "  declared: " + ", ".join(names) + "\n"
+            f"  {declared} lists: " + ", ".join(generations.GENERATIONS[declared].classes)
+        )
+
+    # The table both sides are translated through, asked by the rule the merge itself asks of each
+    # source list (`translation_problem`, via `annotator_class_problem`) - here against the names the
+    # artifact actually declares rather than against `CANONICAL_NAMES`, which is the only difference
+    # between this read-back and the up-front check in `build_v2`. A name that exists on only one of
+    # the two lists is a class this set cannot carry, and the remedy is a roster change: the two
+    # lists move together or neither does.
+    table = annotator_class_problem(list(names))
+    if table:
+        return (
+            f"the set built in {staging} declares {declared}'s class order, but the annotator's tree "
+            "cannot be translated into it - a roster change rather than a labelling one, and one the "
+            f"merge cannot paper over. {out} was not touched.\n" + table
+        )
+    return None
 
 
 def contact_sheet(out: Path, path: Path, limit: int = CONTACT_FRAMES) -> dict:
@@ -903,7 +1123,8 @@ def summarise(
                 classes[name] += 1
             if not rows:
                 background += 1
-        unexpected = {name: n for name, n in classes.items() if name not in CANONICAL_NAMES}
+        undeclared = generations.class_gaps(classes, CANONICAL_NAMES).source_only
+        unexpected = {name: classes[name] for name in undeclared}
         per_split[split] = {
             "images": len(images),
             "boxes": boxes,
@@ -1125,7 +1346,9 @@ def swap_into_place(staging: Path, out: Path) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--v1", default=str(V1.export_dir), help="v1's export (the hand-downloaded one)")
+    ap.add_argument(
+        "--v1", default=str(generations.V1.export_dir), help="v1's export (the hand-downloaded one)"
+    )
     ap.add_argument(
         "--v2",
         default=str(DEFAULT_V2),
@@ -1313,6 +1536,16 @@ def main(argv: list[str] | None = None) -> int:
         }
         write_names_yaml(out, splits, path=staging / DATA_YAML_NAME)
 
+        # Before both gates, and outside the flag that skips them, because this one is not a
+        # judgement about the annotation state: it reads back the declaration just written and
+        # refuses a set whose own fields disagree about which product every label row means. A set
+        # like that is refused by every tool that measures a weight against labelled frames
+        # (`train_model.require_labels_order`), so landing it would replace a usable set with one
+        # nothing can report on - and the reading flags' sets are read by those same tools.
+        order = declared_order_problem(staging, out)
+        if order:
+            raise SystemExit(order)
+
         # The doctor, *here*, rather than only as §7's command a minute later: §7 runs it on the
         # merged set, and by the time it does, the only copy of the previous build is gone. This is
         # the same gate `train_model.py` and `accept_v2.py` refuse on, taken on the copy that has
@@ -1426,10 +1659,12 @@ def dry_run(args, v1_dir: Path, v2_dir: Path, annotations: Path, extras: list[Pa
             print("  ! v1: no usable data.yaml, so its class indices cannot be translated")
             problems += 1
         else:
-            unknown = [n for n in names if n not in INDEX_BY_NAME]
             print(f"  v1 declares {len(names)} class(es): {', '.join(names)}")
-            if unknown:
-                print(f"  ! v1 declares class(es) this dataset does not have: {', '.join(unknown)}")
+            # The same rule and sentence a build refuses on, so the dry run cannot report a merge
+            # as fine that the build would stop on a second later.
+            verdict = translation_problem(names, source="v1")
+            if verdict:
+                print(f"  ! {verdict}")
                 problems += 1
             for split in SPLIT_NAMES:
                 images = list_images(split_dirs(v1_dir, split)[0])
@@ -1462,6 +1697,12 @@ def preview_v2(v2_dir: Path, annotations: Path, extras: list[Path]) -> Side:
     if problem:
         # No note either: "0 frame(s) with no decision yet" over a directory that is not a set reads
         # as good news, which is exactly the reading this guard exists to stop.
+        side.problems.append(problem)
+        return side
+    # The same verdict `build_v2` takes, because this is that function without the writes: a dry run
+    # that reported a set fine and then met a refusal a second later would be worse than no dry run.
+    problem = annotator_class_problem()
+    if problem:
         side.problems.append(problem)
         return side
     splits = store.splits()

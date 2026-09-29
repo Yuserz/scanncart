@@ -166,6 +166,12 @@ class Pipeline:
         t0 = time.time()
         detections = self._detector.infer(frame)
         self._report_class_list()
+        # Whether that round trip was refused by a server that is up but at capacity
+        # (`RoboflowShed`): the detector answers such a frame with no detections, which is
+        # indistinguishable from a clean counter unless it is said so. Read with `getattr` because
+        # it is a remote-detector extra rather than part of the `Detector` protocol - the native
+        # path has no server to be shed by and reports nothing here.
+        shed = bool(getattr(self._detector, "last_shed", False))
         # One owner for the accept/reject decision (`app/acceptance.py`), asked once, so the overlay,
         # the item log and the store cannot disagree about what survived: the accepted list is the
         # only thing that travels past this line, and everything declined is absent from all three
@@ -202,6 +208,7 @@ class Pipeline:
             capture_fps=self._capture_fps(),
             latency_ms=round((t1 - t0) * 1000.0, 1),
             suppressed=suppressed,
+            shed=shed,
         )
         with self._state_lock:
             # The *true* detections are what is stored: `emit_preview` reflects them on the way

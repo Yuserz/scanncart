@@ -1849,6 +1849,12 @@ from generate_version import EXPECTED_RESIZE  # noqa: E402  (kept with its consu
 # with it, so all three verdicts on the same class name have to come from the same words.
 from label_classes import distance_tokens_in  # noqa: E402
 
+# The other half of that sharing: whether a class list *is* the roster is a relation, and
+# `generations.class_gaps` is its one owner - read by `train_model.check_export` for a generated
+# version and by `build_dataset` for both sides of a merge. This is the third reader of the same two
+# lists, and the earliest: before a shoot, rather than after a version number is spent.
+import generations  # noqa: E402
+
 # Settled by reading Roboflow's docs rather than guessing: the mechanism exists.
 # Kept as one string so the checklist and this command cannot drift apart.
 NULL_ANNOTATION_VERDICT = """\
@@ -1962,8 +1968,10 @@ def class_list_rows(classes: object) -> list[tuple[str, str, str]]:
     annotations moved onto the product class, and further labeling only adds to what has to be
     moved - which is why this one is blocking rather than a warning.
 
-    Both are checked here, at the point the checklist already gates a shoot on (`sanity`,
-    MODEL_TRAINING.md section 9), rather than being left to the two consumers of the same
+    The relation underneath both is `generations.class_gaps`, shared with
+    `train_model.check_export` and the merge, so the three readers of the same two lists cannot read
+    them differently. Both are checked here, at the point the checklist already gates a shoot on
+    (`sanity`, MODEL_TRAINING.md section 9), rather than being left to the two consumers of the same
     predicate's other two consumers: `label_classes.py` sees the live project when asked, and
     `train_model.check_export` sees a version only after one has been generated - i.e. after a
     version number is already spent.
@@ -1979,8 +1987,13 @@ def class_list_rows(classes: object) -> list[tuple[str, str, str]]:
             "reversible. The upload tags on the images are NOT the class list.",
         )]
 
-    missing = [c for c in V1_CLASSES if c not in names]
-    extra = sorted(n for n in names if n not in V1_CLASSES)
+    # Asked rather than re-derived, so the three readers of this relation cannot disagree about
+    # which names are missing - and asked with the list *orders* the detail below prints: `names`
+    # arrives as a set, so the source side is sorted before it goes in, and the roster's own order
+    # comes back from `target_only`.
+    gaps = generations.class_gaps(sorted(names), V1_CLASSES)
+    missing = list(gaps.target_only)
+    extra = list(gaps.source_only)
     detail = f"{len(names)} class(es) defined"
     if missing:
         detail += f"; missing {len(missing)} name(s):\n  " + "\n  ".join(missing)

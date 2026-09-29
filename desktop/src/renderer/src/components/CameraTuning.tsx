@@ -64,7 +64,12 @@ export function CameraTuning({
     pollHealth: deps?.pollHealth ?? false,
     pollCameras: deps?.pollCameras ?? false
   })
-  const [open, setOpen] = useState(false)
+  // Open on mount. This card is the Live tab's control panel rather than a disclosure a
+  // visitor has to find: the layout is built to show all 13 of its controls at once, and a
+  // panel that starts shut makes that a claim nobody sees. The toggle stays, because an
+  // operator who wants the item log a few rows taller should be able to trade the controls
+  // away for it.
+  const [open, setOpen] = useState(true)
 
   // Calibrate needs a visible target, and "Camera 0" is what cameras.py
   // exists to replace. The device list is not an option here — enumerating
@@ -293,7 +298,6 @@ export function CameraTuning({
         >
           {open ? '▾' : '▸'} Camera tuning
         </button>
-        <span className="tuning-camera">{cameraName ?? resolvedCameraName}</span>
       </h4>
 
       {/* Every failure this card can produce — a rejected live write, a save,
@@ -314,174 +318,198 @@ export function CameraTuning({
           </p>
         )}
 
-        {cameraQuality?.available && (
-          <div className="quality-row" data-testid="tuning-quality">
-            {[
-              ['Brightness', cameraQuality.brightness, cameraQuality.verdicts.brightness],
-              ['Sharpness', cameraQuality.sharpness, cameraQuality.verdicts.sharpness],
-              ['Capture fps', cameraQuality.capture_fps, cameraQuality.verdicts.capture_fps]
-            ].map(([label, value, verdict]) => {
-              const failing = verdict !== 'ok'
-              return (
-                <div key={String(label)} className="quality-metric">
-                  <span className="quality-label">{label}</span>
-                  <span
-                    className={failing ? 'quality-value bad' : 'quality-value'}
-                    data-testid={failing ? 'quality-low' : 'quality-ok'}
-                  >
-                    {failing && (
-                      <span className="quality-flag" aria-hidden="true">
-                        ▲{' '}
-                      </span>
-                    )}
-                    {value}
-                    {failing && <span className="sr-only"> — outside the expected range</span>}
-                  </span>
+        {/* The controls live in one column per group, laid out as the band's columns by
+            `CameraTuning.css`: Image / Detection / Stream, then the device's own column. Stacked
+            in a single 320px rail these were the reason the card could only ever show a couple
+            of its controls at once. */}
+        <div className="tuning-fields">
+          {settings &&
+            LIVE_GROUPS.map((group) => (
+              <section className="tuning-group" key={group.label} hidden={!open}>
+                <h5>{group.label}</h5>
+                <div className="tuning-grid">
+                  {group.keys.map((key) => {
+                    const field = SETTINGS_FIELDS.find((f) => f.key === key)
+                    return field ? renderField(field) : null
+                  })}
                 </div>
-              )
-            })}
-          </div>
-        )}
+              </section>
+            ))}
+        </div>
 
-        {settings &&
-          LIVE_GROUPS.map((group) => (
-            <section className="tuning-group" key={group.label} hidden={!open}>
-              <h5>{group.label}</h5>
-              <div className="tuning-grid">
-                {group.keys.map((key) => {
-                  const field = SETTINGS_FIELDS.find((f) => f.key === key)
-                  return field ? renderField(field) : null
+        {/* Last, and one column: what the device measures, and the one action that measures it
+            again. They belong together — the button is the only thing that changes the numbers
+            above it — and keeping them in one column is what leaves the three groups enough
+            width that "Drop whole-frame phantoms (three edges)" stays on one line. */}
+        <div className="tuning-tools">
+          <div className="tuning-group">
+            {/* The device's name belongs to the device's column, not to the card's title: with
+                the three setting groups beside it, this is the header that says which camera
+                the readings and the sliders belong to. */}
+            <h5>
+              Camera <span className="tuning-camera">{cameraName ?? resolvedCameraName}</span>
+            </h5>
+            {cameraQuality?.available && (
+              <div className="quality-row" data-testid="tuning-quality">
+                {[
+                  ['Brightness', cameraQuality.brightness, cameraQuality.verdicts.brightness],
+                  ['Sharpness', cameraQuality.sharpness, cameraQuality.verdicts.sharpness],
+                  ['Capture fps', cameraQuality.capture_fps, cameraQuality.verdicts.capture_fps]
+                ].map(([label, value, verdict]) => {
+                  const failing = verdict !== 'ok'
+                  return (
+                    <div key={String(label)} className="quality-metric">
+                      <span className="quality-label">{label}</span>
+                      <span
+                        className={failing ? 'quality-value bad' : 'quality-value'}
+                        data-testid={failing ? 'quality-low' : 'quality-ok'}
+                      >
+                        {failing && (
+                          <span className="quality-flag" aria-hidden="true">
+                            ▲{' '}
+                          </span>
+                        )}
+                        {value}
+                        {failing && <span className="sr-only"> — outside the expected range</span>}
+                      </span>
+                    </div>
+                  )
                 })}
               </div>
-            </section>
-          ))}
+            )}
 
-        <section className="tuning-group" hidden={!open}>
-          <h5>Calibration</h5>
-          {profileIsStale && !busy && (
-            <p className="field-hint" data-testid="tuning-stale-profile">
-              This camera was calibrated before we measured control levels. Re-calibrate to get
-              recommended values.
-            </p>
-          )}
-          <button
-            type="button"
-            className="btn-outline btn-small"
-            disabled={calibrating || busy}
-            data-testid="tuning-calibrate"
-            onClick={() => setGateOpen(true)}
-            title="Stops capture, measures the camera, then starts again"
-          >
-            {calibrating ? <Spinner /> : null} Calibrate camera
-          </button>
-
-          {gateOpen && !busy && (
-            <div className="tuning-gate" data-testid="tuning-scene-gate">
-              <p className="field-hint">
-                Place a typical item where it will be scanned, under the lighting you&apos;ll use.
-                Use the feed to frame it. The feed stops for about 90 seconds.
-              </p>
-              {!running && (
-                <p className="field-hint">
-                  Start the feed first if you want to see what you are framing.
+            {/* The one action that changes the numbers above it, in the same column as them
+                and under the same heading. It hides with the rest of the controls — a
+                calibration button with no controls under it is an offer to stop the feed, which
+                is not something a collapsed card should be making. */}
+            <section className="tuning-group" hidden={!open}>
+              {profileIsStale && !busy && (
+                <p className="field-hint" data-testid="tuning-stale-profile">
+                  This camera was calibrated before we measured control levels. Re-calibrate to get
+                  recommended values.
                 </p>
               )}
-              <div className="tuning-gate-actions">
-                <button
-                  type="button"
-                  className="btn-primary btn-small"
-                  data-testid="tuning-scene-ready"
-                  onClick={() => {
-                    setGateOpen(false)
-                    void handleCalibrate()
-                  }}
-                >
-                  Ready
-                </button>
-                <button
-                  type="button"
-                  className="btn-outline btn-small"
-                  data-testid="tuning-scene-cancel"
-                  onClick={() => setGateOpen(false)}
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          )}
+              <button
+                type="button"
+                className="btn-outline btn-small"
+                disabled={calibrating || busy}
+                data-testid="tuning-calibrate"
+                onClick={() => setGateOpen(true)}
+                title="Stops capture, measures the camera, then starts again"
+              >
+                {calibrating ? <Spinner /> : null} Calibrate camera
+              </button>
 
-          {busy && (
-            <div className="field-hint" data-testid="tuning-phases">
-              <p>Measuring camera — about 90 seconds. The feed resumes when it finishes.</p>
-              {/* Static, not live: the phases run in one blocking sidecar
+              {gateOpen && !busy && (
+                <div className="tuning-gate" data-testid="tuning-scene-gate">
+                  <p className="field-hint">
+                    Place a typical item where it will be scanned, under the lighting you&apos;ll
+                    use. Use the feed to frame it. The feed stops for about 90 seconds.
+                  </p>
+                  {!running && (
+                    <p className="field-hint">
+                      Start the feed first if you want to see what you are framing.
+                    </p>
+                  )}
+                  <div className="tuning-gate-actions">
+                    <button
+                      type="button"
+                      className="btn-primary btn-small"
+                      data-testid="tuning-scene-ready"
+                      onClick={() => {
+                        setGateOpen(false)
+                        void handleCalibrate()
+                      }}
+                    >
+                      Ready
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-outline btn-small"
+                      data-testid="tuning-scene-cancel"
+                      onClick={() => setGateOpen(false)}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {busy && (
+                <div className="field-hint" data-testid="tuning-phases">
+                  <p>Measuring camera — about 90 seconds. The feed resumes when it finishes.</p>
+                  {/* Static, not live: the phases run in one blocking sidecar
                   call, and streaming progress would need a transport this
                   card does not have. Naming them still beats a bare
                   spinner. */}
-              <ol className="tuning-phase-list">
-                <li>exposure</li>
-                <li>focus</li>
-                <li>brightness</li>
-                <li>confirming framerate</li>
-              </ol>
-            </div>
-          )}
+                  <ol className="tuning-phase-list">
+                    <li>exposure</li>
+                    <li>focus</li>
+                    <li>brightness</li>
+                    <li>confirming framerate</li>
+                  </ol>
+                </div>
+              )}
 
-          {profile && !calibrating && (
-            <div className="tuning-profile" data-testid="tuning-profile">
-              <p className="field-hint">
-                Measured {profile.fps_auto_exposure} fps on automatic exposure,{' '}
-                {profile.fps_capped_exposure} fps with it capped.
-              </p>
-              {/* Reachable exactly when a focus sweep was possible (the
+              {profile && !calibrating && (
+                <div className="tuning-profile" data-testid="tuning-profile">
+                  <p className="field-hint">
+                    Measured {profile.fps_auto_exposure} fps on automatic exposure,{' '}
+                    {profile.fps_capped_exposure} fps with it capped.
+                  </p>
+                  {/* Reachable exactly when a focus sweep was possible (the
                   profile was actually swept, and the device supports both
                   focus and the autofocus lock) but came back with no
                   camera_focus evidence — a flat sharpness curve, meaning
                   nothing was in frame. Distinct from "nothing recommended"
                   below: this device may still have plenty else to show. */}
-              {profile.sweep_version >= 1 &&
-                profile.controls.focus &&
-                profile.controls.autofocus &&
-                !profile.measured?.camera_focus && (
-                  <p className="field-hint" data-testid="tuning-no-focus-peak">
-                    Couldn&apos;t find a focus peak — was an item in view? Re-run calibration with
-                    the item in frame.
-                  </p>
-                )}
-              {Object.keys(profile.recommended).length === 0 ? (
-                <p className="field-hint" data-testid="tuning-no-recommendation">
-                  Nothing to change: this camera ignored every control we can set.
-                </p>
-              ) : (
-                <>
-                  <ul data-testid="tuning-evidence">
-                    {Object.entries(profile.recommended).map(([k, v]) => {
-                      const m = profile.measured?.[k]
-                      return (
-                        <li key={k}>
-                          {k}: {String(v)}
-                          {m && (
-                            <span className="field-hint">
-                              {' '}
-                              — {m.metric} (was {m.baseline}){m.reached ? '' : ', best available'}
-                            </span>
-                          )}
-                        </li>
-                      )
-                    })}
-                  </ul>
-                  <button
-                    className="btn-primary btn-small"
-                    disabled={saving}
-                    data-testid="tuning-apply-profile"
-                    onClick={() => reported(applyProfile())}
-                  >
-                    {saving ? <Spinner /> : null} Apply these settings
-                  </button>
-                </>
+                  {profile.sweep_version >= 1 &&
+                    profile.controls.focus &&
+                    profile.controls.autofocus &&
+                    !profile.measured?.camera_focus && (
+                      <p className="field-hint" data-testid="tuning-no-focus-peak">
+                        Couldn&apos;t find a focus peak — was an item in view? Re-run calibration
+                        with the item in frame.
+                      </p>
+                    )}
+                  {Object.keys(profile.recommended).length === 0 ? (
+                    <p className="field-hint" data-testid="tuning-no-recommendation">
+                      Nothing to change: this camera ignored every control we can set.
+                    </p>
+                  ) : (
+                    <>
+                      <ul data-testid="tuning-evidence">
+                        {Object.entries(profile.recommended).map(([k, v]) => {
+                          const m = profile.measured?.[k]
+                          return (
+                            <li key={k}>
+                              {k}: {String(v)}
+                              {m && (
+                                <span className="field-hint">
+                                  {' '}
+                                  — {m.metric} (was {m.baseline})
+                                  {m.reached ? '' : ', best available'}
+                                </span>
+                              )}
+                            </li>
+                          )
+                        })}
+                      </ul>
+                      <button
+                        className="btn-primary btn-small"
+                        disabled={saving}
+                        data-testid="tuning-apply-profile"
+                        onClick={() => reported(applyProfile())}
+                      >
+                        {saving ? <Spinner /> : null} Apply these settings
+                      </button>
+                    </>
+                  )}
+                </div>
               )}
-            </div>
-          )}
-        </section>
+            </section>
+          </div>
+        </div>
       </div>
 
       {dirtyKeys.length > 0 && (

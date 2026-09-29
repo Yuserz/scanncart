@@ -248,6 +248,11 @@ def main(argv: list[str] | None = None) -> int:
     key = load_key(args.project)
 
     problems: list[str] = []
+    # `generations.class_gaps` is the one owner of the class-list difference these checks are made
+    # of. Imported here rather than at the top because `generations.py` imports *this* module
+    # (`SLUG_TO_CLASS`): this is the layer below, so the cycle can only be broken at call time -
+    # the shape `generate_version.declaring_generation` uses for the same reason.
+    import generations
 
     with httpx.Client(timeout=120) as client:
         # ---- 1. is the mapping actually still v1's roster? ----
@@ -255,7 +260,9 @@ def main(argv: list[str] | None = None) -> int:
         live_v1_names = set(v1.get("classes") or {})
         inherited = {s: n for s, n in SLUG_TO_CLASS.items() if s not in V2_ONLY_SLUGS}
         new_to_v2 = sorted(n for s, n in SLUG_TO_CLASS.items() if s in V2_ONLY_SLUGS)
-        missing_from_v1 = [n for n in inherited.values() if n not in live_v1_names]
+        missing_from_v1 = list(
+            generations.class_gaps(inherited.values(), live_v1_names).source_only
+        )
         print(f"v1 reference ({V1_PROJECT}): {len(live_v1_names)} classes")
         if missing_from_v1:
             problems.append(
@@ -313,7 +320,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  no class name carries a distance ({len(DISTANCE_TOKENS)} word(s) checked)")
 
         if args.create_classes:
-            absent = [n for n in SLUG_TO_CLASS.values() if n not in have]
+            absent = list(generations.class_gaps(SLUG_TO_CLASS.values(), have).source_only)
             if args.dry_run:
                 print(f"--dry-run: would create {len(absent)} class(es): " + ", ".join(absent) if absent else "--dry-run: nothing to create")
             elif not absent:
@@ -322,14 +329,14 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"creating {len(absent)} missing class(es) via throwaway annotated images...")
                 create_classes(client, key, args.project, absent)
                 have = _poll_classes(client, key, args.project, want)
-                still = sorted(want - have)
+                still = sorted(generations.class_gaps(want, have).source_only)
                 if still:
                     print(f"  not visible yet after polling: {', '.join(still)}")
                     print("  the class list refreshes slowly - re-run without --create-classes to confirm")
                 else:
                     print("  all mapped classes now present")
 
-        absent = sorted(want - have)
+        absent = sorted(generations.class_gaps(want, have).source_only)
         if not have:
             problems.append(
                 "no classes defined in the v2 project - run with --create-classes, then turn on "

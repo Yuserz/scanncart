@@ -33,12 +33,23 @@ because those all prove something is listening and the deeper check already exis
 `POST /api/detector/probe`, which sends a real frame through the workflow on demand. A monitor that
 called the workflow every five seconds would be a workflow call every five seconds, which for
 `cloud_api` is a paid request and for `local_api` is a model load.
+
+What a verdict carries, and to whom, is the last thing worth knowing before touching this. The
+*states* are transition-only, because a client renders the moment a server goes away and its coming
+back, and a message saying "still down" every five seconds is a message nobody reads by the second
+one. The *age* is the opposite: a standing verdict is re-confirmed every interval, so "how long ago
+was this last checked" is a fresh number on every read and belongs on a read (`GET /api/health`,
+where the Admin Panel polls it) rather than on the one push that reported the change. Both carry the
+same `InferenceStatus`, so the two surfaces cannot disagree about the state, the endpoint or the
+failure - only about how recently either was confirmed, which is the question each is positioned to
+answer.
 """
 
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, replace
 from typing import Callable, Literal
 
 #: The three things a client can be told. `unknown` is not "fine" and not "broken": it is a backend
@@ -77,6 +88,27 @@ class InferenceStatus:
     # `unresponsive`, and it is a *reason* rather than the operator-facing sentence: the sentence
     # belongs wherever it is shown, and this travels with the verdict to whoever has to write one.
     detail: str = ""
+    #: Epoch seconds of the most recent completed probe, refreshed on **every** probe rather than
+    #: only when the verdict moves. That distinction is the whole point of the field: this monitor
+    #: re-confirms a standing verdict every interval, and a reading that could only say when it last
+    #: *changed* would describe a server that has been down for an hour as though nobody had looked
+    #: since, when in fact it was checked five seconds ago. `0.0` means never probed — a target that
+    #: was just configured — which is a different fact from an old probe, and `age_seconds` keeps
+    #: them apart.
+    checked_at: float = 0.0
+
+    def age_seconds(self, now: float | None = None) -> float | None:
+        """How long ago the last probe completed, or None when there has not been one.
+
+        Computed at read time rather than carried as a number, because a value computed when the
+        verdict was reached is wrong the moment it is read: the verdict goes on being re-confirmed
+        every `PROBE_INTERVAL_S`, so the honest age stays near zero, and only a fresh computation
+        can say that. Callers on different surfaces — the WebSocket push and the health read —
+        therefore get their own answer instead of one number they would have to age themselves.
+        """
+        if self.checked_at <= 0.0:
+            return None
+        return max(0.0, (time.time() if now is None else now) - self.checked_at)
 
 
 def probe_url(url: str, timeout_s: float = PROBE_TIMEOUT_S) -> tuple[bool, str]:
@@ -166,6 +198,8 @@ class InferenceHealthMonitor:
             # argument: `backend_url` still answers with `cloud_api_url` for a `native` backend, and
             # a status that named a URL for a backend that does not call one would put an endpoint
             # into the log line and the client message for a server this app never contacts.
+            # `checked_at` stays at its default here, which is what makes the new target's age read
+            # as "never probed" rather than as the old endpoint's last check.
             status = InferenceStatus(
                 backend=backend, url=url if target is not None else "", state=UNKNOWN
             )
@@ -225,6 +259,7 @@ class InferenceHealthMonitor:
         except Exception as exc:  # noqa: BLE001 - a raising probe is a miss, not a crash
             answering, detail = False, f"{type(exc).__name__}: {exc}"
 
+        now = time.time()
         with self._lock:
             if self._stop.is_set() or (backend, url) != self._target:
                 # Either the settings moved while this request was in the air - so its answer
@@ -232,20 +267,32 @@ class InferenceHealthMonitor:
                 # down, where a verdict would be a broadcast into a closing server and a log line
                 # for a state nobody will read.
                 return
+            # The reading is re-stamped here, before the transition tests below, because *every*
+            # probe confirms or corrects the verdict and the age of the reading has to say so - a
+            # server that has been down for an hour is checked every five seconds, and reporting
+            # the hour would describe a monitor nobody is running. What stays transition-only is
+            # the *broadcast*: `changed` below decides whether this reaches the WebSocket, so a
+            # standing verdict costs one local update per interval and no traffic.
+            changed = False
             if not answering:
                 self._misses += 1
-                if self._status.state == UNRESPONSIVE or self._misses < self._failures:
-                    return
-                status = InferenceStatus(
-                    backend=backend, url=url, state=UNRESPONSIVE, detail=detail
-                )
+                if self._status.state != UNRESPONSIVE and self._misses >= self._failures:
+                    status = InferenceStatus(
+                        backend=backend, url=url, state=UNRESPONSIVE, detail=detail, checked_at=now
+                    )
+                    changed = True
+                else:
+                    status = replace(self._status, checked_at=now)
             else:
                 self._misses = 0
-                if self._status.state == OK:
-                    return
-                status = InferenceStatus(backend=backend, url=url, state=OK)
+                if self._status.state != OK:
+                    status = InferenceStatus(backend=backend, url=url, state=OK, checked_at=now)
+                    changed = True
+                else:
+                    status = replace(self._status, checked_at=now)
             self._status = status
-        self._on_change(status)
+        if changed:
+            self._on_change(status)
 
 
 def monitor_for(

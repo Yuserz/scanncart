@@ -735,6 +735,8 @@ def test_both_spellings_of_the_dataset_flag_reach_one_destination():
 def test_a_refreshed_export_is_measured_without_editing_the_spec(tmp_path):
     """End to end through the filesystem, and both halves of the override: the header a reader
     checks first, and the labels the number comes from."""
+    import yaml
+
     root = tmp_path / "export-v1-s2"
     gen = audit_recall.resolve_dataset(generations.get("v1"), str(root))
     images, labels = audit_recall.split_dirs(gen, "test")
@@ -742,6 +744,12 @@ def test_a_refreshed_export_is_measured_without_editing_the_spec(tmp_path):
     labels.mkdir(parents=True)
     (images / "a.jpg").write_bytes(b"")
     (labels / "a.txt").write_text("0 0.5 0.5 0.02 0.02\n", encoding="utf-8")
+    # The class list the refreshed export declares, which is what makes its `0` this class rather
+    # than whichever product another set puts first (`train_model.require_labels_order`).
+    (root / "data.yaml").write_text(
+        yaml.safe_dump({"nc": len(generations.V1.classes), "names": list(generations.V1.classes)}),
+        encoding="utf-8",
+    )
 
     name = generations.V1.classes[0]
     tallies = audit_recall.label_sizes(gen, "test", 1280)

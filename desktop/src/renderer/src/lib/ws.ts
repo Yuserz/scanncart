@@ -18,6 +18,12 @@ export interface FrameStats {
   // a sidecar that predates it sends no such key, and `undefined` has to read as "nothing
   // suppressed" rather than as a missing reading.
   suppressed?: number
+  // Whether this frame's inference was refused by a server that is up but at capacity (HTTP
+  // 503/429). The sidecar drops that frame rather than the capture, so an empty frame here is
+  // *not* evidence of an empty counter — which is the reading a log with nothing in it invites.
+  // Optional for the same reason as `suppressed`: a sidecar that predates the field sends no such
+  // key, and `undefined` has to read as "not shed" rather than as a missing reading.
+  shed?: boolean
 }
 
 export interface FrameMessage {
@@ -67,6 +73,11 @@ export interface InferenceMessage {
   state: 'unknown' | 'ok' | 'unresponsive'
   // Why, in the endpoint's own words, when `state` is 'unresponsive'. Empty otherwise.
   detail: string
+  // Seconds since the last probe, as of the moment this message was built. Same meaning as the copy
+  // /api/health carries (the same payload, the same live reading). Nothing on this side renders it:
+  // the Admin Panel is where the age is shown, and it reads it from the polled copy, which is fresh
+  // by construction rather than aging from a push. `null` means no probe has happened at all.
+  age_seconds?: number | null
 }
 
 export type StreamMessage = FrameMessage | StatusMessage | InferenceMessage

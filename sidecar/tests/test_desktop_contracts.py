@@ -165,6 +165,7 @@ def test_the_rest_response_models_mirror_the_sidecar():
     source = read_ts(API_TS)
     for model, ts_name in (
         (schemas.HealthResponse, "HealthResponse"),
+        (schemas.InferenceStatusPayload, "InferenceStatusPayload"),
         (schemas.LogEvent, "LogEvent"),
         (schemas.LogsResponse, "LogsResponse"),
         (schemas.CameraInfo, "CameraInfo"),

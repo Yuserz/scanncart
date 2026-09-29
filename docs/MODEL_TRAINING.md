@@ -1192,7 +1192,10 @@ re-derives. A label row's `cls` column is a position in the list, so the same se
 order is a different labeling — which is not hypothetical here: those are exactly the two
 generations. So `build_dataset.py` takes the merged set's order from `V2.classes` (it used to
 re-derive it from `label_classes.SLUG_TO_CLASS`, which agreed with this spec only while both
-expressions did) and records the generation name in the set's own `data.yaml` and
+expressions did), **translates both sides' label rows into it by name** — v1's export's positions
+through v1's own `data.yaml`, v2's through `annotate.store.CLASS_NAMES`, which is the annotator's own
+list and the reason the merged order is a decision rather than an assumption about what the
+annotator writes — and records the generation name in the set's own `data.yaml` and
 `merge_report.json`; `dataset_doctor.py` reads those back, so `make doctor` and the inline gate in
 `train_model.py --yes/--val`/`accept_v2.py` print the class list **in order**, say which generation's
 order they judged it against, and — when a set's labels index the *other* generation's order, which
@@ -1200,6 +1203,53 @@ the membership check cannot see — name that generation and the flag to judge i
 (`--generation auto`, the doctor's default, resolves this from the set itself). Relabelling a correct
 set to satisfy a check that asked the wrong question would corrupt every box in it, which is why this
 one failure is a flag rather than a rebuild.
+
+**Can these two lists be translated into each other?** The relation underneath has one owner in
+`generations.py` — `class_gaps`, what each list declares that the other does not — and one
+implementation, which the tools ask rather than restate: `train_model.check_export`, judging an
+export against its generation's roster; `clean_v2.class_list_rows`, judging the live project's
+Classes tab before a shoot; `build_dataset.translation_problem`, which turns it into a merge's
+verdict and asks it in the same words for both sides before either writes a frame (v1's export
+against this dataset's order, and the annotator's own class list, `annotate.store.CLASS_NAMES`,
+against it), plus `--dry-run`, so a run cannot report a merge as fine that the build would stop on a
+second later; `label_classes`' own rows (v1 continuity, and the two absences around
+`--create-classes`); `generate_version`'s report of a project's list against the roster it is
+supposed to declare; `accept_v2.order_view`, whose whole refusal is that two orders must name the
+same products; and `generations.added_over`, which is one direction of it. What each caller keeps is
+its *sentences*, because the finding is about different things: an untranslatable label row in the
+merge, the head's own outputs in a training run. That no fourth tool writes the relation out again
+is not left to review: `tests/test_class_order.py` scans the whole tools tree for the shape — a
+comprehension that walks one class list and keeps the names the other lacks, or the set difference
+of two lists — and fails with the file and the line, tolerating exactly `class_gaps`' own body and
+two sites whose second list is another axis.
+
+One direction only is fatal here: a name the source declares that this dataset has no position for,
+because that box can be filed under no product and its frame cannot enter the set. The other
+direction — a class this dataset declares that a source has no frames of — is asked only of the
+annotator's list, and the asymmetry is deliberate: for v1's export it is a capture gap
+(`check_export` prints it as a note about the other generation) while for the annotator, which draws
+the frames, it is a class no v2 frame can ever be labelled as. Asking the same question per label row
+instead would report the same situation once per file, and only after part of the set had been
+written.
+
+**The build refuses to emit a set that would be refused.** Every tool that *measures* a weight
+against labelled frames asks `train_model.require_labels_order` first, so a merged set whose
+declared order is not its generation's is a set nothing can report on — and `build_dataset.py`
+would have replaced the previous build with it. So the build reads its own declaration back off the
+staging copy, before the swap, and stops when the two fields cannot both be right: when `names` and
+the `generation` recorded beside it disagree (a set `make doctor`, on its `auto` default, refuses a
+minute later — the build's own doctor run cannot see it, since that run is handed the generation the
+build *meant*), and when the two lists cannot be translated into each other — the same rule and the
+same sentence the merge asks each source list with, applied here to the names the *artifact* carries
+rather than to `CANONICAL_NAMES`. The second clause is what the by-name remap made necessary: every
+row on both sides is a *position* in the list that wrote it, so the merge can only file it under the
+right product while the two lists name the same products. It is also what the remap made sufficient: a build declaring an order the annotator
+does not write in is fine now — it used to file every v2 row under a neighbour, with the doctor and
+every measuring tool still passing, because all of them read the declaration rather than the rows.
+Both clauses are constants disagreeing with each other, so neither remedy is in the data: the
+message prints the two lists and the build stops before anything is touched. It runs under
+`--allow-machine-only`/`--allow-unassigned` too, because those flags land a set for *reading*, and
+the order is a fact about the artifact rather than about how much of the pass has been worked.
 
 `merge_report.json` also carries the two facts about a v2 frame that the built set cannot
 reconstruct: the class it was staged under (`tags`) and the distance it was shot at

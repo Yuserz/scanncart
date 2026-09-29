@@ -4,7 +4,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event'
 import { AdminPanel } from './AdminPanel'
 import type { SettingsDeps } from '../hooks/useSidecarSettings'
-import type { ApiClient, SettingsResponse } from '../lib/api'
+import type { ApiClient, InferenceStatusPayload, SettingsResponse } from '../lib/api'
 import {
   baseSettings as sharedBaseSettings,
   datasetStatus,
@@ -1680,6 +1680,103 @@ describe('AdminPanel', () => {
 
       await screen.findByTestId('probe-result')
       expect(screen.queryAllByTestId('probe-class-warning')).toHaveLength(0)
+    })
+  })
+
+  describe("the inference watch's reading", () => {
+    // The standing verdict from the sidecar's background watch, rendered beside the fields that
+    // decide it. Three facts have to be on screen *together*, because no one of them can be acted on
+    // alone: which address is actually being probed, what the failure was in the endpoint's own
+    // words, and how long ago that was checked. Without the third a verdict from before the server
+    // was started looks exactly like one from five seconds ago, which is the shape of a wasted
+    // afternoon spent restarting a server that was already up.
+    function withWatch(
+      payload: InferenceStatusPayload | null,
+      settings: Partial<SettingsResponse> = {}
+    ): { deps: SettingsDeps; api: ApiClient } {
+      return makeDeps('idle', {
+        getSettings: vi.fn(async () =>
+          baseSettings({
+            detector_backend: 'local_api',
+            local_api_url: 'http://127.0.0.1:9001',
+            ...settings
+          })
+        ),
+        health: vi.fn(async () => ({
+          state: 'idle',
+          active_model: 'yolo11n.pt',
+          device: 'cpu',
+          inference: payload
+        }))
+      })
+    }
+
+    it("names the address it probed and the failure in the endpoint's own words", async () => {
+      const { deps } = withWatch({
+        backend: 'local_api',
+        url: 'http://127.0.0.1:9001',
+        state: 'unresponsive',
+        detail: 'ConnectError: [WinError 10061] No connection could be made',
+        age_seconds: 3.2
+      })
+      render(<AdminPanel port={8765} deps={deps} />)
+
+      const line = await screen.findByTestId('inference-watch')
+      expect(line).toHaveAttribute('data-state', 'unresponsive')
+      expect(line).toHaveClass('admin-error')
+      expect(screen.getByTestId('inference-watch-url')).toHaveTextContent('http://127.0.0.1:9001')
+      expect(screen.getByTestId('inference-watch-detail')).toHaveTextContent('WinError 10061')
+      expect(line).toHaveTextContent('checked 3 s ago')
+      // The remedy has to name a field this screen actually edits, or the sentence is a dead end.
+      expect(line).toHaveTextContent('local_api_url')
+    })
+
+    it('shows the address being probed, not the one sitting unsaved in the field', async () => {
+      // The whole reason a wrong port is diagnosable here. The watch follows the *saved* setting, so
+      // a draft edit shows as two different addresses on one screen — the box, and the endpoint the
+      // sidecar is really talking to — which is exactly the comparison the operator has to make.
+      const { deps } = withWatch(
+        { backend: 'local_api', url: 'http://127.0.0.1:9001', state: 'ok', age_seconds: 0.4 },
+        { local_api_url: 'http://127.0.0.1:9002' }
+      )
+      render(<AdminPanel port={8765} deps={deps} />)
+
+      expect(await screen.findByTestId('inference-watch-url')).toHaveTextContent(
+        'http://127.0.0.1:9001'
+      )
+      expect(await screen.findByLabelText(/Self-hosted API URL/i)).toHaveValue(
+        'http://127.0.0.1:9002'
+      )
+      // A reading from under a second ago is not "checked 0 s ago".
+      expect(screen.getByTestId('inference-watch')).toHaveTextContent('checked just now')
+    })
+
+    it('renders nothing when there is no server to watch', async () => {
+      // `native` runs the weights in the sidecar, so there is no endpoint and nothing to say — the
+      // sidecar reports `null` rather than an empty verdict, and an empty line here would read as a
+      // problem with a configuration that has none.
+      const { deps } = withWatch(null)
+      render(<AdminPanel port={8765} deps={deps} />)
+
+      await screen.findByTestId('test-connection')
+      expect(screen.queryByTestId('inference-watch')).not.toBeInTheDocument()
+    })
+
+    it('says a configured endpoint has not been probed yet rather than showing no age', async () => {
+      // `unknown` with a URL is a real state — the watch has not landed its first probe — and it is
+      // not the same as `null` above, nor as a verdict that happened a long time ago.
+      const { deps } = withWatch({
+        backend: 'local_api',
+        url: 'http://127.0.0.1:9001',
+        state: 'unknown',
+        detail: '',
+        age_seconds: null
+      })
+      render(<AdminPanel port={8765} deps={deps} />)
+
+      const line = await screen.findByTestId('inference-watch')
+      expect(line).toHaveTextContent('no probe has landed yet')
+      expect(line).not.toHaveTextContent('checked')
     })
   })
 })

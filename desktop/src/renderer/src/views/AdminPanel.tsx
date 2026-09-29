@@ -87,6 +87,18 @@ function describeGpu(si: SystemInfoResponse): string {
   return 'No GPU detected — CPU only'
 }
 
+/** "how long ago" for a probe, in the units a person reads rather than in raw seconds.
+ *
+ * `null` is a real answer and is rendered as one by the caller — it means the sidecar has not probed
+ * this endpoint yet, which is a different fact from a probe that happened a long time ago.
+ */
+function checkedAgo(seconds: number | null | undefined): string | null {
+  if (seconds == null) return null
+  if (seconds < 1) return 'checked just now'
+  if (seconds < 120) return `checked ${Math.round(seconds)} s ago`
+  return `checked ${Math.round(seconds / 60)} min ago`
+}
+
 export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
   const {
     settings,
@@ -94,6 +106,7 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
     presets,
     recommended,
     captureState,
+    inference,
     loading,
     saving,
     error,
@@ -141,6 +154,12 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
   }
 
   const running = captureState === 'running'
+
+  // The watch's reading, as the panel renders it: `null` from the hook means there is no server to
+  // watch at all (which renders nothing), and `unknown` with a URL is a configured endpoint that has
+  // not been asked yet. Both are distinct from "asked, and the answer was silence".
+  const neverProbed = inference?.state !== 'ok' && inference?.state !== 'unresponsive'
+  const probedAgo = checkedAgo(inference?.age_seconds)
 
   // The Tier A rows name a class by slug, and the snapshot's own roster is the only place
   // that translates one, so build the lookup from it rather than duplicating names here.
@@ -1026,6 +1045,49 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
               with {BACKEND_LABELS[selectedBackend]}.
             </p>
           )}
+
+        {/* What the sidecar's own watch currently sees, which is a different thing from the Test
+            connection result below it: that one is a probe you asked for, this is the standing
+            reading — and beside the address fields it is the only place the *evidence* behind a
+            verdict is legible. Three facts, because one is not enough to act on: the endpoint
+            actually being probed (which is the saved setting, not the box above until you save —
+            that is how a wrong port is told from a server that is simply not running), the failure
+            in the endpoint's own words, and how long ago it was last checked, so a verdict from
+            before the server was started cannot look like one from five seconds ago. */}
+        {inference && (
+          <p
+            className={`field-hint ${inference.state === 'unresponsive' ? 'admin-error' : ''}`}
+            data-testid="inference-watch"
+            data-state={inference.state ?? 'unknown'}
+          >
+            {inference.state === 'ok' && '✓ The server at '}
+            {inference.state === 'unresponsive' && '✗ Nothing is answering at '}
+            {neverProbed && 'Watching '}
+            <code
+              data-testid="inference-watch-url"
+              title={
+                'The address the sidecar is actually probing. It follows the saved settings, so ' +
+                'editing the field above does not move it until you save.'
+              }
+            >
+              {inference.url}
+            </code>
+            {inference.state === 'ok' && ' is answering.'}
+            {inference.state === 'unresponsive' && (
+              <>
+                {': '}
+                <span data-testid="inference-watch-detail">{inference.detail}</span>
+                {inference.backend === 'local_api'
+                  ? '. The app does not start it — run `python local_inference_server.py`, or correct '
+                  : '. Check the connection, or correct '}
+                <code>{inference.backend === 'local_api' ? 'local_api_url' : 'cloud_api_url'}</code>
+                {' below.'}
+              </>
+            )}
+            {neverProbed && ' — no probe has landed yet.'}
+            {probedAgo && ` (${probedAgo})`}
+          </p>
+        )}
 
         <div className="backend-actions">
           <button
