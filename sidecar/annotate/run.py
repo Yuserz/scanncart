@@ -28,6 +28,11 @@ if str(TOOLS_DIR) not in sys.path:  # pragma: no cover - import plumbing
 # `store` comes with the same import-path requirement as `workspace`, and it is imported here
 # rather than inside `main()` because `build_parser` names the labels directory in its help text:
 # a constant that only exists after argument parsing would be a NameError in `--help`.
+from app.loops import (  # noqa: E402  (same requirement, one choice)
+    SERVER_CONCURRENCY_LIMIT,
+    SERVER_LOOP_SETTING,
+    startup_line,
+)
 from workspace import DEFAULT_OUT, MANIFEST_NAME, resolve_extras  # noqa: E402  (needs the path above)
 from .store import ANNOTATIONS_DIRNAME  # noqa: E402  (same, and it is where the name lives)
 
@@ -158,7 +163,24 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - exercised 
 
     port = args.port or pick_port()
     print(f"ANNOTATE_PORT={port}", flush=True)
-    uvicorn.run(build_annotate_app(state), host="127.0.0.1", port=port, log_level="warning")
+    print(startup_line(), flush=True)
+    # The loop is named rather than left to uvicorn, and this server is the one that needs it most:
+    # uvicorn's Windows default is the proactor loop, whose accept path closes the listening socket
+    # on the first aborted connection and never re-arms (`app/loops.py` carries the mechanism). A
+    # labeling pass runs for hours with a browser reloading pages against it - the likeliest way to
+    # abort a connection - and the failure leaves the process alive with nothing listening, so the
+    # page would simply stop loading while `python -m annotate.run` sat there in `tasklist`.
+    uvicorn.run(
+        build_annotate_app(state),
+        host="127.0.0.1",
+        port=port,
+        log_level="warning",
+        loop=SERVER_LOOP_SETTING,
+        # A labeling pass is hours long with a browser in front of it, and a browser that stops
+        # getting answers opens connections rather than waiting: past this many, uvicorn answers
+        # 503 and closes instead of piling the work up behind a page nobody is watching.
+        limit_concurrency=SERVER_CONCURRENCY_LIMIT,
+    )
     return 0
 
 

@@ -9,6 +9,17 @@ lives in its own venv (`.venv-inference`) because its pins on numpy/opencv
 conflict with the sidecar's ultralytics stack. The sidecar never imports this
 module — it only talks to it over HTTP at `local_api_url`.
 
+The serving choices are the one exception to that separation and they go the
+other way: this module imports `app.loops` for the loop, its selector and the
+concurrency bound, the same ones the sidecar, the annotator and the desktop's
+health probe all assume. uvicorn's Windows default is the proactor loop, whose
+accept path closes the listening socket on the first aborted connection and
+never re-arms — and this server is called during a live capture, so a cancelled
+or reloaded request would end it while the process stayed alive; past the bound a
+flood is answered 503 rather than queued behind the model. `app/loops.py` imports
+nothing but the standard library (`asyncio`, `select`, `selectors`) precisely so
+this venv can import it; keep it that way.
+
 Run:
     .venv-inference/Scripts/python.exe local_inference_server.py
 
@@ -93,5 +104,20 @@ app = build_app()
 if __name__ == "__main__":
     import uvicorn
 
+    # Imported here rather than at the top of the module: `app` only resolves after the `sys.path`
+    # insert above, which is also the order `_load_key` reads `app.credentials` in.
+    from app.loops import SERVER_CONCURRENCY_LIMIT, SERVER_LOOP_SETTING, startup_line
+
     print(f"Roboflow inference server (no Docker) on http://{HOST}:{PORT}", flush=True)
-    uvicorn.run(app, host=HOST, port=PORT, log_level="info")
+    print(startup_line(), flush=True)
+    # This is the server a live capture calls, one workflow at a time, so the bound is nowhere near
+    # its own traffic - and shedding is the point: a flood that would otherwise queue behind the
+    # model is answered 503 while the requests that are being served keep their place.
+    uvicorn.run(
+        app,
+        host=HOST,
+        port=PORT,
+        log_level="info",
+        loop=SERVER_LOOP_SETTING,
+        limit_concurrency=SERVER_CONCURRENCY_LIMIT,
+    )

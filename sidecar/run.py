@@ -13,7 +13,37 @@ import time
 # Set before importing anything that pulls in ultralytics.
 os.environ.setdefault("YOLO_AUTOINSTALL", "false")
 
+from app.loops import (  # noqa: E402 - must follow the env guard above
+    SERVER_CONCURRENCY_LIMIT,
+    SERVER_LOOP_SETTING,
+    startup_line,
+)
 from app.main import build_app  # noqa: E402 - must follow the env guard above
+
+
+def server_config(app, port: int):
+    """The uvicorn config `main()` serves, in a function so the loop choice is testable.
+
+    `loop` is an import string rather than one of uvicorn's own names on purpose: its Windows
+    default is the proactor loop, whose accept path *closes the listening socket* on the first
+    aborted connection and never re-arms - the process stays alive and the API is gone for good,
+    which is the failure this app was living with. `app/loops.py` carries the mechanism and the
+    three-line reproduction; this function exists so a test resolves the string through uvicorn's
+    own `get_loop_factory()` instead of trusting either half of it.
+
+    `limit_concurrency` is the second half of that module's contract, and the reason it is here as
+    well as on the other two servers: past the bound uvicorn answers 503 and closes the connection
+    instead of working on it, so a flood of requests is shed rather than queued.
+    """
+    import uvicorn
+
+    return uvicorn.Config(
+        app,
+        host="127.0.0.1",
+        port=port,
+        loop=SERVER_LOOP_SETTING,
+        limit_concurrency=SERVER_CONCURRENCY_LIMIT,
+    )
 
 
 def bind_port(preferred: int) -> socket.socket:
@@ -97,8 +127,8 @@ def main() -> None:
     sock = bind_port(8765)
     port = sock.getsockname()[1]
     print(f"SIDECAR_PORT={port}", flush=True)
-    config = uvicorn.Config(build_app(), host="127.0.0.1", port=port)
-    uvicorn.Server(config).run(sockets=[sock])
+    print(startup_line(), flush=True)
+    uvicorn.Server(server_config(build_app(), port)).run(sockets=[sock])
 
 
 if __name__ == "__main__":
