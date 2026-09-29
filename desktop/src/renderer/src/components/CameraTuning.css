@@ -77,6 +77,15 @@
   min-width: 0;
 }
 
+/* The card collapses by setting `hidden` on its groups (React toggles the attribute), and that is
+   all it does — `display: none` from the UA sheet for `[hidden]` loses to the author `display: flex`
+   right above, whatever the specificity, because author rules beat UA ones. Spelled out here because
+   without it the toggle swapped its arrow and nothing else: the controls stayed on screen while
+   `aria-expanded` said `false`, which is the shape of a broken control that looks like it worked. */
+.tuning-group[hidden] {
+  display: none;
+}
+
 /* Equal thirds. A field row needs ~200px of label, value and slider before its label starts
    wrapping, so starving one group to feed another only moves the wrapped row somewhere else —
    measured, unequal weights bought Detection nothing and cost Stream three wrapped labels.
@@ -219,8 +228,12 @@
   margin-top: 2px;
 }
 
-/* Below the width the band's columns need: one column per group becomes one row per group, and
-   the page scrolls (LiveView's own query below 900px). */
+/* Below the width the band's columns need at all: one column per group becomes one row per group,
+   and the page scrolls. This is the fallback for an operator who *opened* the band on a window
+   narrower than the canvas — the card closes itself below `TUNING_BAND_MIN_WIDTH`, so in the
+   normal state there is no band here to lay out or to scroll. Wrapping alone (the labels already
+   wrap rather than truncate) was the cheaper option and put three sentence-length labels on three
+   lines each; a row per group is the arrangement that stays readable. */
 @media (max-width: 900px) {
   .tuning-body {
     flex-direction: column;

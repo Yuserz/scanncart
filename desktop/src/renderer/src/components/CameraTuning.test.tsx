@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ApiClient, CameraProfileResponse } from '../lib/api'
 import { baseSettings, makeDeps } from '../test/fakes'
 import { CameraTuning } from './CameraTuning'
@@ -1054,5 +1054,93 @@ describe('the frame-edge phantom filter toggle', () => {
 
     const hint = screen.getByText(/all four frame edges/i)
     expect(hint).toHaveTextContent(/1\.4%|fills the frame/i)
+  })
+})
+
+// Where the card *starts* is a function of the window it is drawn in, not a taste: all 13 of its
+// controls need the canvas's width, and the band's row needs the height the rail's own content is
+// using, so on a window that has neither the card opens for the preview and the item log instead.
+// jsdom has no `matchMedia`, which is why the fallback is the designed-at case (open) — every test
+// above renders with no `matchMedia` at all and expects the controls.
+describe('CameraTuning — where it starts', () => {
+  function stubQuery(matches: boolean): { fire: (next: boolean) => void } {
+    const listeners: ((event: { matches: boolean }) => void)[] = []
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      media: query,
+      matches,
+      addEventListener: (_: 'change', cb: (event: { matches: boolean }) => void) =>
+        listeners.push(cb),
+      removeEventListener: () => {}
+    }))
+    return {
+      fire: (next) => listeners.forEach((cb) => cb({ matches: next }))
+    }
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('asks the window whether the band fits, and shows the controls when it does', async () => {
+    const queries: string[] = []
+    vi.stubGlobal('matchMedia', (query: string) => {
+      queries.push(query)
+      return {
+        media: query,
+        matches: true,
+        addEventListener: () => {},
+        removeEventListener: () => {}
+      }
+    })
+    renderCard()
+
+    expect(queries[0]).toBe('(min-width: 1024px) and (min-height: 705px)')
+    expect(screen.getByRole('button', { name: /Camera tuning/ })).toHaveAttribute(
+      'aria-expanded',
+      'true'
+    )
+    expect(await screen.findByLabelText('Brightness')).toBeInTheDocument()
+  })
+
+  it('starts shut on a window the band does not fit in, and keeps the readout', async () => {
+    stubQuery(false)
+    renderCard()
+
+    const toggle = screen.getByRole('button', { name: /Camera tuning/ })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    await screen.findByLabelText('Brightness')
+    // Collapsed by React setting `hidden` on each group rather than unmounting them — and that
+    // attribute is the whole mechanism, which is why `CameraTuning.css` spells it out: `display:
+    // none` from the UA sheet loses to the group's own `display: flex`, so without that rule the
+    // toggle swapped its arrow and left every control on screen.
+    expect(screen.getByLabelText('Brightness').closest('.tuning-group')).toHaveAttribute('hidden')
+    // The device's own column stays: its name and the quality readings are a readout about the
+    // running capture rather than a control, which is what makes a shut band worth its 100-odd
+    // pixels. Calibrate goes with the controls it belongs to — an offer to stop the feed is not
+    // something a shut card should be making.
+    expect(screen.getByTestId('tuning-quality').closest('.tuning-group')).not.toHaveAttribute(
+      'hidden'
+    )
+    expect(screen.getByTestId('tuning-calibrate').closest('.tuning-group')).toHaveAttribute(
+      'hidden'
+    )
+  })
+
+  it('follows the window across the threshold, and still obeys a deliberate toggle', async () => {
+    const stub = stubQuery(true)
+    renderCard()
+    const toggle = screen.getByRole('button', { name: /Camera tuning/ })
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+
+    // A window dragged below the canvas closes the band — the moment the question changes is the
+    // crossing itself, so a resize inside a size class leaves a manual choice alone.
+    stub.fire(false)
+    await waitFor(() => expect(toggle).toHaveAttribute('aria-expanded', 'false'))
+
+    await userEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+
+    stub.fire(true)
+    await waitFor(() => expect(toggle).toHaveAttribute('aria-expanded', 'true'))
   })
 })

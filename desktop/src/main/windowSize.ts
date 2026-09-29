@@ -7,18 +7,27 @@
 // disagree with the CSS it exists to serve.
 //
 // The canvas is a 1024x768 (4:3) tablet in landscape, which is the layout the Live view is drawn
-// for: the feed and the rail (stats strip, camera tuning, item log) side by side, with the stacked
-// layout below the 900px breakpoint the CSS documents. So the window opens on the canvas and cannot
-// be grown past it — `maxWidth`/`maxHeight` are the canvas, deliberately: this is a tablet-sized
-// app, and a window stretched across a desktop monitor is a layout nothing here was designed or
-// tested against (`--rail-min` would simply get the space).
+// for: the feed and the rail (stats strip, item log) side by side, with the camera band under both.
+// So the window opens on the canvas and cannot be grown past it — `maxWidth`/`maxHeight` are the
+// canvas, deliberately: this is a tablet-sized app, and a window stretched across a desktop monitor
+// is a layout nothing here was designed or tested against (`--rail-min` would simply get the space).
 //
-// The floor is derived from the same canvas rather than chosen again: three quarters of it per axis
-// (768x576), which keeps the canvas's own ratio and lands on the tablet's portrait *width*, so the
-// smallest window is the one where the layout switches to its stacked form rather than a size it
-// has never been asked to draw. That floor is deliberately *above* the old 720x480 — nothing that
-// worked there stops working, and the app no longer offers a size below the breakpoint it is
-// designed to stack at.
+// The floor is not a scale of the canvas on both axes, because the two axes fail differently and
+// were measured rather than chosen:
+//
+//   * Width is a ratio, because the layout degrades smoothly: the rail takes its `clamp()` minimum
+//     (280px) and the feed column keeps the rest. Three quarters of the canvas (768) is where the
+//     preview still has a column worth watching next to it.
+//   * Height is a *budget*, because it runs out all at once. With the band shut, the console needs
+//     116px of chrome and padding around the body (nav, toolbar, padding, the gap above the body),
+//     the band, a 12px gap, and a first row tall enough for the rail's own content — stats strip,
+//     flags line and the item log's 4-row floor, 356px. That first row is what sets the floor: at
+//     670 the rail fits without scrolling at both widths the window allows.
+//
+// The band's own threshold is the pair that makes those numbers hold: below either one it closes
+// (`TUNING_BAND_MIN_WIDTH`/`TUNING_BAND_MIN_HEIGHT`), so the narrow sizes never have to fit its
+// columns and the short ones never have to fit its row. What is left at the floor — preview, stats,
+// flags, item log, and a one-line camera readout — fits with room to spare.
 //
 // Electron-free and pure, the same shape as `singleInstance.ts` and `sidecarHealth.ts`, so the
 // bounds can be asserted without launching a window.
@@ -36,25 +45,50 @@ export interface WindowBounds {
 /** The canvas everything else is derived from: a 1024x768 (4:3) tablet in landscape. */
 export const TABLET = { width: 1024, height: 768 } as const
 
-/** How much of the canvas the window may shrink to, per axis — three quarters, on both. */
-export const MIN_SCALE = 0.75
+/** How much of the canvas's width the window may shrink to — three quarters, 768px. */
+export const MIN_WIDTH_SCALE = 0.75
+
+// The shortest window the console fits in — the budget above, not a scale of the canvas — and the
+// *narrow* sizes are the binding case: below 900px the collapsed band's readout goes full-width and
+// stands 132px rather than 116 (measured), so the budget there is 116 + 132 + 12 + 356 = 616 of
+// content, or a 654px window. 670 is that with slack enough to absorb a wrapped label. At three
+// quarters of the canvas the same budget would be short by 78px, which is how the layout came to
+// stack and scroll there.
+export const MIN_HEIGHT = 670
+
+/** The width at which the camera band has room for its columns, and so opens by default. */
+export const TUNING_BAND_MIN_WIDTH = TABLET.width
+
+/**
+ * The content height at which the band's row, the gap under it and the rail's own content all fit:
+ * 218 + 12 + 356 of body, plus the 116 of chrome and padding above it, is 702 — and a few pixels
+ * of slack over that, because the band's row grows when one of its hints appears. A *content*
+ * height, because that is what `matchMedia` reports: the renderer's viewport is the window's
+ * content area, and the floor above is in window units.
+ */
+export const TUNING_BAND_MIN_HEIGHT = 705
+
+/** The narrowest the window may be, before a smaller canvas (or a guard) applies. */
+export const MIN_WIDTH = Math.round(TABLET.width * MIN_WIDTH_SCALE)
 
 /**
  * The four bounds a `BrowserWindow` needs, all read off one canvas.
  *
- * Derived rather than listed so the standard is one fact: another canvas (a different tablet, or a
- * larger one) moves the opening size, both maxima and both minima together, and cannot produce a
- * floor above the ceiling or an opening size outside it.
+ * The width floor follows the canvas; the height floor is the measured budget above. Both are
+ * clamped by their own ceiling, so a canvas smaller than this layout's needs can never produce a
+ * floor above the size it opens at — the relationship the four hand-written numbers did not have.
  */
 export function tabletWindowBounds(
-  canvas: { width: number; height: number } = TABLET,
-  scale: number = MIN_SCALE
+  canvas: { width: number; height: number } = TABLET
 ): WindowBounds {
   return {
     width: canvas.width,
     height: canvas.height,
-    minWidth: Math.round(canvas.width * scale),
-    minHeight: Math.round(canvas.height * scale),
+    // The width floor follows the canvas (a wider tablet gets a wider floor, and neither can cross
+    // the size it opens at); the height floor is this layout's measured budget, so a taller canvas
+    // does not raise it.
+    minWidth: Math.min(canvas.width, Math.round(canvas.width * MIN_WIDTH_SCALE)),
+    minHeight: Math.min(canvas.height, MIN_HEIGHT),
     maxWidth: canvas.width,
     maxHeight: canvas.height
   }

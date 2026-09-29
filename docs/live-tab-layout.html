@@ -75,7 +75,7 @@ ul { list-style: none; padding: 0; }
   width: 1024px; height: 768px; background: var(--bg); border: 1px solid var(--border);
   border-radius: 6px; overflow: hidden; display: flex; flex-direction: column; position: relative;
 }
-.frame.small { width: 768px; height: 576px; }
+.frame.small { width: 768px; height: 670px; }
 .frame-label { position: absolute; top: -22px; left: 0; font-size: 11px; color: var(--dim); font-family: var(--font-mono); }
 .tip { margin-top: 12px; padding: 8px 10px; border: 1px solid #7c5a12; border-radius: 6px; background: #2a2110; color: #ffb020; font-size: 11.5px; line-height: 1.45; max-width: 1000px; }
 
@@ -293,7 +293,7 @@ input[type=range] { flex: 0 0 72px; width: 72px; accent-color: var(--accent); ma
     <fieldset>
       <legend>Window</legend>
       <label><input type="radio" name="win" value="1024" checked /><span>1024×768 (tablet default; the window's content area is ~730 high)</span></label>
-      <label><input type="radio" name="win" value="768" /><span>768×576 (window floor — below what the console needs)</span></label>
+      <label><input type="radio" name="win" value="768" /><span>768×670 (the window floor)</span></label>
     </fieldset>
 
     <fieldset>
@@ -391,6 +391,29 @@ input[type=range] { flex: 0 0 72px; width: 72px; accent-color: var(--accent); ma
         43%, because the band takes 215px and the camera delivers 4:3, so the preview is
         height-bound inside a column it could otherwise fill. That is the trade the layout makes,
         and it is the one number here that argues for A.
+      </p>
+
+      <h3>The window floor, and what it took to fit at it</h3>
+      <p>
+        The window standard's floor was <b>768×576</b>, and this layout did not fit there: at that
+        width the body stacked — preview, rail, band — for <b>1296px of content in 494px</b> of
+        view, so the page scrolled <b>802px</b>, 2.6 screens of a tab whose point is one screen.
+        The fix is not a second narrow layout but the band closing itself: it needs ~966px of body
+        width for its four columns — the canvas gives it 977 — and its own row plus the rail's
+        content in height, so below either threshold (<code>TUNING_BAND_MIN_WIDTH</code>,
+        <code>TUNING_BAND_MIN_HEIGHT</code>) it starts shut and keeps the device readout. The
+        stacked mode was deleted with it: a grid that never had to fit the band fits the preview
+        and the rail at every width, and the floor became what the console needs with the band
+        shut — <b>768×670</b>, measured, in <code>windowSize.ts</code>.
+      </p>
+      <p>
+        Measured in the app after the change: at <b>1024×730</b> (the canvas, band open) the page
+        does not scroll, the rail does not scroll, all 13 controls are visible, and the preview is
+        513×384. At <b>1024×632</b> (the floor's content area, band shut) neither scrolls either,
+        the item-log card gets 139px and the preview 517×388. At <b>768×632</b> (the floor's other
+        corner) the band is 132px rather than 116 — the collapsed readout goes full-width below
+        900px, which is why the floor is the height it is — and the rail still gets its rows
+        without scrolling.
       </p>
 
       <h3>The flicker, measured</h3>
@@ -719,7 +742,7 @@ function render() {
       </nav>
       ${state.lay === 'a' ? layoutA(state) : state.lay === 'c' ? layoutC(state) : layoutB(state)}
     </div>`;
-  document.getElementById('flabel').textContent = `${state.win} × ${state.win === 768 ? 576 : 768}`;
+  document.getElementById('flabel').textContent = `${state.win} × ${state.win === 768 ? 670 : 768}`;
   measure();
 }
 
@@ -774,7 +797,7 @@ function measure() {
   const tips = {
     a: 'This is the 42px jump the record measures: `repeat(auto-fit, minmax(90px, 1fr))` plus a tile that appears on one frame in twenty re-wraps the strip, which resizes the flex column and drags the tuning card and the item log with it.',
     b: 'The flags line under the tiles is reserved at a pinned 18px whether or not anything fired, so `suppressed` and `shed` can come and go without moving anything — the same job `OVERLAY_HOLD_MS` does for the overlay boxes.',
-    c: 'Worth comparing with B at 768×576: with the rail taking a share of the width, both the preview and the tuning column are squeezed at the window floor.'
+    c: 'Worth comparing with B at 768×670: with the rail taking a share of the width, both the preview and the tuning column are squeezed at the window floor.'
   };
   document.getElementById('tip').textContent = tips[state.lay];
 }

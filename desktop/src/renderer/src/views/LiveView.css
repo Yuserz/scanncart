@@ -7,12 +7,14 @@
   background: var(--bg);
   flex: 1;
   min-height: 0;
-  /* Row layout distributes a fixed height budget and each card scrolls
-     itself, so nothing should overflow here. The stacked layout below 900px
-     is the opposite: it drops the height budget and grows to natural content
-     height, so the page itself has to scroll or the item log and the
-     Save/Revert bar become unreachable. */
-  overflow: hidden;
+  /* The grid distributes a fixed height budget and each card scrolls itself, so a window at the
+     size this layout was drawn for never needs this. It is `auto` rather than `hidden` for the one
+     case the operator can ask for: the camera band expanded at a width below the canvas, where its
+     columns wrap taller than the space left. The rail absorbs most of that, and this is the
+     backstop — a clipped page there would hide Save/Revert and the band's lower rows behind a
+     boundary nothing on screen explains. */
+  overflow-y: auto;
+  overflow-x: hidden;
   max-width: 1600px;
   width: 100%;
   margin: 0 auto;
@@ -83,8 +85,9 @@
    a wrapper element whose only job is to hold the first row together.
 
    Row 1 keeps a floor: if the band ever wants more height than is left, the preview stops
-   shrinking before it disappears. Both are reachable only below the widths the window standard
-   allows, which is what the 900px query at the end of this file covers. */
+   shrinking before it disappears, and the rail — which is `overflow-y: auto` — gives up its
+   rows before the grid gives up the preview. The window standard's floor is what keeps the
+   band-and-rail budget inside the smallest window; see `windowSize.ts`. */
 .live-body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) clamp(280px, 33%, 340px);
@@ -448,78 +451,15 @@
   color: var(--accent);
 }
 
-/* Stacked (narrow) layout. Kept as ONE block at the end of the file: these
-   overrides share specificity with the base rules above, so source order is
-   what makes them win inside the media query -- don't move them earlier.
+/* There is no narrow-width layout here, and that is the point.
 
-   This is the width below which the band's columns stop fitting: the grid is a two-column
-   layout, so it gives way to the source order -- the preview, then the rail, then the camera
-   controls -- and the page itself scrolls. `LiveView` documents the width the console needs. */
-@media (max-width: 900px) {
-  .live-body {
-    /* Stacked mode keeps natural content height (live-view scrolls);
-       there is no height budget to distribute vertically. */
-    display: flex;
-    flex-direction: column;
-    flex: none;
-  }
-
-  /* Both are grid tracks above; in column mode they would apply as a
-     vertical grow ratio instead, claiming leftover height as blank
-     padding. Reset both to their natural content height when stacked. */
-  .feed-col,
-  .side-rail {
-    flex: none;
-  }
-
-  /* Plain block in stacked mode; the wrapper goes width-driven
-     (aspect-ratio still supplies the height). `container-type: size` would
-     collapse the now content-driven height to 0 -- revert it. */
-  .feed-col {
-    display: block;
-    container-type: normal;
-  }
-
-  .preview-wrapper {
-    width: 100%;
-  }
-
-  .side-rail {
-    min-width: 0;
-    width: 100%;
-    /* Content-height cards in stacked mode; clipping them here would hide
-       whatever the capped .item-log below does not. */
-    overflow: visible;
-  }
-
-  .live-view {
-    overflow-y: auto;
-  }
-
-  .live-warning.has-action {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .live-warning.has-action > button {
-    margin-left: 0;
-  }
-
-  .tuning-card {
-    overflow: visible;
-  }
-
-  .tuning-body {
-    overflow-y: visible;
-  }
-
-  /* No height budget in stacked mode -- cap the log so it scrolls
-     instead of growing the page unboundedly. */
-  .item-log {
-    flex: none;
-    max-height: 200px;
-  }
-}
+   There used to be one: below 900px the body became a column — preview, rail, band — and the page
+   grew to its natural height, which at 768px wide came to 1296px of content in 494px of window. It
+   could only ever scroll, and it existed because the band's four columns stop fitting well above
+   that width. The band now closes itself below the canvas instead (`TUNING_BAND_MIN_WIDTH`, see
+   `CameraTuning`), so a small window shows the preview, the stats strip, the flags line and the
+   item log on one screen with the controls one click away — a single layout that degrades, rather
+   than two layouts that meet at a width neither was measured at. */
 
 /* Sidecar error banner: a failed start/stop, or a capture that died mid-run. */
 /* A standing condition rather than a failure: capture is running fine, at the wrong scale.

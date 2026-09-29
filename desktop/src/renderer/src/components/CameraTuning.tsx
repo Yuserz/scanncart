@@ -2,8 +2,27 @@ import { useEffect, useRef, useState, type JSX } from 'react'
 import { useSidecarSettings, type SettingsDeps } from '../hooks/useSidecarSettings'
 import type { SettingsPayload, SettingsUpdate } from '../lib/api'
 import { SETTINGS_FIELDS, SETTINGS_GROUPS, type FieldMeta } from '../lib/settingsFields'
+import { TUNING_BAND_MIN_HEIGHT, TUNING_BAND_MIN_WIDTH } from '../../../main/windowSize'
 import { Spinner } from './Spinner'
 import './CameraTuning.css'
+
+// The band is open where it fits and shut where it does not, on both axes — the width its four
+// columns need and the height its row plus the rail's own content need, both imported from the
+// window standard rather than restated here, because the fact is about the controls' size and not
+// about this window's. `matchMedia` is absent under jsdom, and a browser that cannot answer the
+// question is not evidence that the answer is no: the fallback is the designed-at case.
+const BAND_FITS_QUERY = `(min-width: ${TUNING_BAND_MIN_WIDTH}px) and (min-height: ${TUNING_BAND_MIN_HEIGHT}px)`
+
+// `matchMedia` and its listener are read through this pair so the answer comes from the browser
+// rather than from a prop nothing else here needs, and so a jsdom (which has no `matchMedia`) is
+// not read as "the band does not fit": the designed-at case is the fallback.
+function widthQuery(): MediaQueryList | null {
+  return typeof window.matchMedia === 'function' ? window.matchMedia(BAND_FITS_QUERY) : null
+}
+
+function bandFits(): boolean {
+  return widthQuery()?.matches ?? true
+}
 
 export interface CameraTuningProps {
   port: number
@@ -64,12 +83,27 @@ export function CameraTuning({
     pollHealth: deps?.pollHealth ?? false,
     pollCameras: deps?.pollCameras ?? false
   })
-  // Open on mount. This card is the Live tab's control panel rather than a disclosure a
-  // visitor has to find: the layout is built to show all 13 of its controls at once, and a
-  // panel that starts shut makes that a claim nobody sees. The toggle stays, because an
-  // operator who wants the item log a few rows taller should be able to trade the controls
-  // away for it.
-  const [open, setOpen] = useState(true)
+  // Open at the canvas, shut where it does not fit. This card is the Live tab's control panel
+  // rather than a disclosure a visitor has to find: at the size the app opens at, all 13 of its
+  // controls are on screen at once and a panel that starts shut makes that a claim nobody sees.
+  // Below that size it starts collapsed instead, which is what keeps the preview, the stats and
+  // the item log on one screen with the controls one click away: the four field columns need the
+  // window's width, and the band's own row needs the height the rail's stats strip and item log
+  // are using. The toggle stays either way, so the trade is the operator's — controls, or a
+  // taller item log — and opening it anyway is allowed; the rail gives up its bottom rows rather
+  // than the app refusing to draw it.
+  //
+  // A manual toggle is not undone by resizing *within* a size class; crossing either threshold is
+  // what resets the band to that side's default, the only moment the question changes.
+  const [open, setOpen] = useState(() => bandFits())
+
+  useEffect(() => {
+    const query = widthQuery()
+    if (query === null) return
+    const onChange = (event: MediaQueryListEvent): void => setOpen(event.matches)
+    query.addEventListener('change', onChange)
+    return () => query.removeEventListener('change', onChange)
+  }, [])
 
   // Calibrate needs a visible target, and "Camera 0" is what cameras.py
   // exists to replace. The device list is not an option here — enumerating
