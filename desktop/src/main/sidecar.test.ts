@@ -79,6 +79,40 @@ describe('SidecarSupervisor', () => {
     expect(onPort).not.toHaveBeenCalled()
   })
 
+  it('forwards the sidecar’s own stdout lines to a sink, port line excluded', () => {
+    // Without a sink these lines were read and dropped: `EVENT_LOOP=` reached a log only when a
+    // human ran the sidecar by hand, never when the app launched it.
+    const onStdoutLine = vi.fn()
+    const { sup, child, onPort } = makeSupervisor({ onStdoutLine })
+    sup.start()
+    child.emitStdout('SIDECAR_PORT=8765\n')
+    // CRLF, as Windows writes it: the \r must not ride into the log.
+    child.emitStdout('EVENT_LOOP=_WindowsSelectorEventLoop\r\n')
+    expect(onPort).toHaveBeenCalledWith(8765)
+    expect(onStdoutLine).toHaveBeenCalledTimes(1)
+    expect(onStdoutLine).toHaveBeenCalledWith('EVENT_LOOP=_WindowsSelectorEventLoop')
+  })
+
+  it('forwards only whole stdout lines, after reassembling a split one', () => {
+    const onStdoutLine = vi.fn()
+    const { sup, child } = makeSupervisor({ onStdoutLine })
+    sup.start()
+    child.emitStdout('EVENT_LO')
+    expect(onStdoutLine).not.toHaveBeenCalled()
+    child.emitStdout('OP=_WindowsSelectorEventLoop\n')
+    expect(onStdoutLine).toHaveBeenCalledWith('EVENT_LOOP=_WindowsSelectorEventLoop')
+  })
+
+  it('forwards the watchdog line even when the port never arrived', () => {
+    // The launch that dies before the handshake is exactly when stdout matters most.
+    const onStdoutLine = vi.fn()
+    const { sup, child, onPort } = makeSupervisor({ onStdoutLine })
+    sup.start()
+    child.emitStdout('[sidecar] parent process is gone — exiting\n')
+    expect(onPort).not.toHaveBeenCalled()
+    expect(onStdoutLine).toHaveBeenCalledWith('[sidecar] parent process is gone — exiting')
+  })
+
   it('drains stderr and forwards it to onStderr (prevents pipe-buffer deadlock)', () => {
     const onStderr = vi.fn()
     const { sup, child } = makeSupervisor({ onStderr })

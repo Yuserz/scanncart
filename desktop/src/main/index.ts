@@ -46,7 +46,15 @@ function startSidecar(): void {
       console.error(`[sidecar] exited unexpectedly (code ${code})`)
       sidecarPort = null
     },
-    onStderr: (text) => process.stderr.write(text)
+    onStderr: (text) => process.stderr.write(text),
+    // The sidecar's own stdout prints, which are the ones an operator needs and no log carried:
+    // `run.py` announces `EVENT_LOOP=…` right after the port (see `app/loops.py`), and that line is
+    // how you tell the proactor wedge apart from a second problem without instrumenting the
+    // machine. Dropping it here left the choice visible everywhere except the log of the app that
+    // runs it. `console.log` rather than `process.stderr.write` (where uvicorn's own lines go):
+    // these are the sidecar's app-level messages, and the `[sidecar]` prefix is what keeps them
+    // legible beside the framework's.
+    onStdoutLine: (line) => console.log(`[sidecar] ${line}`)
   })
   supervisor.start()
 }
