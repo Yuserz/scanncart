@@ -231,6 +231,71 @@ cd desktop && npm run dev   # electron-vite dev with HMR, opens a window
   auto-restart; if the Python process dies before printing `SIDECAR_PORT=`,
   the renderer polls for a port indefinitely and `[data-testid="nav-live"]`
   never appears. The driver retries the whole launch up to 4×.
+- **The API can outlive its own listening socket (fixed Sep 2026).** A sidecar
+  process that is *alive* in `tasklist` — camera open, threads running, `curl`
+  to `/api/health` simply hanging — with **nothing listening** on its port. The
+  app looks frozen while everything on this side reports healthy. This was
+  Windows-only and is now fixed: uvicorn's Windows default is
+  `ProactorEventLoop`, and that loop's accept path closes the listening socket
+  on **any** failed accept and never re-arms (`asyncio/proactor_events.py`,
+  `BaseProactorEventLoop._start_serving`), so the first aborted connection — a
+  renderer reloading mid-request, a probe cancelled when a window closes — logs
+  `Accept failed on a socket` with `OSError: [WinError 64] The specified network
+  name is no longer available` and ends the server for good. Every uvicorn server
+  in the repo now hands uvicorn the selector loop instead (`app/loops.py` carries
+  the mechanism and a three-line reproduction) — `run.py`, the annotator's server
+  and the no-Docker inference server, which all had the same Windows default, and
+  the annotator is the one where it hurts most: a labeling pass is a browser
+  reloading pages at a server that has to outlive it. On the selector loop the same event is one logged line and the listener keeps accepting. Each of the
+  three prints which loop it is on as it starts (`EVENT_LOOP=…`, beside the port
+  it announces), so confirming the choice on a running build is a `grep` rather
+  than an inference — and a startup log without that line is an older build. The
+  sidecar's own stdout is forwarded to the main process's log with a `[sidecar]`
+  prefix, so the line shows up as
+  `[sidecar] EVENT_LOOP=SelectorLoop(selector=BatchedSelectSelector)` when the app
+  is what launched it (uvicorn's own lines come through stderr, unprefixed, which
+  is how the two are told apart in the same stream). The part in parentheses is
+  the second half of the same fix and the one to look for if the app dies under
+  load instead of hanging: `select()` takes a fixed number of descriptors — 512 in
+  one call, 513 raising `ValueError: too many file descriptors in select()` out of
+  the event loop — and a flood of connections that never sends anything is
+  invisible to every request limit there is, so it is the *selector* that has to
+  survive it. `BatchedSelectSelector` polls in batches and the same 520
+  held-open connections that used to end a server now leave it listening; each
+  server also caps concurrent connections (`SERVER_CONCURRENCY_LIMIT`, past which
+  uvicorn answers **503** and closes), which is what a request flood sees. To
+  recognise the shape on an older build, or to rule
+  it out: the living process is the clue — `netstat -ano | findstr :8765` shows
+  **no LISTENING row** while the pid is still in `tasklist`. The app no longer
+  needs to be told either: the main process probes `/api/health` (three
+  consecutive failures, each with its own deadline) and raises a
+  `[data-testid="sidecar-unresponsive"]` notice over both views, which is the
+  same shape stated on screen instead of in `netstat` — and a shed `503` counts
+  as a failure there, which is the right call: a sidecar refusing to serve is not
+  one this window can use. It names its own
+  recovery — quit and start the app again, since nothing in the renderer can
+  re-bind the socket — and a driver looking for a healthy launch should assert
+  that notice is *absent*, because a wedged sidecar otherwise looks exactly like
+  one that has not been used yet.
+- **The backend's inference server can be silent too, and the app now says so.**
+  `local_api` calls `sidecar/local_inference_server.py`, which nobody starts but
+  you: it is not a child of the app, so a crashed or forgotten server leaves a
+  run where the camera opens, frames stream, and not one item is ever logged —
+  the detector's first frame is what fails, so the capture stops and
+  `live-error` explains that without explaining *why*. The sidecar probes the
+  configured URL in the background (`app/inference_health.py`; same
+  transitions-only shape as the desktop's own health monitor, and **any HTTP
+  response counts as an answer**, so a keyless workflow's 401 still reads as up)
+  and pushes the verdict over the websocket. The Live view renders
+  `[data-testid="inference-unresponsive"]` above the error banner, ungated by
+  capture state and not dismissible, naming the two fixes (`python
+  local_inference_server.py`, or `detector_backend` in Admin) plus the probe's
+  own detail. Two consequences for a driver: an empty item log on a `local_api`
+  run is a failure state rather than a quiet scene, so check that notice before
+  believing an empty-counter measurement; and because it is also sent on connect
+  (the handshake replays it, like the capture state and the class list), asserting
+  it *absent* is a legitimate readiness check for `local_api` even though nothing
+  in the window can probe the endpoint for itself.
 - **This machine intermittently kills processes during native DLL loads**
   (observed July 2026: even `import ctypes` died ~20% of tries in bad windows,
   correlating with `LiveKernelEvent` 141 GPU resets in the Application event
@@ -280,7 +345,10 @@ cd desktop && npm run dev   # electron-vite dev with HMR, opens a window
 `data-testid` attributes: `nav-live`, `nav-admin`, `state`, `conn`,
 `preview-placeholder`, `stats`, `item-log`, `det-box`, `hardware-info`,
 `save-settings`, `restore-defaults`, `live-error` (dismissible banner for a
-capture that died, e.g. a stalled camera), and for the dataset panel
+capture that died, e.g. a stalled camera), `inference-unresponsive` (the notice
+that the selected backend's server is not answering, above `live-error` in the
+Live view, present without pressing anything), `sidecar-unresponsive` (the notice
+that the sidecar is not answering, over both views), and for the dataset panel
 `dataset-progress` → `dataset-summary` / `dataset-unavailable` +
 `dataset-backlog` (one `dataset-backlog-row` per cell, with `dataset-backlog-left`
 and `dataset-backlog-null` inside them) / `dataset-backlog-summary` /
