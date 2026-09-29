@@ -27,7 +27,11 @@ one-to-one and class-for-class at the generation's own geometry:
 
 `tools/unsure_probe.py` re-derives all three of those rows from the repo (`make verify-unsure`), and
 that is the only reason the third can be trusted: its figures were first produced by scratch
-harnesses that were deleted. The clamp rule keeps its own tool and its own five claims.
+harnesses that were deleted. The figures themselves are written down **once**, in `MEASURED_COST`
+below - these rows, `Settings`' comments beside the three flags and the desktop's own field hints
+are all checked against it (`tests/test_cost_figures.py`), and that tool fails its own run when a
+fresh measurement stops agreeing with it, so the table above cannot quietly outlive its measurement.
+The clamp rule keeps its own tool and its own five claims.
 
 The two shape populations **overlap**, and that is the honest finding rather than a tuning problem:
 of the 252 ground-truth-matched detections the frame-filling rule would drop, the closest to the
@@ -113,6 +117,81 @@ CLASS_REASON = "class"
 CLAMPED_REASON = "clamped"
 FRAME_FILLING_REASON = "frame_filling"
 UNSURE_REASON = "unsure"
+
+
+@dataclass(frozen=True)
+class RuleCost:
+    """The measured price of the rules, and the one place those figures are written down.
+
+    A record rather than a paragraph because the same four numbers are quoted in six files that
+    cannot import each other: this module's own docstring, `Settings`' comments beside the three
+    flags, `CLAUDE.md`, this module's own tests, and the desktop's settings defaults and field
+    hints. Each was hand-typed,
+    and the frame-filling rule's price is what that cost: the descriptions in `Settings` and both
+    desktop hints had kept a denominator and a count from a deleted scratch harness, while the
+    table above them had already been re-derived from the export - in the same commit that added
+    the tool which contradicted them. The retired figures are tombstones in
+    `tests/test_cost_figures.py`, which is also why this paragraph describes them instead of
+    quoting them: the guard cannot tell a live number from one being remembered.
+
+    So the counts live here and nowhere else. The prose copies are **checked against** them
+    (`tests/test_cost_figures.py`, which also refuses the retired spellings), and
+    `tools/unsure_probe.py` fails its own run when a fresh measurement stops agreeing with this
+    record under `--strict` - so re-measuring forces the figure to move here rather than leaving
+    every copy behind it, none of which a re-run ever touches. Nothing here is derived from the
+    weights: this is a measurement of one operating point, quoted at it, and the tool prints that
+    operating point beside its answer.
+    """
+
+    #: Labelled frames in the whole v1 export, and the detections the model produced over them.
+    frames: int
+    predictions: int
+    #: Detections matching their ground truth one-to-one and class-for-class: the denominator every
+    #: share below is a fraction of, and the population the three costs are comparable on.
+    matched: int
+    #: Each rule's own count on that population, under the first rule that refused the detection -
+    #: the order `accept_detections` applies them in.
+    clamp: int
+    frame_filling: int
+    unsure: int
+    #: The `conf_threshold` this was measured at. Carried rather than assumed because a cost quoted
+    #: without it is not reproducible: a phantom is a low-confidence detection, so the counts scale
+    #: with the threshold and the tool refuses to compare its run against this record without it.
+    conf: float = 0.5
+
+    @property
+    def rules(self) -> dict[str, int]:
+        """The three shape rules' counts, keyed by the reason a detection is refused under.
+
+        Keyed by the reason vocabulary rather than by a spelling of each rule's name, so a reader
+        that already holds `CLAMPED_REASON` does not need a second mapping to find its price.
+        """
+        return {
+            CLAMPED_REASON: self.clamp,
+            FRAME_FILLING_REASON: self.frame_filling,
+            UNSURE_REASON: self.unsure,
+        }
+
+    def share(self, count: int) -> str:
+        """`count` as a share of the matched population, at two significant figures.
+
+        Two, because that is what every sentence already quoted and the conventions differ by
+        magnitude: 36/2018 is 1.8%, 252/2018 is 12%, 6/2018 is 0.30%. Stated once here so a
+        re-measurement cannot leave a percentage that means something other than the count printed
+        next to it.
+        """
+        percent = 100.0 * count / self.matched
+        if percent >= 10.0:
+            return f"{percent:.0f}%"
+        if percent >= 1.0:
+            return f"{percent:.1f}%"
+        return f"{percent:.2f}%"
+
+
+#: The figures every sentence about these rules quotes. See `RuleCost` for why they live here;
+#: `tools/unsure_probe.py` re-derives them from the export (`make verify-unsure`) and fails when its
+#: own measurement disagrees, which is what keeps this record a measurement rather than a belief.
+MEASURED_COST = RuleCost(frames=1815, predictions=2051, matched=2018, clamp=36, frame_filling=252, unsure=6)
 
 #: How close to a frame edge, as a fraction of width/height, a box must sit on **all four** sides
 #: before it counts as a prediction the model wanted larger than the image.

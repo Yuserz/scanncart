@@ -71,6 +71,15 @@ the rule switched off in the profile the next window failed it with 19 escapes o
 offers no band says so in the reading, and `--require-live-band` is how a lit counter goes on record
 as one that did.
 
+**The figures it measures have one home.** `app/acceptance.py::MEASURED_COST` records the export
+population and each rule's own price on it, and the run's last claim fails when a fresh measurement
+stops agreeing. That is deliberate as well as tidy: the same four numbers were once hand-typed into
+five files that cannot import each other, and one of them - a desktop hint shown to the operator -
+was still quoting a deleted harness's denominator. A passing run here means the record is current,
+which means every copy checked against it still describes the weights in `models/`. Use `--conf`
+to measure a different operating point: the comparison then reports that it cannot compare, rather
+than calling a moved threshold a moved cost.
+
 **No network.** Needs the export (for the cost), the stored negatives, and - unless
 `--live-seconds 0` - the camera. It fails loudly rather than skipping when they are absent, for the
 reason the clamp probe gives: a skip here is a silent pass on the only check that says the empty
@@ -115,6 +124,7 @@ from app.acceptance import (  # noqa: E402  (needs the path above)
     CLAMPED_REASON,
     FRAME_FILLING_REASON,
     FRAME_SPANNING_AREA,
+    MEASURED_COST,
     PHANTOM_CONF_CEILING,
     UNSURE_REASON,
     accept_detections,
@@ -479,10 +489,44 @@ class Census:
     live_scene: Scene
     #: Whether this run has to *prove* the band family was exercised (`--require-live-band`).
     require_live_band: bool
+    #: The `conf_threshold` this run measured at. Carried so the cost comparison can refuse to
+    #: happen rather than report a mover: `MEASURED_COST` is quoted at the app's own operating
+    #: point, and the counts scale with the threshold.
+    conf: float
 
     @property
     def live_measured(self) -> bool:
         return self.live_scene.frames > 0
+
+    @property
+    def at_operating_point(self) -> bool:
+        """Whether this run is at the operating point `MEASURED_COST` describes."""
+        return abs(self.conf - MEASURED_COST.conf) < 1e-9
+
+    @property
+    def cost_agrees(self) -> bool:
+        """Whether this run's export cost is the one `app/acceptance.py` records.
+
+        The other half of the figures' one-owner arrangement: those numbers are quoted in five files
+        that cannot import each other, so they live in `MEASURED_COST` and the prose is checked
+        against it on a bare checkout. What a bare checkout cannot do is re-measure - and if the
+        numbers here have moved, the copies now describe an older model. So this is what says so,
+        loudly, at the moment someone actually re-measures.
+        """
+        shipped = self.shipped
+        if shipped is None:
+            return False
+        return (
+            shipped.matched_real,
+            shipped.clamped_real,
+            shipped.filling_real,
+            shipped.dropped_real,
+        ) == (
+            MEASURED_COST.matched,
+            MEASURED_COST.clamp,
+            MEASURED_COST.frame_filling,
+            MEASURED_COST.unsure,
+        )
 
     @property
     def shipped(self) -> Row | None:
@@ -551,6 +595,12 @@ def checks(census: Census) -> tuple[Check, ...]:
     and the empty-counter check alone would pass on a window where the model happened to produce
     nothing. So: the cost, the catch from both sources, the end-to-end run, the control, and the one
     claim that separates "the rule is narrow" from "the rule is a rule for this defect".
+
+    The last claim is not about the rule at all: it is this run's measurement against
+    `app/acceptance.py::MEASURED_COST`, the record the prose copies of these figures are checked
+    against on a bare checkout. Nothing in CI can re-measure, so this is the only place a moved cost
+    can be noticed - and it is noticed at the one moment anyone would be about to leave the prose
+    behind.
     """
     shipped = census.shipped
     if shipped is None:
@@ -607,6 +657,11 @@ def checks(census: Census) -> tuple[Check, ...]:
             "the rule is on in the profile this measured",
             f"unsure={census.shipped_flags[2]}, clamp={census.shipped_flags[0]}, "
             f"filling={census.shipped_flags[1]}",
+        ),
+        Check(
+            census.cost_agrees or not census.at_operating_point,
+            "the cost it measured is still the one app/acceptance.py records",
+            cost_reading(census),
         ),
     )
 
@@ -739,6 +794,42 @@ def live_band_reading(census: "Census") -> str:
     return (
         f"{bands} band-shaped detection(s) in {census.live_scene.frames} frames, "
         f"{census.live_scene.describe()}; {demand}"
+    )
+
+
+def cost_reading(census: "Census") -> str:
+    """Whether this run's export cost is the one the app records, and what moved if it is not.
+
+    Names the record rather than only the disagreement, because the remedy is a specific edit: these
+    four numbers are quoted by five files that cannot import each other, so a run that measures
+    something else has just invalidated prose it never touched. A run at another operating point
+    says that instead - the counts scale with `conf_threshold`, and comparing across thresholds
+    would report a mover that is only a different question.
+    """
+    shipped = census.shipped
+    if shipped is None:
+        return (
+            f"no row for the shipped ceiling {census.ceiling}, so there is nothing to compare "
+            "against the record"
+        )
+    measured = (
+        f"clamp {shipped.clamped_real}, frame-filling {shipped.filling_real}, "
+        f"unsure {shipped.dropped_real} of {shipped.matched_real}"
+    )
+    if not census.at_operating_point:
+        return (
+            f"not comparable - this run is at conf>={census.conf}, and the record is the app's own "
+            f"operating point (conf>={MEASURED_COST.conf}): a phantom is a low-confidence "
+            "detection, so the counts scale with the threshold"
+        )
+    if census.cost_agrees:
+        return f"matches app/acceptance.py::MEASURED_COST: {measured}"
+    record = MEASURED_COST
+    return (
+        f"MOVED - this run measures {measured}, while the record says clamp {record.clamp}, "
+        f"frame-filling {record.frame_filling}, unsure {record.unsure} of {record.matched}. Update "
+        "app/acceptance.py::MEASURED_COST, and with it every copy the guard names "
+        "(tests/test_cost_figures.py)"
     )
 
 
@@ -1144,6 +1235,7 @@ def main(argv: list[str] | None = None) -> int:
         shipped_flags=shipped_flags,
         live_scene=live_scene,
         require_live_band=args.require_live_band,
+        conf=settings.conf_threshold,
     )
     checks_ = checks(census)
 

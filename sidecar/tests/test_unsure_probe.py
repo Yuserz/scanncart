@@ -183,17 +183,31 @@ def test_the_pipeline_s_own_survivors_are_what_the_buckets_describe():
     assert item.pipeline_kept == from_pipeline
 
 
+def _row(**overrides):
+    """The shipped row, built **from the record** rather than typed here.
+
+    The export cost in this fixture is `app/acceptance.py::MEASURED_COST`'s, so a moved measurement
+    cannot leave the fixture asserting the old one - which is the failure this whole arrangement
+    exists to prevent, and a test that re-typed `6/2018, 36, 252` would be the sixth copy of it.
+    """
+    base = dict(
+        ceiling=unsure_probe.PHANTOM_CONF_CEILING,
+        caught_negatives=19, negatives=25, caught_live=3, live=3, lost_control=1, control=60,
+        dropped_real=unsure_probe.MEASURED_COST.unsure,
+        matched_real=unsure_probe.MEASURED_COST.matched,
+        clamped_real=unsure_probe.MEASURED_COST.clamp,
+        filling_real=unsure_probe.MEASURED_COST.frame_filling,
+        dropped_max_conf=0.839, kept_min_conf=0.856,
+    )
+    base.update(overrides)
+    return unsure_probe.Row(**base)
+
+
 def _census(**overrides):
     """A Census with only the fields a claim cares about named, and everything else minimal."""
     base = {
         "ceiling": unsure_probe.PHANTOM_CONF_CEILING,
-        "rows": (
-            unsure_probe.Row(
-                ceiling=unsure_probe.PHANTOM_CONF_CEILING, caught_negatives=19, negatives=25,
-                caught_live=3, live=3, lost_control=1, control=60, dropped_real=6, matched_real=2018,
-                clamped_real=36, filling_real=252, dropped_max_conf=0.839, kept_min_conf=0.856,
-            ),
-        ),
+        "rows": (_row(),),
         "negatives": unsure_probe.ledger(
             "negatives", 50, (_shot((0.0, 0.0, 1.0, 1.0), 0.6),),
             clamped=True, filling=True, unsure_=True,
@@ -213,6 +227,7 @@ def _census(**overrides):
         "per_split": (("train", 10, 10, 10),),
         "predictions": 10,
         "shipped_flags": (True, True, True),
+        "conf": unsure_probe.MEASURED_COST.conf,
         "live_scene": unsure_probe.Scene(luminance=(120.0, 121.0, 119.0)),
         "require_live_band": False,
     }
@@ -338,8 +353,55 @@ def test_the_verdict_names_the_failures_instead_of_only_counting_them():
     checks_ = unsure_probe.checks(_census(shipped_flags=(True, True, False)))
     assert unsure_probe.strict_failed(checks_)
     text = unsure_probe.verdict(checks_)
-    assert "1 of 8 claims FAIL" in text and "the rule is on" in text
-    assert unsure_probe.verdict(unsure_probe.checks(_census())) == "all 8 claims hold"
+    assert "1 of 9 claims FAIL" in text and "the rule is on" in text
+    assert unsure_probe.verdict(unsure_probe.checks(_census())) == "all 9 claims hold"
+
+
+def _record_claim(census) -> unsure_probe.Check:
+    """The claim about the record, found by what it says rather than by where it sits in the tuple."""
+    return next(
+        check for check in unsure_probe.checks(census)
+        if "app/acceptance.py records" in check.claim
+    )
+
+
+def test_the_record_claim_passes_when_the_cost_is_the_one_the_app_records():
+    """A run at the app's own operating point measures the record, or this claim fires."""
+    check = _record_claim(_census())
+    assert check.ok
+    assert "matches app/acceptance.py::MEASURED_COST" in check.reading
+
+
+def test_a_moved_cost_fails_the_record_claim_and_names_the_edit():
+    """The half of the one-owner arrangement a bare checkout cannot run.
+
+    `tests/test_cost_figures.py` checks five prose copies against `MEASURED_COST` on every commit,
+    and cannot re-measure: it has no weights, no export and no GPU. So if a fresh measurement moved
+    the numbers and nothing said so, the copies would go on describing an older model - which is
+    exactly how a desktop hint came to advertise a denominator its own tool had already replaced.
+    The failure has to name the record, because the remedy is an edit to a file this run never
+    touched.
+    """
+    census = _census(rows=(_row(dropped_real=unsure_probe.MEASURED_COST.unsure + 1),))
+    check = _record_claim(census)
+    assert not check.ok
+    assert "MOVED" in check.reading
+    assert "MEASURED_COST" in check.reading and "tests/test_cost_figures.py" in check.reading
+    assert unsure_probe.strict_failed(unsure_probe.checks(census))
+
+
+def test_another_operating_point_says_it_cannot_compare_rather_than_that_the_cost_moved():
+    """`--conf` is a knob, so a run at another threshold is a different question, not a mover.
+
+    A phantom is a low-confidence detection, so the counts scale with the threshold: comparing a
+    0.7 run against a record quoted at 0.5 would report a stale record every time someone measured
+    a variant. The claim says which it is instead, and the reading is the only place that says
+    *why* - the alternative is a gate that cries wolf on its own knob.
+    """
+    census = _census(conf=0.7, rows=(_row(dropped_real=unsure_probe.MEASURED_COST.unsure + 4),))
+    check = _record_claim(census)
+    assert check.ok
+    assert "not comparable" in check.reading and "conf>=0.7" in check.reading
 
 
 def test_the_catch_cost_says_the_ceiling_and_the_alternative_for_each_shape():
@@ -508,7 +570,7 @@ def test_the_report_prints_the_numbers_the_claims_read():
     assert "the three rules on the same matched population: clamp 36, frame-filling 252, unsure 6" in text
     assert "(0.839, 0.856)" in text
     assert "matched one-to-one: 10 of 10 predictions" in text
-    assert "all 8 claims hold" in text
+    assert "all 9 claims hold" in text
     # The live window's own block: what it yielded, then the two readings the claims are made from.
     assert "the live window, and what it actually yielded" in text
     assert "mean luminance 120/255" in text

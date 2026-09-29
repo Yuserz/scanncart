@@ -166,7 +166,7 @@ def test_the_frame_filling_rule_is_on_by_default():
     A fresh install logged `Bear Brand` at 0.90-0.94 on an empty counter, with an item-log row, and
     a lever nobody flips is not a fix. The price is measured and named rather than hidden: it also
     drops one of the 60 detections in the clamp tool's control population, a real frame-filling
-    close-up at area 0.972 with three edges inside the 1% tolerance, and 252 of the export's 2018
+    close-up at area 0.972 with three edges inside the 1% tolerance, and 252 of the 2018
     ground-truth-matched detections (12%). That is
     the trade this default makes on the operator's behalf, and the setting is the way back out.
     """
