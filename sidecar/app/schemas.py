@@ -303,7 +303,7 @@ class SettingsUpdateRequest(BaseModel):
     camera_focus: float | None = Field(default=None, ge=FOCUS_RANGE[0], le=FOCUS_RANGE[1])
 
     # exclude_none=True means a patch can never send a field back to null, so
-    # without this Revert cannot restore "leave the camera alone" — which is
+    # without this Revert cannot restore "this app imposes no value" — which is
     # the default state of all four controls, and therefore the saved baseline
     # on a fresh install. Restricted to those four because they are the only
     # settings whose type admits None; nulling imgsz would break capture.

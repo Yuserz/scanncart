@@ -114,10 +114,12 @@ class Settings:
     # Narrows detection to checkout-relevant classes; hot-reloadable.
     class_allowlist: list[str] = field(default_factory=list)
 
-    # Device controls. None means "leave the camera alone", so behaviour is
-    # unchanged until calibration proposes values. The StreamCam's automatic
-    # focus and exposure track faces; a counter has none, which is why locked
-    # manual values suit this app.
+    # Device controls. None means "this app imposes no value", so behaviour is
+    # unchanged until calibration proposes values — and on the device that is
+    # not a no-op: a control the app has already written is handed back when
+    # the setting returns to None (see CameraCapture._with_restores). The
+    # StreamCam's automatic focus and exposure track faces; a counter has none,
+    # which is why locked manual values suit this app.
     camera_brightness: float | None = None
     camera_exposure: float | None = None
     camera_autofocus: bool | None = None

@@ -87,8 +87,10 @@ export interface SettingsPayload {
   remote_infer_size: number
   remote_timeout_s: number
   remote_max_retries: number
-  // Device controls. null means "leave the camera alone" — calibration owns
-  // these, they are not hand-editable in the settings form.
+  // Device controls. null means "this app imposes no value" — calibration owns
+  // these, they are not hand-editable in the settings form. Not "auto": only
+  // autofocus can be handed back to the device's own mode, so a control the app
+  // stops writing keeps the value it was last given (CameraCapture._undo_for).
   camera_brightness: number | null
   camera_exposure: number | null
   camera_autofocus: boolean | null
@@ -196,8 +198,8 @@ export interface DetectorProbeResponse {
 
 // Mirrors sidecar/app/schemas.py::SettingsUpdateRequest. `reset_fields` names
 // settings to set back to null; it exists because the sidecar drops nulls from
-// a patch (exclude_none), so "leave the camera alone" cannot travel as a value.
-// Only the four camera controls are resettable — see RESETTABLE_FIELDS.
+// a patch (exclude_none), so "this app imposes no value" cannot travel as a
+// value. Only the four camera controls are resettable — see RESETTABLE_FIELDS.
 export type SettingsUpdate = Partial<SettingsPayload> & {
   reset_fields?: (keyof SettingsPayload)[]
 }

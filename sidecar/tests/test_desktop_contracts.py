@@ -132,7 +132,7 @@ def test_the_settings_contracts_mirror_the_sidecar():
     """`SettingsPayload` and what the panel adds to it, including which fields may be null.
 
     `camera_brightness`/`camera_exposure`/`camera_autofocus`/`camera_focus` are the null-able ones -
-    `null` means "leave the camera alone" - so a `null` that stopped being declared on one side
+    `null` means "this app imposes no value" - so a `null` that stopped being declared on one side
     would be the difference between "this control was never set" and a value.
     """
     source = read_ts(API_TS)

@@ -329,7 +329,9 @@
   color: var(--dim);
 }
 
-/* "auto" — the sidecar is leaving this control alone. */
+/* "unset" — the app is not setting this control. Not "auto": only autofocus
+   can be handed back to the device's own mode, so a value left unset here is
+   one the camera keeps from the last time it was written. */
 .tuning-value::placeholder {
   color: var(--dim);
   font-style: italic;

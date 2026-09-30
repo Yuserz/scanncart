@@ -26,7 +26,11 @@ const PROFILE: CameraProfileResponse = {
   sweep_version: 1
 }
 
-function renderCard(overrides: Partial<ApiClient> = {}, running = true): ReturnType<typeof render> {
+function renderCard(
+  overrides: Partial<ApiClient> = {},
+  running = true,
+  debounceMs = 0
+): ReturnType<typeof render> {
   const { deps } = makeDeps({
     getCameraProfile: async () => ({ profile: PROFILE }),
     getCameraQuality: async () => ({
@@ -48,7 +52,7 @@ function renderCard(overrides: Partial<ApiClient> = {}, running = true): ReturnT
       start={async () => {}}
       stop={async () => {}}
       cameraName="Logitech StreamCam"
-      debounceMs={0}
+      debounceMs={debounceMs}
       deps={{ ...deps, pollHealth: false, pollCameras: false }}
     />
   )
@@ -172,7 +176,7 @@ describe('applying and committing', () => {
 
   it('reverts to the last saved values', async () => {
     // A non-null saved baseline, so this exercises the "restore the previous
-    // value" path — distinct from the null/"leave the camera alone" path
+    // value" path — distinct from the null/"this app imposes no value" path
     // covered below.
     const SAVED_BRIGHTNESS = 100
     const calls: unknown[] = []
@@ -193,7 +197,7 @@ describe('applying and committing', () => {
     await waitFor(() => expect(calls.at(-1)).toEqual({ camera_brightness: SAVED_BRIGHTNESS }))
   })
 
-  it('reverts a control back to "leave the camera alone"', async () => {
+  it('reverts a control back to "this app imposes no value"', async () => {
     // All four controls default to null, so this is the fresh-install path:
     // tune brightness for the first time, then Revert.
     const calls: unknown[] = []
@@ -212,6 +216,37 @@ describe('applying and committing', () => {
     await userEvent.click(screen.getByTestId('tuning-revert'))
 
     await waitFor(() => expect(calls.at(-1)).toEqual({ reset_fields: ['camera_brightness'] }))
+  })
+
+  it('drops a queued drag so it cannot land after Revert', async () => {
+    // Reachable with two sliders: the first lands (which is what puts Revert
+    // on screen), the second is still inside its debounce window when the
+    // button is clicked. The queued value then arrives *after* the revert and
+    // puts the field — and the camera — back where the drag left it.
+    const calls: unknown[] = []
+    renderCard(
+      {
+        getSettings: async () => ({ ...BASE_SETTINGS, camera_brightness: null }),
+        updateSettings: async (patch: unknown) => {
+          calls.push(patch)
+          return { ...BASE_SETTINGS, camera_brightness: null, ...(patch as object) }
+        }
+      },
+      true,
+      150 // the shipped debounce; the rest of this file runs it at 0
+    )
+    await screen.findByLabelText('Brightness')
+    await userEvent.click(screen.getByRole('button', { name: /Camera tuning/ }))
+
+    fireEvent.change(screen.getByLabelText('Brightness'), { target: { value: '180' } })
+    await waitFor(() => expect(calls).toEqual([{ camera_brightness: 180 }]))
+
+    fireEvent.change(screen.getByLabelText('Exposure'), { target: { value: '-6' } })
+    await userEvent.click(screen.getByTestId('tuning-revert'))
+
+    // Long enough that an uncancelled timer would have fired.
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(calls).toEqual([{ camera_brightness: 180 }, { reset_fields: ['camera_brightness'] }])
   })
 
   it('offers nothing to save when nothing changed', async () => {
@@ -884,15 +919,17 @@ describe('reading and setting exact values', () => {
     expect(value).toHaveValue(0.45)
   })
 
-  it('reads "auto" for a control the sidecar is not setting', async () => {
-    // null means "leave the camera alone". Rendering it as a number — and
+  it('reads "unset" — not "auto" — for a control the sidecar is not setting', async () => {
+    // null means the app is not setting it. Rendering it as a number — and
     // parking the slider at the minimum — claims a setting that is not in
-    // force: exposure would read -13, the shortest possible shutter.
+    // force: exposure would read -13, the shortest possible shutter. The word
+    // matters too: only autofocus can be handed back to the camera's own mode,
+    // so "auto" would promise an exposure this device never gets back.
     renderCard({ getSettings: async () => baseSettings({ camera_exposure: null }) })
 
     const value = await screen.findByTestId('value-camera_exposure')
     expect(value).toHaveValue(null)
-    expect(value).toHaveAttribute('placeholder', 'auto')
+    expect(value).toHaveAttribute('placeholder', 'unset')
   })
 
   it('does not park an unset slider at either end of its range', async () => {

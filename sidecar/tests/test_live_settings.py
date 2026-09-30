@@ -295,13 +295,15 @@ def test_reset_fields_rejects_a_field_that_cannot_be_null(tmp_path):
     assert r.status_code == 422
 
 
-def test_resetting_a_control_stops_writing_it_to_the_device(running):
-    """None means 'leave the camera alone' — the device keeps whatever value
-    it currently holds until the next reopen."""
+def test_resetting_a_control_clears_it_and_tells_the_camera(running):
+    """None means 'this app imposes no value', and telling the camera is the
+    whole point: it is still holding whatever the drag wrote. What the device
+    then does about it is camera.py's half — `test_camera.py` pins the undo
+    itself, since a fake source has no device to put back."""
     client, _, src, _ = running
     client.patch("/api/settings", json={"reset_fields": ["camera_brightness"]})
 
-    assert src.controls["brightness"] is None
+    assert src.controls == {"brightness": None}
 
 
 def test_camera_control_bounds_are_enforced(tmp_path):

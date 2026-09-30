@@ -142,6 +142,19 @@ export function CameraTuning({
     []
   )
 
+  // Revert has to drop the writes it is undoing, not just the ones already
+  // sent. A second slider moved inside the debounce window leaves a value
+  // queued, and that value lands *after* the revert — putting the field, and
+  // the camera with it, back where the drag left it. Every timer is cancelled
+  // rather than only the reverted keys: what Revert restores is the settings it
+  // is reverting to, so a queued write to any live field is stale either way.
+  // Save deliberately does not do this — its meaning is "commit what I have",
+  // and dropping the last drag is the opposite of that.
+  const cancelPending = (): void => {
+    for (const t of timers.current.values()) clearTimeout(t)
+    timers.current.clear()
+  }
+
   // Unsaved changes are the gap between the live settings and the last
   // persisted ones — never a local draft, because a live PATCH returns a
   // fresh settings object that would otherwise look committed.
@@ -214,7 +227,7 @@ export function CameraTuning({
   // different camera.
   const profileIsStale = storedProfile?.sweep_version === 0
 
-  // null means "leave the camera alone" — the default for all four camera
+  // null means "this app imposes no value" — the default for all four camera
   // controls — so it must stay distinguishable from a real number all the way
   // to the input, never collapsing to 0.
   const numericOf = (key: keyof SettingsPayload): number | null => {
@@ -260,7 +273,12 @@ export function CameraTuning({
                 data-testid={`value-${field.key}`}
                 aria-label={`${field.label} value`}
                 value={numeric ?? ''}
-                placeholder="auto"
+                // "unset", not "auto": for three of these four controls the
+                // camera has no automatic mode this app can ask for, so a
+                // control it stops writing keeps the value it was last given.
+                // Calling that "auto" is the claim the field cannot support —
+                // see the hints, and CameraCapture's `_undo_for`.
+                placeholder="unset"
                 min={field.min}
                 max={field.max}
                 step={field.step}
@@ -564,11 +582,15 @@ export function CameraTuning({
             data-testid="tuning-revert"
             onClick={() => {
               if (!savedSettings) return
-              // A saved value of null means "leave the camera alone", which
+              cancelPending()
+              // A saved value of null means "this app imposes no value", which
               // is the default for all four controls — so on a fresh install
               // this is the common case, not an edge one. exclude_none on the
               // sidecar drops nulls from a patch, so they travel by name in
-              // reset_fields instead.
+              // reset_fields instead. For autofocus the sidecar hands the
+              // control back to the lens; for the other three it can only stop
+              // writing them, so the device keeps its last value (see
+              // CameraCapture's `_undo_for`).
               const restore = dirtyKeys.filter((k) => savedSettings[k] !== null)
               const reset = dirtyKeys.filter((k) => savedSettings[k] === null)
               const patch: SettingsUpdate = Object.fromEntries(

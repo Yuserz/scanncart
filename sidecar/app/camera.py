@@ -6,6 +6,49 @@ import cv2
 import numpy as np
 
 
+def _undo_for(name: str) -> float | bool | None:
+    """What to write to hand one control back, or None if nothing can be.
+
+    Autofocus is the whole list, because it is the only one of the four whose
+    automatic mode the app can *name* — `CAP_PROP_AUTOFOCUS=1` is a mode rather
+    than a value, so the app never has to know what the lens was doing.
+    Measured on this hardware, its getter answers 0 while the lens is in that
+    mode, so reading it back would pin focus on the way to undoing the drag.
+
+    The other three have no such mode to ask for. Brightness has no automatic
+    mode in OpenCV at all, and this repo has never measured the constants
+    `CAP_PROP_AUTO_EXPOSURE` takes on this backend — so the only undo left would
+    be the value the device held before the app wrote it, and this device will
+    not say what that was. Asking the *streaming* handle is what was tried
+    first, and it is worth not repeating: measured, `get(CAP_PROP_BRIGHTNESS)`
+    answered 0.0 while the picture was a normal mid-grey, and writing that
+    "restored" value back turned the picture black. A value the app cannot know
+    is not one it gets to write, so a reset of those three stops this app
+    writing the control and leaves the device holding the last value it was
+    given — which is also where a capture restart leaves it, since reopening
+    does not clear a control this app wrote (measured).
+    """
+    return True if name == "autofocus" else None
+
+
+def _with_restores(changes: dict) -> dict:
+    """Resolve each queued change into the write it means, and drop the rest.
+
+    `None` in a queued change means the setting went back to "this app imposes
+    nothing". That used to be left as a skip, which reads as harmless and is
+    not: the device is still holding whatever the app last wrote, so the field
+    said "auto", the settings said null, and the picture stayed exactly where
+    the drag put it. Autofocus is handed back to the lens (`_undo_for`); the
+    other three resolve to no write at all.
+    """
+    writes: dict = {}
+    for name, value in changes.items():
+        undo = value if value is not None else _undo_for(name)
+        if undo is not None:
+            writes[name] = undo
+    return writes
+
+
 class LatestFrameBuffer:
     """Thread-safe size-1 buffer where the newest frame always wins."""
 
@@ -82,9 +125,11 @@ class CameraCapture:
         self.height = height
         self.fps = float(fps)
         self._cap_factory = cap_factory
-        # None means "leave the camera alone" — see Settings.camera_brightness
-        # et al. The StreamCam's automatic focus/exposure track faces, which a
-        # checkout counter never has, so locked manual values suit this app.
+        # None means "this app imposes no value" — see Settings.camera_brightness
+        # et al. At open that writes nothing; live it means hand the control
+        # back, which takes an actual write — see `_with_restores`. The
+        # StreamCam's automatic focus/exposure track faces, which a checkout
+        # counter never has, so locked manual values suit this app.
         self._brightness = brightness
         self._exposure = exposure
         self._autofocus = autofocus
@@ -128,9 +173,10 @@ class CameraCapture:
     def _write_controls(cap, controls: dict) -> None:
         """Write device controls in dependency order.
 
-        Autofocus goes first: a focus value written while autofocus is on is
-        immediately hunted away from. Keys absent or None mean "leave the
-        camera alone" — see Settings.camera_brightness et al.
+        Concrete values only: `_with_restores` has already resolved a reset
+        into the value that undoes it, so a None here is a skip rather than a
+        change. Autofocus goes first: a focus value written while autofocus is
+        on is immediately hunted away from.
         """
         if controls.get("autofocus") is not None:
             cap.set(cv2.CAP_PROP_AUTOFOCUS, 1 if controls["autofocus"] else 0)
@@ -147,6 +193,12 @@ class CameraCapture:
         Accepts brightness/exposure/autofocus/focus. Updating a dict rather
         than appending to a queue coalesces a fast slider drag to its newest
         value, so the capture thread never works through a backlog.
+
+        A value of None is not "skip": it means stop this app writing the
+        control. Autofocus is the one control that can then be handed *back* to
+        the device's own mode, and `_undo_for` writes it; the other three have
+        no mode to ask for, so a reset of those merely stops the writing — the
+        device keeps the value it was last given.
         """
         with self._controls_lock:
             self._pending_controls.update(changes)
@@ -160,6 +212,11 @@ class CameraCapture:
         # Merge onto the instance fields so a later reopen replays them.
         for name, value in changes.items():
             setattr(self, f"_{name}", value)
+        # Every value in one write, so the autofocus-before-focus order holds
+        # across a batch that moves both.
+        writes = _with_restores(changes)
+        if not writes:
+            return
         # Deliberately outside the lock: cap.set() can block on some
         # backends, and holding the lock across it would stall the caller.
         #
@@ -169,9 +226,9 @@ class CameraCapture:
         # `_running` true — the feed freezes with nothing to explain it. A
         # control that will not take is not worth the stream.
         try:
-            self._write_controls(self._cap, changes)
+            self._write_controls(self._cap, writes)
         except Exception as exc:  # noqa: BLE001 - see above
-            self.control_error = f"Camera {self.index} rejected {sorted(changes)}: {exc}"
+            self.control_error = f"Camera {self.index} rejected {sorted(writes)}: {exc}"
 
     def open(self) -> bool:
         self._cap = self._cap_factory(self.index)

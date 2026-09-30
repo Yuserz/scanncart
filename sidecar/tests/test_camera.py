@@ -252,7 +252,12 @@ def test_measured_fps_survives_concurrent_reads():
 
 class _RecordingCap:
     """Opens fine, yields frames forever, and records every set() with the
-    name of the thread that made it."""
+    name of the thread that made it.
+
+    Deliberately has no `get`: nothing in this class may read a control back,
+    so a `get` here would turn a stray read into an AttributeError rather than
+    a value the app could act on. See `_undo_for` for why.
+    """
 
     def __init__(self):
         self.sets: list[tuple[int, object, str]] = []
@@ -351,6 +356,78 @@ def test_autofocus_is_written_before_focus_when_set_live():
         assert _wait_for(lambda: _wrote(cap, cv2.CAP_PROP_FOCUS, 30.0))
         props = [p for p, _, _ in cap.sets]
         assert props.index(cv2.CAP_PROP_AUTOFOCUS) < props.index(cv2.CAP_PROP_FOCUS)
+    finally:
+        src.release()
+
+
+def test_a_reset_of_a_control_with_no_undo_leaves_the_device_holding_it():
+    """Revert clears the *setting*, and that is all it can do here: nothing on
+    this device will say what a control held before the app wrote it, so the
+    reset stops the app writing it rather than inventing a value to put back —
+    which is what `_undo_for` explains, and what a stray `get` would have
+    turned into a wrong write on real hardware. `_RecordingCap` has no `get`,
+    so a read would raise instead."""
+    cap = _RecordingCap()
+    src = CameraCapture(0, 4, 4, 30, cap_factory=lambda i: cap)
+    src.open()
+    try:
+        src.set_controls(brightness=180.0)
+        assert _wait_for(lambda: _wrote(cap, cv2.CAP_PROP_BRIGHTNESS, 180.0))
+
+        src.set_controls(brightness=None)
+
+        def _wrote_brightness_twice() -> bool:
+            return len([p for p, _, _ in cap.sets if p == cv2.CAP_PROP_BRIGHTNESS]) > 1
+
+        assert not _wait_for(_wrote_brightness_twice, timeout=0.2)
+        assert src._thread.is_alive()
+        assert src.failure is None
+    finally:
+        src.release()
+
+
+def test_a_reset_the_device_never_saw_does_not_touch_it():
+    """A control this app never wrote has nothing to un-write, so the reset is
+    a settings change and no device call at all."""
+    cap = _RecordingCap()
+    src = CameraCapture(0, 4, 4, 30, cap_factory=lambda i: cap)
+    src.open()
+    try:
+        before = list(cap.sets)
+        src.set_controls(brightness=None)
+        assert not _wait_for(lambda: cap.sets != before, timeout=0.2)
+    finally:
+        src.release()
+
+
+def test_resetting_autofocus_hands_focus_back_to_the_lens():
+    """The one control whose automatic mode the app can ask for by name — and
+    the one where reading the device would have been actively wrong, since
+    `CAP_PROP_AUTOFOCUS` answers 0 while the lens is in auto (measured)."""
+    cap = _RecordingCap()
+    src = CameraCapture(0, 4, 4, 30, cap_factory=lambda i: cap)
+    src.open()
+    try:
+        src.set_controls(autofocus=False)
+        assert _wait_for(lambda: _wrote(cap, cv2.CAP_PROP_AUTOFOCUS, 0))
+
+        src.set_controls(autofocus=None)
+        assert _wait_for(lambda: _wrote(cap, cv2.CAP_PROP_AUTOFOCUS, 1))
+    finally:
+        src.release()
+
+
+def test_a_batch_that_resets_one_control_and_sets_another_writes_both():
+    """Revert sends one patch for every dirty field, so an autofocus hand-back
+    and a brightness change arrive together and must go out in the order
+    `_write_controls` enforces."""
+    cap = _RecordingCap()
+    src = CameraCapture(0, 4, 4, 30, cap_factory=lambda i: cap)
+    src.open()
+    try:
+        src.set_controls(brightness=180.0, autofocus=None)
+        assert _wait_for(lambda: _wrote(cap, cv2.CAP_PROP_AUTOFOCUS, 1))
+        assert _wrote(cap, cv2.CAP_PROP_BRIGHTNESS, 180.0)
     finally:
         src.release()
 
