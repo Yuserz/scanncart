@@ -209,7 +209,7 @@ uv pip install --python .venv/Scripts/python.exe \
   --reinstall-package torch --reinstall-package torchvision
 ```
 
-Verify: `python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"`.
+Verify with the venv's interpreter: `.venv/Scripts/python.exe -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"` (POSIX: `.venv/bin/python`).
 
 The custom grocery model is ONNX, which runs under **onnxruntime**, a separate
 runtime. To move it onto the GPU (measured ~20 ms/frame vs ~66 ms on CPU), swap
@@ -302,7 +302,7 @@ the same `cuXXX` index ([step 6](#6-optional--gpu-acceleration-nvidiacuda)).
 ### ONNX fails on the first frame: "no data transfer registered"
 
 `onnxruntime-gpu`'s CUDA major version doesn't match torch's. Check
-`python -c "import torch; print(torch.version.cuda)"` and install the matching
+`.venv/Scripts/python.exe -c "import torch; print(torch.version.cuda)"` (POSIX: `.venv/bin/python`) and install the matching
 `onnxruntime-gpu` (1.27+ = CUDA 13; 1.21–1.26 = CUDA 12.8), or reinstall the
 CPU build.
 
