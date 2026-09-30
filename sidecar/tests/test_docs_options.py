@@ -12,7 +12,7 @@ Makefile: a line's script is found (a `.py` at the head, or the one an interpret
 `-m <module>` when that module is a file here), and every flag and every leading verb on the line is
 checked against that script's own `add_argument`/`add_parser` calls. Reading text rather than
 importing is deliberate - these entrypoints import torch, ultralytics and the app's runtime in their
-module bodies, so a guard that imported thirteen of them would cost more than the suite it belongs to
+module bodies, so a guard that imported fifteen of them would cost more than the suite it belongs to
 and would fail wherever a heavy dependency is missing. The prices of that choice are stated with it:
 a parser built through a shared helper is in the module that defines it, not the one that calls it;
 argparse's own `-h`/`--help` are assumed (unless the file passes `add_help=False`); and a flag that
@@ -23,7 +23,10 @@ subparser would need `parents=[...]` accounted for, which is the fragile reading
 flag a shared parent declares as missing. One more is closed rather than paid: a script that declares
 nothing accepts nothing, so `NO_OPTIONS` names the two entrypoints that are started and left alone,
 and `test_every_documented_script_has_a_command_line` fails when a third appears - which is what a
-tool losing its whole parser would look like.
+tool losing its whole parser would look like. What keeps a step like that honest is the resolver's
+distinct-tool count, not the (script, doc) pairs: a corpus that stops repeating a script across
+documents is prose changing, not a resolver losing the script on a line, which is the fact the floor
+is there to catch.
 
 The reading - fences, the script a line runs, and the flags and verbs on it - is in
 `tests/docs_fences.py`, shared with the interpreter and path rules; the *paths* those same lines name
@@ -42,14 +45,14 @@ import pytest
 
 from tests.docs_fences import (
     Reference,
-    _is_invocation,
-    _resolved,
-    _run_script,
-    _script_key,
     corpus_commands,
+    is_invocation,
     report,
+    resolve_path,
+    run_script,
     scan_reference_corpus,
     scan_references,
+    script_key,
 )
 
 pytestmark = pytest.mark.docs
@@ -71,13 +74,14 @@ NO_OPTIONS = (
     ("sidecar/local_inference_server.py", "started with no arguments; its address comes from settings"),
 )
 
-#: The option rule's own floors. Measured today: the corpus's fenced lines hand 107 options and 22
+#: The option rule's own floors. Measured today: the corpus's fenced lines hand 107 options and 18
 #: verbs to 15 of this repo's scripts, over 30 (script, doc) pairs. A resolver that stopped finding
 #: the script on a line, or a reader that stopped seeing `add_argument`, would take all three towards
 #: zero - and an empty check passes everything, which is the failure mode a floor is here to catch
-#: rather than to document.
+#: rather than to document. `SCRIPT_FLOOR` is on *distinct tools* rather than on pairs, since "a
+#: script a line runs" is the fact the resolver can lose once and still find in a second doc.
 FLAG_FLOOR = 90
-SUBCOMMAND_FLOOR = 18
+SUBCOMMAND_FLOOR = 14
 SCRIPT_FLOOR = 12
 
 
@@ -221,7 +225,7 @@ def _cli(script: str, doc: str) -> Cli:
     the same file each time - and because the *reader* is pure, so a cache here cannot hide a change
     inside an import.
     """
-    path = _resolved(script, doc)
+    path = resolve_path(script, doc)
     if path is None or not path.is_file():
         return Cli(found=False)
     return read_cli(path.read_text(encoding="utf-8"))
@@ -236,11 +240,11 @@ def documented_scripts() -> set[tuple[str, str]]:
     """
     found: set[tuple[str, str]] = set()
     for doc, command in corpus_commands():
-        if not _is_invocation(command):
+        if not is_invocation(command):
             continue
-        run = _run_script(command)
+        run = run_script(command)
         if run is not None:
-            found.add((_script_key(run[0], doc), doc))
+            found.add((script_key(run[0], doc), doc))
     return found
 
 
@@ -307,7 +311,7 @@ def test_the_option_rules_reach_the_docs():
     references, _fences = scan_reference_corpus()
     flags = [ref for ref in references if ref.kind == "flag"]
     verbs = [ref for ref in references if ref.kind == "subcommand"]
-    scripts = documented_scripts()
+    scripts = {script for script, _doc in documented_scripts()}
     assert len(flags) >= FLAG_FLOOR, (
         f"only {len(flags)} documented options found (floor {FLAG_FLOOR}): the corpus's "
         "invocations either stopped naming this repo's scripts or stopped being read, and this rule "
@@ -372,12 +376,17 @@ def test_the_option_rules_catch_a_flag_or_verb_that_is_gone():
 
     Each line is one way into the resolver - a plain script, a `-m` module, an external module that
     is nobody's business, a script that declares nothing at all, and a script that is not on disk -
-    and the two failures are a dropped flag and a dropped verb.
+    and the two failures are a dropped flag and a dropped verb. The wrapped call is here because the
+    reader is what joins it: `\\`-continued lines are one command, so the verb on the second line is
+    the first argument after the script. A reader that kept the marker would hand this rule a verb
+    spelled `\\`, and clean_v2's line would be reported for a subcommand no parser declares.
     """
     text = "\n".join(
         [
             "```bash",
             "sidecar/.venv/Scripts/python.exe sidecar/tools/clean_v2.py clean --src x --gone",
+            "sidecar/.venv/Scripts/python.exe sidecar/tools/clean_v2.py \\",
+            "    upload --src y",
             "sidecar/tools/spec_check.py --generation v1 --strict-mode",
             ".venv/Scripts/python.exe -m annotate.human_pass --check --missing",
             ".venv/Scripts/python.exe -m pytest tests/test_docs_options.py -v",
@@ -403,6 +412,8 @@ def test_the_option_rules_catch_a_flag_or_verb_that_is_gone():
         ("subcommand", "sidecar/tools/clean_v2.py clean"),
         ("flag", "sidecar/tools/clean_v2.py --src"),
         ("flag", "sidecar/tools/clean_v2.py --gone"),
+        ("subcommand", "sidecar/tools/clean_v2.py upload"),
+        ("flag", "sidecar/tools/clean_v2.py --src"),
         ("flag", "sidecar/tools/spec_check.py --generation"),
         ("flag", "sidecar/tools/spec_check.py --strict-mode"),
         ("flag", "sidecar/annotate/human_pass.py --check"),

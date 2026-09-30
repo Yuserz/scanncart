@@ -19,25 +19,34 @@ things the rules have opinions about: its shell fences, the logical line each co
 commands on that line (prompts, platform labels and notes removed), whether a line is an
 **invocation** or a **note**, the references on it (paths, `make` targets, npm scripts, flags, verbs),
 the files those resolve to, and the argv a script's own source declares. No verdict, no floor and no
-canary lives here; naming one of those is what makes the module that needs it own the answer.
+canary lives here; naming one of those is what makes the module that needs it own the answer. What
+this module does own is the contract those modules share, and it is the surface the three families
+import: `blocks`/`Block.commands` for the fences, the `corpus_*` walks for the documents,
+`scan_references` for one text, the two reads that belong to a file on disk (`makefile_targets`,
+`npm_scripts`), and the small helpers a rule needs to say what it found (`is_invocation`,
+`leading_word`, `resolve_path`, `path_exists`, `run_script`, `script_key`, `report`). A name with an
+underscore is this module's own and no family reads it.
 
 Two readings are the reader's own, and both exist because the corpus is prose as well as commands:
 
 * A trailing `\\` joins the next line onto this one - a wrapped `--dataset-dir` is part of the command
-  above it, not a line of its own - and the line number kept is the first one, which is the line a
-  reader sees.
+  above it, not a line of its own - and the marker is *dropped* as it joins, because a backslash left
+  in the middle of a command reads as an argument of its own (`capture_hard_negatives.py \\ --source
+  .`), turning a wrapped invocation into one that names a verb the tool does not have. The line
+  number kept is the first one, which is the line a reader sees.
 * A `#` that is not a platform label starts a *note*. `# Windows: cmd` is a command behind a label;
   `# Naming rule (MODEL_TRAINING.md §8.2)` is prose about a file rather than a use of one, which is
   what keeps the latter out of the path check without a special case for tables.
 
 The invocation/note decision itself is here because all three rules depend on it: a line is read as an
-invocation when it leads with a word from `RUNNERS` or with a path, and as a note otherwise - 177 of
-this corpus's 416 command-ish parts are notes, over 155 distinct leading words - and the lines that
-matter are the ones a reader can paste, because a table is not pasted. A line that leads with a *path*
-is still ambiguous, since a listing's rows look the same, so that one is settled by typography rather
-than vocabulary: this repo aligns a listing's annotations into a column (`class_names.txt     the 7
-grocery SKUs`) and draws its diagrams with arrows (`settings.json ──load at startup──► Settings`),
-while a command is paths and flags on single spaces.
+invocation when it leads with a word from `RUNNERS` or with a path, and as a note otherwise - today
+177 of this corpus's 416 command-ish parts are notes, over 155 distinct leading words (the counts
+`test_docs_paths.py` floors under) - and the lines that matter are the ones a reader can paste,
+because a table is not pasted. A line that leads with a *path* is still ambiguous, since a listing's
+rows look the same, so that one is settled by typography rather than vocabulary: this repo aligns a
+listing's annotations into a column (`class_names.txt     the 7 grocery SKUs`) and draws its diagrams
+with arrows (`settings.json ──load at startup──► Settings`), while a command is paths and flags on
+single spaces.
 """
 
 from __future__ import annotations
@@ -138,8 +147,8 @@ MARKDOWN_LINK = re.compile(r"\[[^\]]*\]\(([^()\s]+)\)")
 #: block should not need an edit here - and `RUNNERS_IN_USE` in `test_docs_paths.py` is the closed
 #: half: the ones this corpus actually leads with, pinned by a canary there. A line that leads with
 #: anything else is read as a note unless the word is a path, which is what keeps the corpus's
-#: tables, trees and diagrams - 667 distinct leading tokens, against nine of these - out of the check
-#: entirely.
+#: tables, trees and diagrams - 155 distinct leading words, of which only the eight in
+#: `RUNNERS_IN_USE` lead a command - out of the check entirely.
 RUNNERS = frozenset(
     {
         "Add-MpPreference",
@@ -323,6 +332,19 @@ class Block:
     info: str
     lines: tuple[tuple[int, str], ...]
 
+    def commands(self) -> Iterator[tuple[int, str]]:
+        """`(line, command)` for every command part this block's lines carry.
+
+        The one traversal every rule reads through: `_logical` joins the `\\`-continued lines and
+        `_commands` strips the prompts, platform labels and notes, so a caller's loop is the filter it
+        is actually about - which lines are invocations, which mention a path - and never a second
+        reading of the fence. The label rides on the block rather than on each command, so a caller
+        that wants it (the reference scan, which reports the fence a finding sits in) has `info`.
+        """
+        for number, line in _logical(self.lines):
+            for command in _commands(line):
+                yield number, command
+
 
 def blocks(text: str) -> tuple[Block, ...]:
     """Every shell block in `text`, with the fence's info string held until its closer.
@@ -356,7 +378,10 @@ def _logical(lines: Iterable[tuple[int, str]]) -> list[tuple[int, str]]:
 
     One reading, shared by every rule: a wrapped invocation is one command, and reporting the second
     half of it as a line of its own would both mis-number the failure and hand the rules a line that
-    leads with a flag. The line number kept is the first one, which is the line a reader sees.
+    leads with a flag. The join *drops* the marker rather than keeping it, since a backslash left in
+    the middle of the text is a token like any other - the reader's own rules would take the first
+    argument after it for a verb. The line number kept is the first one, which is the line a reader
+    sees.
     """
     joined: list[tuple[int, str]] = []
     buffer: list[str] = []
@@ -364,7 +389,7 @@ def _logical(lines: Iterable[tuple[int, str]]) -> list[tuple[int, str]]:
     for number, raw in lines:
         if not buffer:
             first = number
-        buffer.append(raw.strip())
+        buffer.append(CONTINUATION.sub("", raw).strip())
         if not CONTINUATION.search(raw):
             joined.append((first, " ".join(buffer).strip()))
             buffer = []
@@ -446,7 +471,7 @@ def _candidate(token: str) -> str | None:
     return None
 
 
-def _is_invocation(command: str) -> bool:
+def is_invocation(command: str) -> bool:
     """Whether `command` is a line a reader could paste, rather than a note that happens to be fenced.
 
     Two readings, because the corpus has two kinds of line that start with something a shell could
@@ -471,6 +496,15 @@ def _is_invocation(command: str) -> bool:
     if _candidate(head) is None and _artifact_parts(head) is None:
         return False
     return not (COLUMN_GAP.search(command) or DIAGRAM_GLYPH.search(command))
+
+
+def leading_word(command: str) -> str:
+    """The word that leads `command`, once `VAR=value` prefixes are skipped.
+
+    The one thing a rule judges a line by, without the index the reader needs to keep the arguments:
+    `make` and `npm` are read from it, and so is the question of whether the line is an invocation.
+    """
+    return _invocation(command)[1]
 
 
 def _make_target(args: list[str]) -> str | None:
@@ -512,7 +546,7 @@ def _module_script(module: str) -> str | None:
     return candidate if (REPO_ROOT / candidate).exists() else None
 
 
-def _run_script(command: str) -> tuple[str, list[str]] | None:
+def run_script(command: str) -> tuple[str, list[str]] | None:
     """`(the repo script this line runs, the tokens after it)`, or None when it runs none of ours.
 
     Three shapes, which is all this corpus has: a `.py` path at the head, an interpreter followed by
@@ -553,10 +587,10 @@ def _references_on(command: str, doc: str, line: int, fence: str) -> list[Refere
         path = _candidate(token)
         if path is not None:
             found.append(Reference(doc=doc, line=line, kind="path", target=path, fence=fence))
-    run = _run_script(command)
+    run = run_script(command)
     if run is not None:
         script, rest = run
-        script = _script_key(script, doc)
+        script = script_key(script, doc)
         if rest and not rest[0].startswith("-"):
             found.append(
                 Reference(
@@ -583,6 +617,17 @@ def _references_on(command: str, doc: str, line: int, fence: str) -> list[Refere
     return found
 
 
+def _references_in(shell: Iterable[Block], doc: str) -> list[Reference]:
+    """Every reference on the pasted commands in `shell`, in the order the blocks carry them."""
+    return [
+        reference
+        for block in shell
+        for number, command in block.commands()
+        if is_invocation(command)
+        for reference in _references_on(command, doc, number, block.info)
+    ]
+
+
 def scan_references(text: str, doc: str = "") -> tuple[list[Reference], int]:
     """Every reference in `text`'s shell blocks, and how many such blocks there were.
 
@@ -590,15 +635,8 @@ def scan_references(text: str, doc: str = "") -> tuple[list[Reference], int]:
     entered a block: a file with no shell fences scanned and a file whose blocks were never opened
     look identical from the list alone.
     """
-    found: list[Reference] = []
     shell = blocks(text)
-    for block in shell:
-        for number, line in _logical(block.lines):
-            for command in _commands(line):
-                if not _is_invocation(command):
-                    continue
-                found.extend(_references_on(command, doc, number, block.info))
-    return found, len(shell)
+    return _references_in(shell, doc), len(shell)
 
 
 def _walk(names: Callable[[str], bool]) -> Iterator[Path]:
@@ -623,15 +661,25 @@ def _corpus() -> list[Path]:
     return sorted(_walk(lambda name: name.endswith(".md")))
 
 
+def corpus_blocks() -> Iterator[tuple[str, tuple[Block, ...]]]:
+    """`(doc, its shell fences)` for every instruction document in the repo, in a stable order.
+
+    Where the corpus is read, and the reason there is one walk rather than three: the reference scan,
+    the interpreter scan and the line-level `corpus_commands` all want exactly this, and reading it
+    here is what stops one of them from forgetting a skip the other two apply - which is how a guard
+    quietly stops reading the docs it is responsible for.
+    """
+    for path in _corpus():
+        yield path.relative_to(REPO_ROOT).as_posix(), blocks(path.read_text(encoding="utf-8"))
+
+
 def scan_reference_corpus() -> tuple[list[Reference], dict[str, int]]:
     """`(every documented reference, {doc: shell fences})` over the whole corpus."""
     found: list[Reference] = []
     fences: dict[str, int] = {}
-    for path in _corpus():
-        doc = path.relative_to(REPO_ROOT).as_posix()
-        references, blocks_read = scan_references(path.read_text(encoding="utf-8"), doc)
-        found.extend(references)
-        fences[doc] = blocks_read
+    for doc, shell in corpus_blocks():
+        found.extend(_references_in(shell, doc))
+        fences[doc] = len(shell)
     return found, fences
 
 
@@ -643,13 +691,12 @@ def corpus_commands() -> list[tuple[str, str]]:
     forgot the platform labels or the continuation joining would answer a different question than the
     rules do - and a canary that walks differently from the rule it guards is worth nothing.
     """
-    found: list[tuple[str, str]] = []
-    for path in _corpus():
-        doc = path.relative_to(REPO_ROOT).as_posix()
-        for block in blocks(path.read_text(encoding="utf-8")):
-            for _number, line in _logical(block.lines):
-                found.extend((doc, command) for command in _commands(line))
-    return found
+    return [
+        (doc, command)
+        for doc, shell in corpus_blocks()
+        for block in shell
+        for _number, command in block.commands()
+    ]
 
 
 def corpus_parts() -> tuple[list[str], list[str]]:
@@ -662,7 +709,7 @@ def corpus_parts() -> tuple[list[str], list[str]]:
     invocations: list[str] = []
     notes: list[str] = []
     for _doc, command in corpus_commands():
-        (invocations if _is_invocation(command) else notes).append(command)
+        (invocations if is_invocation(command) else notes).append(command)
     return invocations, notes
 
 
@@ -675,7 +722,7 @@ def _artifact_parts(path: str) -> tuple[str, ...] | None:
     return None
 
 
-def _script_key(script: str, doc: str) -> str:
+def script_key(script: str, doc: str) -> str:
     """A script's identity: its repo-relative path when it is on disk, else the spelling doc used.
 
     The docs write the same tool three ways - `clean_v2.py` after a `cd sidecar/tools`,
@@ -684,32 +731,37 @@ def _script_key(script: str, doc: str) -> str:
     canary can list: a list of spellings would not notice one of them going missing, since the other
     two would still be there.
     """
-    path = _resolved(script, doc)
+    path = resolve_path(script, doc)
     return path.relative_to(REPO_ROOT).as_posix() if path and path.is_file() else script
 
 
-def _resolved(path: str, doc: str) -> Path | None:
+def resolve_path(path: str, doc: str) -> Path | None:
     """The file a reader pasting this line would land on, or None.
 
     Four roots, because the prose around a block is what says where a reader is: the doc's own
     directory (`DEPLOYMENT.md` inside `docs/`), the repo root (where the setup blocks start), and the
     two package roots (which the `cd sidecar` / `cd desktop` blocks are written for). A path in none
-    of them is the thing this rule exists for - a name no reader can paste from anywhere.
+    of them is the thing this rule exists for - a name no reader can paste from anywhere. A caller
+    with no doc to be relative to gets the repo root and the two packages, and *never* the directory
+    the checkout happens to sit in: resolving outside the repo is the check failing open.
     """
-    for base in ((REPO_ROOT / doc).parent, REPO_ROOT, REPO_ROOT / "sidecar", REPO_ROOT / "desktop"):
+    roots = [REPO_ROOT, REPO_ROOT / "sidecar", REPO_ROOT / "desktop"]
+    if doc:
+        roots.insert(0, (REPO_ROOT / doc).parent)
+    for base in roots:
         candidate = base / path
         if candidate.exists():
             return candidate
     return None
 
 
-def _exists(path: str, doc: str) -> bool:
+def path_exists(path: str, doc: str) -> bool:
     """Whether a reader pasting this line lands on a file."""
-    return _resolved(path, doc) is not None
+    return resolve_path(path, doc) is not None
 
 
-def makefile_targets(text: str) -> frozenset[str]:
-    """Every target a Makefile answers to: `name:` rules plus the `.PHONY` names."""
+def _targets_in(text: str) -> frozenset[str]:
+    """Every target one Makefile's text answers to: `name:` rules plus the `.PHONY` names."""
     targets = set(MAKE_TARGET.findall(text))
     phony = PHONY.search(text.replace("\\\n", " "))
     if phony:
@@ -717,7 +769,7 @@ def makefile_targets(text: str) -> frozenset[str]:
     return frozenset(targets)
 
 
-def package_scripts(texts: Iterable[str]) -> frozenset[str]:
+def _scripts_in(texts: Iterable[str]) -> frozenset[str]:
     """Every `scripts` key across some `package.json` texts, so a doc's `npm run x` has one answer."""
     scripts: set[str] = set()
     for text in texts:
@@ -728,12 +780,18 @@ def package_scripts(texts: Iterable[str]) -> frozenset[str]:
     return frozenset(scripts)
 
 
-def _makefile_targets() -> frozenset[str]:
-    return makefile_targets((REPO_ROOT / "Makefile").read_text(encoding="utf-8"))
+def makefile_targets() -> frozenset[str]:
+    """Every target the repo's Makefile answers to: the owner of every documented `make <name>`.
+
+    Read from the file rather than restated, the way the option rule reads a parser from the script
+    that builds it: the Makefile is where the answer lives, and a list here could only disagree.
+    """
+    return _targets_in((REPO_ROOT / "Makefile").read_text(encoding="utf-8"))
 
 
-def _npm_scripts() -> frozenset[str]:
-    return package_scripts(
+def npm_scripts() -> frozenset[str]:
+    """Every script any `package.json` in this repo declares, for every documented `npm run x`."""
+    return _scripts_in(
         path.read_text(encoding="utf-8")
         for path in _walk(lambda name: name == "package.json")
     )

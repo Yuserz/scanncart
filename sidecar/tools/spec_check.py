@@ -48,9 +48,9 @@ run 960 and a different capture size, and a frame costs what the profile says it
 report names the file it read, and `--defaults` measures the shipped set instead - which is what
 you want when comparing machines or a fresh install.
 
-    python sidecar/tools/spec_check.py --generation v1
-    python sidecar/tools/spec_check.py --generation v1 --limit 40 --strict
-    python sidecar/tools/spec_check.py --generation v1 --defaults   # shipped settings
+    sidecar/.venv/Scripts/python.exe sidecar/tools/spec_check.py --generation v1
+    sidecar/.venv/Scripts/python.exe sidecar/tools/spec_check.py --generation v1 --limit 40 --strict
+    sidecar/.venv/Scripts/python.exe sidecar/tools/spec_check.py --generation v1 --defaults   # shipped settings
 
 Needs no camera and no network. Reads the ignored dataset workspace; the per-class and
 per-crowding breakdown lives in `audit_recall.py`.

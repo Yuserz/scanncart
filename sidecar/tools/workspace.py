@@ -30,7 +30,8 @@ data lives in the sidecar's data directory, `sidecar/data/datasets/`, which is
 gitignored and already where the hard-negative capture lives. Point it elsewhere
 with SCANNCART_DATASET_ROOT:
 
-    SCANNCART_DATASET_ROOT=D:/scanncart-datasets python sidecar/tools/clean_v2.py sanity
+    SCANNCART_DATASET_ROOT=D:/scanncart-datasets \
+        sidecar/.venv/Scripts/python.exe sidecar/tools/clean_v2.py sanity
 
     import workspace
 

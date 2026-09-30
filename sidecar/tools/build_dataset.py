@@ -16,8 +16,8 @@ them in a *different order*, and translating that is the one transformation belo
 The output is a directory in the layout `train_model.py` already reads (`<split>/images`,
 `<split>/labels`, `data.yaml` with `names`), so training the merged set is:
 
-    python sidecar/tools/build_dataset.py
-    python sidecar/tools/train_model.py --dataset-dir <workspace>/merged-v2
+    sidecar/.venv/Scripts/python.exe sidecar/tools/build_dataset.py
+    sidecar/.venv/Scripts/python.exe sidecar/tools/train_model.py --dataset-dir <workspace>/merged-v2
 
 WHAT IS ACTUALLY TRANSFORMED, AND WHY THAT IS SO LITTLE
 ------------------------------------------------------

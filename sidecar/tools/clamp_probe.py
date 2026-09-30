@@ -19,8 +19,8 @@ Both need only data already on disk, so both are reproducible, and this is the r
 from scratch scripts that were not tracked, so the doc cited a measurement with no way to re-run
 it.
 
-    python sidecar/tools/clamp_probe.py
-    python sidecar/tools/clamp_probe.py --generation v1 --strict     # gate: exit 1 on a failure
+    sidecar/.venv/Scripts/python.exe sidecar/tools/clamp_probe.py
+    sidecar/.venv/Scripts/python.exe sidecar/tools/clamp_probe.py --generation v1 --strict     # gate: exit 1 on a failure
 
 **Everything here goes through the Pipeline, including the sweep.** That is the one structural
 decision worth explaining. The obvious shape is a bare detector pass over the frames for the

@@ -36,17 +36,17 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Iterable
 
 import pytest
 
 from tests.docs_fences import (
     INSTRUCTION_DOCS,
     REPO_ROOT,
-    _commands,
-    _corpus,
-    _is_invocation,
-    _logical,
+    Block,
     blocks,
+    corpus_blocks,
+    is_invocation,
 )
 
 pytestmark = pytest.mark.docs
@@ -95,6 +95,22 @@ class Invocation:
         return None
 
 
+def _invocations_in(shell: Iterable[Block], doc: str) -> list[Invocation]:
+    """Every bare interpreter the pasted commands in `shell` run, in the order the blocks carry them."""
+    return [
+        Invocation(
+            doc=doc,
+            line=number,
+            command=command,
+            fence=block.info,
+            creating_venv=VENV_CREATION.match(command) is not None,
+        )
+        for block in shell
+        for number, command in block.commands()
+        if is_invocation(command) and BARE_INTERPRETER.match(command)
+    ]
+
+
 def scan(text: str, doc: str = "") -> tuple[list[Invocation], int]:
     """Every bare interpreter in `text`'s shell blocks, and how many such blocks there were.
 
@@ -102,36 +118,19 @@ def scan(text: str, doc: str = "") -> tuple[list[Invocation], int]:
     walker entered a block: a file with no shell fences scanned and a file whose blocks were never
     opened look identical from the list alone.
     """
-    found: list[Invocation] = []
     shell = blocks(text)
-    for block in shell:
-        for number, line in _logical(block.lines):
-            for command in _commands(line):
-                if not _is_invocation(command):
-                    continue
-                if BARE_INTERPRETER.match(command):
-                    found.append(
-                        Invocation(
-                            doc=doc,
-                            line=number,
-                            command=command,
-                            fence=block.info,
-                            creating_venv=VENV_CREATION.match(command) is not None,
-                        )
-                    )
-    return found, len(shell)
+    return _invocations_in(shell, doc), len(shell)
 
 
 def scan_corpus() -> tuple[dict[str, list[Invocation]], dict[str, int]]:
     """`({doc: invocations}, {doc: shell fences})` over the whole corpus."""
     hits: dict[str, list[Invocation]] = {}
     fences: dict[str, int] = {}
-    for path in _corpus():
-        doc = path.relative_to(REPO_ROOT).as_posix()
-        found, blocks_read = scan(path.read_text(encoding="utf-8"), doc)
+    for doc, shell in corpus_blocks():
+        found = _invocations_in(shell, doc)
         if found:
             hits[doc] = found
-        fences[doc] = blocks_read
+        fences[doc] = len(shell)
     return hits, fences
 
 

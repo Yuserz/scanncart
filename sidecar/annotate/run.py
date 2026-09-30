@@ -1,4 +1,4 @@
-"""Start the annotator: `python -m annotate.run [--out ...] [--weights ...]`.
+"""Start the annotator: `sidecar/.venv/Scripts/python.exe -m annotate.run [--out ...] [--weights ...]`.
 
 Printed on stdout as `ANNOTATE_PORT=<n>`, the same handshake `sidecar/run.py` uses, so a script or a
 human can find the URL without guessing. The port is picked the same way too - an OS-assigned free

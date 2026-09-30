@@ -64,15 +64,15 @@ Resource envelope: see resources.py. The caps the other dataset tools take are h
 too, and this pass is cheap - it is inference over a few hundred images, not a decode of
 thousands of 12 MP frames.
 
-    python sidecar/tools/audit_recall.py --generation v1
-    python sidecar/tools/audit_recall.py --generation v1 --conf-sweep --iou-sweep
-    python sidecar/tools/audit_recall.py --weights runs/scanncart-grocery-v2/weights/best.pt
+    sidecar/.venv/Scripts/python.exe sidecar/tools/audit_recall.py --generation v1
+    sidecar/.venv/Scripts/python.exe sidecar/tools/audit_recall.py --generation v1 --conf-sweep --iou-sweep
+    sidecar/.venv/Scripts/python.exe sidecar/tools/audit_recall.py --weights runs/scanncart-grocery-v2/weights/best.pt
     # a refreshed dataset, measured beside the frozen export it was built on
-    python sidecar/tools/audit_recall.py --generation v1 \\
+    sidecar/.venv/Scripts/python.exe sidecar/tools/audit_recall.py --generation v1 \\
         --dataset-dir sidecar/data/datasets/export-v1-s2 \\
         --manifest sidecar/data/datasets/cleaned-v1-s2/manifest.json
     # the labels' own size distribution - no weights, no GPU, no model download
-    python sidecar/tools/audit_recall.py --generation v1 --size-histogram
+    sidecar/.venv/Scripts/python.exe sidecar/tools/audit_recall.py --generation v1 --size-histogram
 
 Reads the ignored dataset workspace; needs no camera, no network and no API key.
 

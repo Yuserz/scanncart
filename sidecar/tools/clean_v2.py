@@ -2118,8 +2118,8 @@ def cmd_sanity(args: argparse.Namespace) -> int:
                 "preprocessing not set yet - no version carries it",
                 f"it is set when a version is generated, and it is not revisitable afterwards.\n"
                 f"Generate it with the reviewed settings rather than by clicking:\n"
-                f"  python sidecar/tools/generate_version.py --dry-run\n"
-                f"  python sidecar/tools/generate_version.py --yes\n"
+                f"  sidecar/.venv/Scripts/python.exe sidecar/tools/generate_version.py --dry-run\n"
+                f"  sidecar/.venv/Scripts/python.exe sidecar/tools/generate_version.py --yes\n"
                 f"That sends auto-orient on and resize {want_fmt} {want_w}x{want_h}. The sidecar\n"
                 f"infers at settings.imgsz, so any other size trains at a scale inference never\n"
                 f"uses - and for a locally trained .pt the geometry has to travel with the\n"

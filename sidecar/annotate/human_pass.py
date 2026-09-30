@@ -228,7 +228,8 @@ def render(items: Checklist) -> str:
         f"       labels   {items.annotations}",
         f"       also     {_extras_note(items.extras)}",
         "",
-        "     Rewrite it with `make human-pass` (or `python -m annotate.human_pass`); `--check`",
+        "     Rewrite it with `make human-pass` (or "
+        "`sidecar/.venv/Scripts/python.exe -m annotate.human_pass`); `--check`",
         "     fails instead of writing when the file no longer matches what the store says. -->",
         "",
         "# The human pass (valid + test only)",

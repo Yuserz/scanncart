@@ -57,20 +57,16 @@ from typing import Callable, Iterable
 import pytest
 
 from tests.docs_fences import (
-    INSTRUCTION_DOCS,
     REFERENCE_KINDS,
     REPO_ROOT,
     RUNNERS,
     Reference,
-    _commands,
-    _corpus,
-    _exists,
-    _invocation,
-    _logical,
-    _makefile_targets,
-    _npm_scripts,
-    blocks,
+    corpus_commands,
     corpus_parts,
+    leading_word,
+    makefile_targets,
+    npm_scripts,
+    path_exists,
     report,
     scan_reference_corpus,
     scan_references,
@@ -109,7 +105,7 @@ def problems(
     *,
     targets: frozenset[str],
     scripts: frozenset[str],
-    exists: Callable[[str, str], bool] = _exists,
+    exists: Callable[[str, str], bool] = path_exists,
 ) -> list[Reference]:
     """The path, Make-target and npm-script references a reader cannot use, in the order found.
 
@@ -143,7 +139,7 @@ def test_every_pasted_path_is_one_this_checkout_has():
     reader is the only thing that would find out, and by pasting it.
     """
     references, _fences = scan_reference_corpus()
-    bad = problems(references, targets=_makefile_targets(), scripts=_npm_scripts())
+    bad = problems(references, targets=makefile_targets(), scripts=npm_scripts())
     paths = [ref for ref in bad if ref.kind == "path"]
     assert not paths, (
         "a documented shell block names a path this checkout does not have, so pasting it is a "
@@ -157,7 +153,7 @@ def test_every_pasted_path_is_one_this_checkout_has():
 def test_every_pasted_make_target_exists():
     """`make <target>` is a name this repo answers to, or it is a line that cannot run."""
     references, _fences = scan_reference_corpus()
-    bad = problems(references, targets=_makefile_targets(), scripts=_npm_scripts())
+    bad = problems(references, targets=makefile_targets(), scripts=npm_scripts())
     targets = [ref for ref in bad if ref.kind == "make"]
     assert not targets, (
         "a documented shell block asks for a Make target the Makefile does not have - `make` fails "
@@ -169,7 +165,7 @@ def test_every_pasted_make_target_exists():
 def test_every_pasted_npm_script_exists():
     """`npm run <script>` is the same question with a `package.json` as the owner."""
     references, _fences = scan_reference_corpus()
-    bad = problems(references, targets=_makefile_targets(), scripts=_npm_scripts())
+    bad = problems(references, targets=makefile_targets(), scripts=npm_scripts())
     scripts = [ref for ref in bad if ref.kind == "npm"]
     assert not scripts, (
         "a documented shell block asks npm for a script no `package.json` declares, which npm "
@@ -185,9 +181,11 @@ def test_the_reference_scan_reaches_the_docs():
     the numbers the corpus has (the floors are stated under the measured ones at the top, so a doc
     losing a block is not a failure while a walker losing its fences is). The floor for the option
     rule's own kinds is `test_docs_options.py`'s, so a scan that lost *those* still fails somewhere
-    the rule they belong to can see it.
+    the rule they belong to can see it. The corpus's own presence check - that every instruction doc
+    is read at all, with a shell fence in it - is `test_docs_interpreters.py`'s: one walk, held to
+    once, rather than the same assertion over a reader all three families share.
     """
-    references, fences = scan_reference_corpus()
+    references, _fences = scan_reference_corpus()
     kinds = {ref.kind for ref in references}
     assert kinds == set(REFERENCE_KINDS), (
         "the scan found no reference of some kind, so that half of the rule is not being exercised "
@@ -209,11 +207,6 @@ def test_the_reference_scan_reaches_the_docs():
         f"only {len(exempt)} path references ride on the artifact prefixes, where the corpus has at "
         f"least {ARTIFACT_EXEMPT_TODAY} - the exemption list or the paths it was written for have "
         "moved, and the half of the corpus it covers is now being checked by nobody"
-    )
-
-    missing = [doc for doc in INSTRUCTION_DOCS if doc not in fences]
-    assert not missing, (
-        "an instruction doc fell out of the reference corpus: " + ", ".join(missing)
     )
 
 
@@ -250,12 +243,7 @@ def test_the_runner_list_is_still_the_one_the_docs_lead_with():
         "start with them are read as notes: a bare `python` behind one, or a path on one, is not "
         "checked"
     )
-    seen = set()
-    for path in _corpus():
-        for block in blocks(path.read_text(encoding="utf-8")):
-            for _number, line in _logical(block.lines):
-                for command in _commands(line):
-                    seen.add(_invocation(command)[1])
+    seen = {leading_word(command) for _doc, command in corpus_commands()}
     unseen = [word for word in RUNNERS_IN_USE if word not in seen]
     assert not unseen, (
         f"{unseen} are declared as words the docs lead a line with and none was seen: either the "
@@ -379,7 +367,7 @@ def test_it_does_not_cry_wolf_on_tables_trees_and_placeholders():
         ]
     )
     references, fences = scan_references(real)
-    bad = problems(references, targets=_makefile_targets(), scripts=_npm_scripts())
+    bad = problems(references, targets=makefile_targets(), scripts=npm_scripts())
 
     assert fences == 1
     assert bad == [], (
@@ -401,8 +389,8 @@ def test_the_same_reference_rule_fires_on_a_real_doc():
     references, _fences = scan_references(text.replace("make verify-clamp", "make verify-clamped"))
     bad = problems(
         references,
-        targets=_makefile_targets(),
-        scripts=_npm_scripts(),
+        targets=makefile_targets(),
+        scripts=npm_scripts(),
     )
 
     assert [(ref.kind, ref.target) for ref in bad] == [("make", "verify-clamped")], (
