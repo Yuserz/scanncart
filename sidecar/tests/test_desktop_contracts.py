@@ -476,6 +476,157 @@ def test_the_roster_wording_guard_is_wired_to_its_end():
     assert_canary_fires(ROSTER_FINDING_CONTRACT)
 
 
+#: What the assumed-geometry remedy means, and where a maintainer can read it. `resize_guess` in
+#: `settings_store.py` owns the answer - `auto` on an unrecorded custom `.pt` is an assumption
+#: rather than a fact, and the entry pairs the diagnosis with the mode a one-click record writes -
+#: and every surface that *describes* that pairing has to keep saying it. Written against the
+#: engine above as a table plus three tests with no plumbing of its own, which is the test of the
+#: extraction. There is no retired phrase: the two-sentence split (warning for the Live view,
+#: remedy beside the button) postdates every surface listed here.
+RESIZE_REMEDY_CONTRACT = WordingContract(
+    name="unrecorded-geometry remedy",
+    owner="sidecar/app/settings_store.py::resize_guess",
+    claim="a surface that describes the assumed-geometry remedy no longer carries its wording.",
+    facts=(
+        "The fact lives in `sidecar/app/settings_store.py::resize_guess` - `auto` on an "
+        "unrecorded custom `.pt` is an assumption rather than a fact, and the entry pairs the "
+        "diagnosis with the mode a one-click record writes."
+    ),
+    surfaces=(
+        (
+            "sidecar/app/settings_store.py",
+            (
+                "travels with `mode` rather than being assembled by whoever renders it",
+                "the sentences have to name the same mode the remedy writes",
+                "It is two sentences rather than one because *two views* show this case, and only one of them",
+                "`warning` is the diagnosis",
+                "an explicit `letterbox` is a *decision*",
+                "is how a warning gets ignored",
+                "this goes quiet instead of contradicting the geometry the",
+            ),
+        ),
+        (
+            "sidecar/app/schemas.py",
+            (
+                "which is why it is a",
+                "structured entry and not a string in `warnings`",
+                "a button has to know which weight and which mode",
+                "holds no copy of the sentence",
+                "Recording it cannot change what the model does; it converts a fallback into a stated fact",
+                "the warning it replaces is about the *proof*, not about the value",
+                "two views render this entry and only one of them",
+                "Both views print both sentences verbatim",
+            ),
+        ),
+        (
+            "sidecar/app/main.py",
+            (
+                "this case has a remedy the panel can perform (`POST /api/models/record`)",
+                "one situation, one place on screen, and the place that can answer it",
+                "The Admin Panel's one-click remedy for SettingsResponse.unrecorded_resize_mode",
+                "the operator attests to a fact only they hold",
+                "Allowed while capture runs, unlike the restart-required settings",
+                "Refusing here would remove the button at the one moment an operator is looking at the warning",
+                "Returning the list rather than an acknowledgement means the panel reads the result instead of",
+            ),
+        ),
+        (
+            "sidecar/app/models.py",
+            (
+                "It **merges rather than replaces**",
+                "Written to a temporary file and `os.replace`d",
+            ),
+        ),
+        (
+            "sidecar/tests/test_settings_store.py",
+            (
+                "a structured entry rather than a line in this list, that covers the",
+                "the entry carries the mode a",
+                "One situation, one place on screen. The panel renders `resize_guess` with a remedy, so a",
+                "the copy without a fix is the one",
+            ),
+        ),
+        (
+            "CLAUDE.md",
+            (
+                "a frozen `ResizeGuess(mode, warning, remedy)`",
+                "It left the flat list to gain a remedy",
+                "written to survive being read in a view with no button under it",
+                "the Admin Panel renders a one-click `Record it now` beside them",
+                "The gates live in `resize_guess` so the sentence and the button cannot disagree about when they apply",
+                # Starts after "**Live view**" - the bold markers survive the normalizer as tokens,
+                # so a fragment crossing them has to start beyond the markup.
+                "renders the same entry too, because it is the screen where weak",
+            ),
+        ),
+        (
+            "desktop/src/renderer/src/lib/api.ts",
+            (
+                "with the sentence saying so and the mode a",
+                "A structured entry rather than a line in `warnings` because it is",
+                "the one resize case the app can settle by itself",
+                "a button cannot read",
+                "What recording would write, which is `auto`'s answer for these weights",
+                "Recording it cannot change what the model does; it turns the fallback into a",
+            ),
+        ),
+        (
+            "desktop/src/renderer/src/views/AdminPanel.tsx",
+            (
+                "The one resize warning with a remedy this app can perform itself",
+                "the sentence and the button have to travel together",
+                'has to read as "nothing to record", which costs a button',
+                "read off the *weights list*, not remembered here",
+                "The remedy, confirmed — and confirmed from the sidecar's own answer rather than",
+                "The remedy sentence comes from the sidecar and the Live view renders the same",
+            ),
+        ),
+        (
+            "desktop/src/renderer/src/hooks/useActiveWeights.ts",
+            (
+                "then re-reads. The entry itself is the remedy",
+                "re-reads instead of trusting an answer",
+                "stays false along with it",
+            ),
+        ),
+        (
+            "desktop/src/renderer/src/views/LiveView.tsx",
+            (
+                "the chip and the banner cannot describe different risks",
+                "a record is evidence, an assumption is a gap in what is known",
+                "the one without the remedy",
+                "Not dismissible either. The operator can see the weaker detections and cannot see why,",
+                "Safe to offer mid-capture — the mode written is the one `auto`",
+                "not need the view switch it used to",
+            ),
+        ),
+    ),
+    # The marker sits inside the fragment's span, as a wrapped comment would put it, so the
+    # canary proves the marker-dropping and not only the matching - the lesson from the null
+    # contract's canary, applied from the start this time.
+    canary_fixture=(
+        "// the warning it replaces /* is about the *proof*, not about the value */ exactly"
+    ),
+    canary_fragments=("the warning it replaces is about the *proof*, not about the value",),
+)
+
+
+def test_the_resize_remedy_wording_survives_on_every_surface():
+    """Every surface that describes the assumed-geometry remedy still says what it is.
+
+    Written against the engine as a table plus these three tests - the first contract with no
+    plumbing of its own, which is the test of the extraction. The same-edit rule applies as
+    everywhere else: a surface that is reworded takes its row with it in the same edit.
+    """
+    assert_fragments_present(RESIZE_REMEDY_CONTRACT)
+
+
+def test_the_resize_remedy_wording_guard_is_wired_to_its_end():
+    """The guard's own canary: a fixture carrying its marker inside the fragment's span, matched
+    exactly, or the presence test above could pass while checking nothing."""
+    assert_canary_fires(RESIZE_REMEDY_CONTRACT)
+
+
 def test_the_rest_response_models_mirror_the_sidecar():
     """The remaining response models, one pair each.
 
