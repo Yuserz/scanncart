@@ -156,6 +156,199 @@ def test_the_settings_contracts_mirror_the_sidecar():
     )
 
 
+# The tokens a comment wrapper contributes. A wrapped TS comment repeats `//` on every line and
+# a CSS block carries `/*` and ` * `, and those markers land *inside* a sentence the fragments
+# cross - dropping them as tokens is what makes one sentence one fact wherever its lines break.
+#: A marker is matched as a whole token, so `http://127.0.0.1` and `a#b` survive untouched.
+_COMMENT_MARKER_TOKENS = frozenset({"//", "/*", "*/", "*", "#", "##", "<!--", "-->"})
+
+
+def _normalized_text(text: str) -> str:
+    """`text` as one string of single-spaced words, so a fragment survives its line wraps.
+
+    The wording these tests pin travels in comments - TypeScript, CSS and the sidecar's own -
+    which the formatter and the docstring convention wrap freely: the same sentence is one fact
+    whatever width it was written at, and a reader that demanded the original line breaks would
+    fail on the first reformat rather than on any real drift. Comment markers are dropped as
+    whole tokens (`_COMMENT_MARKER_TOKENS`), which is what keeps a fragment readable across the
+    `//` its continuation lines carry.
+    """
+    return " ".join(w for w in text.split() if w not in _COMMENT_MARKER_TOKENS)
+
+
+def _one_wording_surface(relative: str) -> str:
+    """One wording surface as text. A moved or renamed file fails here, not as an empty read."""
+    path = REPO_ROOT / relative
+    if not path.is_file():
+        raise AssertionError(f"the surface this guard reads is gone: {relative}")
+    return path.read_text(encoding="utf-8")
+
+
+#: What a null camera control means, and where a maintainer can read it. `_undo_for` in
+#: `app/camera.py` owns the answer - measured on this hardware, only autofocus has an automatic
+#: mode the app can name (`CAP_PROP_AUTOFOCUS=1`), and the getter lies about the rest
+#: (`get(CAP_PROP_BRIGHTNESS)` answered 0.0 over a normal picture, and writing that "restored"
+#: value back turned the image black), so a reset stops this app writing the control and the
+#: device keeps the last value it was given. Every surface that *describes* that behaviour, on
+#: either side of the wire, has to keep saying it: the wording is the operator's only explanation
+#: of what Revert does, and it lives in comments the compiler and the formatter never look at.
+#: A rename can survive that silence; a reword that drifts back toward "auto" cannot.
+NULL_CONTROL_SURFACES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "sidecar/app/camera.py",
+        (
+            "Autofocus is the whole list",
+            "reading it back would pin focus on the way to undoing the drag",
+            "leaves the device holding the last value it was",
+        ),
+    ),
+    (
+        "sidecar/app/settings.py",
+        (
+            'None means "this app imposes no value"',
+            "(see CameraCapture._with_restores)",
+        ),
+    ),
+    (
+        "sidecar/app/settings_store.py",
+        ('None ("this app imposes no value")',),
+    ),
+    (
+        "sidecar/app/schemas.py",
+        ('cannot restore "this app imposes no value"',),
+    ),
+    (
+        "sidecar/tests/test_live_settings.py",
+        (
+            "None means 'this app imposes no value', and telling the camera is the",
+            "What the device then does about it is camera.py's half",
+        ),
+    ),
+    (
+        "CLAUDE.md",
+        (
+            "A queued `None` is **not** a skip",
+            "the device keeps the last value it was given until something writes it again",
+        ),
+    ),
+    (
+        "desktop/src/renderer/src/lib/api.ts",
+        (
+            'null means "this app imposes no value"',
+            "(CameraCapture._undo_for)",
+            "cannot travel as a value",
+        ),
+    ),
+    (
+        "desktop/src/renderer/src/components/CameraTuning.tsx",
+        (
+            'placeholder="unset"',
+            '"unset", not "auto": for three of these four controls the',
+            "For autofocus the sidecar hands the control back to the lens",
+            "CameraCapture's `_undo_for`",
+        ),
+    ),
+    (
+        "desktop/src/renderer/src/components/CameraTuning.css",
+        (
+            '"unset" — the app is not setting this control',
+            "Not \"auto\": only autofocus can be handed back to the device's own mode",
+        ),
+    ),
+    (
+        "desktop/src/renderer/src/components/CameraTuning.test.tsx",
+        (
+            'reads "unset" — not "auto" — for a control the sidecar is not setting',
+            'reverts a control back to "this app imposes no value"',
+        ),
+    ),
+)
+
+#: The sentence this wording replaced. It promised the camera an automatic mode only autofocus
+#: has, which is the exact claim the fix was written to stop making - so it is not just unused,
+#: it is wrong, and coming back is a regression rather than a leftover.
+RETIRED_NULL_WORDING = ("leave the camera alone",)
+
+
+def test_the_null_control_wording_survives_on_every_surface():
+    """Every surface that says what a null camera control means still says what it is.
+
+    The semantics have one owner (`_undo_for`) and ten tellers, and the tellers are comments:
+    nothing fails to compile when one is deleted or reworded toward "auto", so the drift this
+    pins is the quiet kind - the card keeps working while its explanation starts promising a
+    restoration the camera cannot do. The fragments are the load-bearing phrases, not the whole
+    sentences: rewriting a surface is fine, losing the fact is not. A fragment that no longer
+    fits what the code does should be updated in the same edit as the code, which is the
+    contract the failure message below states.
+    """
+    missing: list[str] = []
+    for relative, fragments in NULL_CONTROL_SURFACES:
+        flat = _normalized_text(_one_wording_surface(relative))
+        missing.extend(
+            f"{relative}: {fragment!r}" for fragment in fragments if fragment not in flat
+        )
+    assert not missing, (
+        "a surface that describes what a null camera control means no longer carries its "
+        "wording. The semantics live in `sidecar/app/camera.py::_undo_for` - a queued None "
+        "stops this app writing the control: autofocus handed back to the lens, the other "
+        "three left holding whatever the device was last given, because nothing on the device "
+        "says what that was. Reword the surface or move the wording into whatever replaced "
+        "it, and update this guard in the same edit:\n  " + "\n  ".join(missing)
+    )
+
+
+def test_the_retired_null_wording_stays_retired():
+    """The retired phrase promised a restoration the camera cannot do; it stays gone.
+
+    "leave the camera alone" predates the fix that measured the getter lying
+    (`get(CAP_PROP_BRIGHTNESS)` answered 0.0 over a normal picture, and writing the read-back
+    value turned the image black), so unlike an ordinary old spelling it is not neutral if it
+    returns - it restates the bug. Only the surfaces the wording guard reads are scanned,
+    because those are the ones a maintainer edits while thinking about this exact sentence.
+    """
+    stale: list[str] = []
+    for relative, _fragments in NULL_CONTROL_SURFACES:
+        flat = _normalized_text(_one_wording_surface(relative))
+        stale.extend(relative for phrase in RETIRED_NULL_WORDING if phrase in flat)
+    assert not stale, (
+        "the retired null-control wording came back. It promised the camera an automatic "
+        "mode only autofocus has - measured, the other three controls keep whatever this app "
+        "last wrote, and neither a capture restart nor a reopen gives it back. Reword the new "
+        "text rather than reverting to the sentence that promised the reset would work; the "
+        "owner of the answer is `sidecar/app/camera.py::_undo_for`:\n  " + "\n  ".join(stale)
+    )
+
+
+def test_the_null_wording_guard_is_wired_to_both_of_its_ends():
+    """The guard's own canary: a fragment set that matched nothing, or an absence check that
+    matched everything, would let the tests above pass while checking nothing.
+
+    The fixture is text shaped like the surfaces - one sentence carrying a kept fragment, one
+    carrying the retired phrase - and both halves have to fire on it. This is the same reason
+    `test_docs_paths.py` floors its invocation and note counts: a reader that stopped deciding
+    is invisible from its verdicts alone.
+    """
+    fixture = _normalized_text(
+        'the old sentence promised null means "leave the camera alone", but the reset stops '
+        "this app writing the control, and the device keeps the last value it was given "
+        "until something writes it again"
+    )
+    kept = [
+        fragment
+        for _relative, fragments in NULL_CONTROL_SURFACES
+        for fragment in fragments
+        if fragment in fixture
+    ]
+    assert "the device keeps the last value it was given until something writes it again" in kept, (
+        "the kept-wording half of this guard matched nothing: the surfaces could all go quiet "
+        "and the presence test above would never fire"
+    )
+    assert "leave the camera alone" in fixture, (
+        "the retired-wording half of this guard matched nothing: the old sentence could come "
+        "back and the absence test above would never fire"
+    )
+
+
 def test_the_rest_response_models_mirror_the_sidecar():
     """The remaining response models, one pair each.
 
