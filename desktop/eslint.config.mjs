@@ -18,6 +18,16 @@ export default defineConfig(
     }
   },
   {
+    // `scripts/` (the layout check's Electron harness and preload) runs under Node and Electron
+    // rather than through the bundler: `require` is how a preload gets `ipcRenderer` at all, and a
+    // `.cjs` main process has no module types to annotate. The rules stay on everywhere else.
+    files: ['scripts/**/*.{cjs,mjs}'],
+    rules: {
+      '@typescript-eslint/no-require-imports': 'off',
+      '@typescript-eslint/explicit-function-return-type': 'off'
+    }
+  },
+  {
     files: ['**/*.{ts,tsx}'],
     plugins: {
       'react-hooks': eslintPluginReactHooks,

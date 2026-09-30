@@ -30,6 +30,7 @@ make docs-sync            # rewrite the numbers the docs state from the code tha
 make docs-sync-check      # report doc numbers that no longer match the code (exits nonzero)
 make verify-clamp         # re-check the frame-clamp claims against real weights + frames
 make verify-unsure        # re-measure the unsure-phantom rule's cost and coverage (also needs a camera)
+make verify-live-layout   # measure the Live tab's one-screen promise in real Electron (builds first)
 make build                # typecheck + electron-vite build
 make lint                 # eslint --cache --max-warnings 0 on desktop
 ```
@@ -39,6 +40,18 @@ carry — an installed weight and the staged negatives, plus a camera for the se
 deliberately *not* part of `make test`, which CI runs on a bare checkout. They fail loudly when the
 inputs are absent rather than skipping, since a skip there is a silent pass on the only checks that
 say the suppressions still work on real frames and still catch the two phantom families.
+
+`make verify-live-layout` is the third gate and the only one that needs no data at all — a built
+renderer and a display. The Live view's premise is preview and rail on one screen with no page
+scroll, which is a claim about geometry, and jsdom computes none of it (`scrollHeight` is 0 for
+everything), so the suite cannot see it and it was measured by hand until this existed: the target
+builds the renderer, draws it in Electron at the canvas and at both corners of the window floor
+(`desktop/scripts/check-live-layout.mjs`), and exits nonzero with the per-size table when the page
+scrolls. It is out of `make test` for the other reason a check can be, not for missing inputs, and
+CI runs it in its own `live-layout` job under `xvfb-run`. The cheap half is in the suite —
+`desktop/src/renderer/src/views/liveLayout.test.ts` pins the CSS facts the promise is made of, the
+standard the thresholds are stated against, and that the target, this line and that job still exist
+— because a measurement wired to nothing is the hand check it replaced.
 
 ### Sidecar (Python, in `sidecar/`)
 

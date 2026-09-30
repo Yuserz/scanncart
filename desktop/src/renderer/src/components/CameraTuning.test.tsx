@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { TUNING_BAND_MIN_HEIGHT, TUNING_BAND_MIN_WIDTH } from '../../../main/windowSize'
 import type { ApiClient, CameraProfileResponse } from '../lib/api'
 import { baseSettings, makeDeps } from '../test/fakes'
 import { CameraTuning } from './CameraTuning'
@@ -1094,7 +1095,12 @@ describe('CameraTuning — where it starts', () => {
     })
     renderCard()
 
-    expect(queries[0]).toBe('(min-width: 1024px) and (min-height: 705px)')
+    // The pair the card asks with, built from the same module it imports them from: what this pins
+    // is *that* it asks about both axes, and the values themselves are held against the canvas next
+    // door (`windowSize.test.ts`, and the same pair in the Live view's own layout test).
+    expect(queries[0]).toBe(
+      `(min-width: ${TUNING_BAND_MIN_WIDTH}px) and (min-height: ${TUNING_BAND_MIN_HEIGHT}px)`
+    )
     expect(screen.getByRole('button', { name: /Camera tuning/ })).toHaveAttribute(
       'aria-expanded',
       'true'

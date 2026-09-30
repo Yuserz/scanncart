@@ -45,6 +45,37 @@ export interface WindowBounds {
 /** The canvas everything else is derived from: a 1024x768 (4:3) tablet in landscape. */
 export const TABLET = { width: 1024, height: 768 } as const
 
+/**
+ * What the window's frame and title bar cost: 16px of width, 39px of height.
+ *
+ * This module states two kinds of size and they are not interchangeable. The canvas and the floors
+ * are *window* sizes - what `BrowserWindow` is given - while the band's two thresholds are *content*
+ * sizes, which is what the page's `matchMedia` and `innerWidth` report. Reading one as the other is
+ * how the band came to be shut on the canvas: `TABLET.width` is 1024 and the content there is 1008.
+ * The numbers are measured (a 1024x768 window draws a 1008x729 viewport on Windows, with the window
+ * options `createWindow` uses) rather than computed, because the frame is the OS's, not ours.
+ */
+export const CONTENT_CHROME = { width: 16, height: 39 } as const
+
+/**
+ * The content area a window of this size draws - the renderer's own viewport.
+ *
+ * Only the band's thresholds are stated in these units, so nothing in the app calls this: it exists
+ * so the tests can say *the band opens at the canvas and is shut at every corner of the floor* as
+ * arithmetic, instead of comparing a window size against a viewport one and passing by luck. The
+ * measured version of the same claim is `make verify-live-layout`, which asks a real engine for the
+ * viewport rather than deriving it.
+ */
+export function contentSize(window: { width: number; height: number }): {
+  width: number
+  height: number
+} {
+  return {
+    width: window.width - CONTENT_CHROME.width,
+    height: window.height - CONTENT_CHROME.height
+  }
+}
+
 /** How much of the canvas's width the window may shrink to — three quarters, 768px. */
 export const MIN_WIDTH_SCALE = 0.75
 
@@ -56,15 +87,25 @@ export const MIN_WIDTH_SCALE = 0.75
 // stack and scroll there.
 export const MIN_HEIGHT = 670
 
-/** The width at which the camera band has room for its columns, and so opens by default. */
-export const TUNING_BAND_MIN_WIDTH = TABLET.width
+/**
+ * The width at which the camera band has room for its columns, and so opens by default.
+ *
+ * A *content* width, unlike every other number in this file — the renderer's viewport is the
+ * window's content area, so this is a size `contentSize` produces rather than one a `BrowserWindow`
+ * is given. The first version of this said `TABLET.width` (1024), which is a window size: at the
+ * canvas the content is ~1008, so the comparison never held and the band would have been shut on the
+ * one window it was drawn for. The columns need ~966px of body width (measured; the page's own
+ * padding takes the rest), which is ~998 of content, rounded to 1000 — deliberately under the
+ * canvas's content width, not equal to the window's.
+ */
+export const TUNING_BAND_MIN_WIDTH = 1000
 
 /**
  * The content height at which the band's row, the gap under it and the rail's own content all fit:
  * 218 + 12 + 356 of body, plus the 116 of chrome and padding above it, is 702 — and a few pixels
  * of slack over that, because the band's row grows when one of its hints appears. A *content*
- * height, because that is what `matchMedia` reports: the renderer's viewport is the window's
- * content area, and the floor above is in window units.
+ * height, like the width above and unlike the floor below: `matchMedia` compares the renderer's
+ * viewport, which is the window's content area (`contentSize`).
  */
 export const TUNING_BAND_MIN_HEIGHT = 705
 

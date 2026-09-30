@@ -415,6 +415,16 @@ input[type=range] { flex: 0 0 72px; width: 72px; accent-color: var(--accent); ma
         900px, which is why the floor is the height it is — and the rail still gets its rows
         without scrolling.
       </p>
+      <p>
+        Those numbers came from a browser at the exact content sizes, which is the kind of
+        measurement that stops being true quietly. They are a check now:
+        <code>make verify-live-layout</code> builds the renderer, draws it in Electron at the canvas
+        and at both corners of the floor, and exits nonzero with a per-size table the moment the
+        page scrolls. It reads the sizes from <code>windowSize.ts</code> rather than restating them,
+        so a new canvas moves the measurement with it; CI runs it in its own job, and the desktop
+        suite holds the half that needs no engine — the CSS facts the promise is made of, and the
+        guards that this target, its documentation and that job still exist.
+      </p>
 
       <h3>The flicker, measured</h3>
       <p>
@@ -487,7 +497,9 @@ input[type=range] { flex: 0 0 72px; width: 72px; accent-color: var(--accent); ma
         live frame, the item log's real rows, the banner stack, or the tooltips. Candidate A is the
         shipped rules copied out of <code>LiveView.css</code> at the time of writing, and if that
         file moves on, A here becomes a picture of a layout nobody ships — which is why the numbers
-        above are stamped with a date rather than asserted as current.
+        above are stamped with a date rather than asserted as current. The one-screen promise inside
+        them is the exception: it is not this page's claim any more, it is
+        <code>make verify-live-layout</code>'s, and that one fails when it stops being true.
       </p>
     </section>
 

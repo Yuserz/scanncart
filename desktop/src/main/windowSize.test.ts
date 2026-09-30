@@ -7,6 +7,7 @@ import {
   TABLET,
   TUNING_BAND_MIN_HEIGHT,
   TUNING_BAND_MIN_WIDTH,
+  contentSize,
   tabletWindowBounds
 } from './windowSize'
 
@@ -44,11 +45,24 @@ describe('tabletWindowBounds', () => {
     expect(MIN_HEIGHT).toBeLessThan(TABLET.height)
   })
 
-  it('lets the band open exactly where the window standard says the console has room', () => {
-    // The threshold the camera band reads (`CameraTuning`), so "the band is shut below the canvas"
-    // and "the canvas is the maximum width" are one fact rather than two numbers that agree today.
-    expect(TUNING_BAND_MIN_WIDTH).toBe(TABLET.width)
-    expect(TUNING_BAND_MIN_WIDTH).toBeGreaterThanOrEqual(MIN_WIDTH)
+  it('opens the band at the canvas and shuts it at every size the floor allows', () => {
+    // The threshold the camera band reads (`CameraTuning`), stated in the units it is compared in.
+    //
+    // The first version of this test said `TUNING_BAND_MIN_WIDTH === TABLET.width`, which is the bug
+    // it was supposed to catch: the threshold is a *content* width (`matchMedia` reports the
+    // renderer's viewport) and `TABLET.width` is a *window* width, so at the canvas the comparison
+    // was 1000 against 1008 and held by luck — while a threshold set to the canvas itself would have
+    // shut the band on the one window it was drawn for. Only a real engine could see that, which is
+    // why the measured half lives in `make verify-live-layout`.
+    const canvas = contentSize(TABLET)
+    const floor = contentSize({ width: MIN_WIDTH, height: MIN_HEIGHT })
+
+    expect(canvas.width).toBeGreaterThanOrEqual(TUNING_BAND_MIN_WIDTH)
+    expect(canvas.height).toBeGreaterThanOrEqual(TUNING_BAND_MIN_HEIGHT)
+    // Both corners of the floor at once, because the two thresholds are independent: the window is
+    // never wide enough at the floor's *height*, nor tall enough at its *width*.
+    expect(floor.width).toBeLessThan(TUNING_BAND_MIN_WIDTH)
+    expect(floor.height).toBeLessThan(TUNING_BAND_MIN_HEIGHT)
   })
 
   it('holds the band shut if the window is too short for its row as well as too narrow', () => {
@@ -60,8 +74,9 @@ describe('tabletWindowBounds', () => {
 
     expect(TUNING_BAND_MIN_HEIGHT).toBeGreaterThanOrEqual(openBudget)
     // Reachable: the band can open at the canvas, and the floor is low enough that a window can be
-    // short without the band being the thing that breaks.
-    expect(TUNING_BAND_MIN_HEIGHT).toBeLessThanOrEqual(TABLET.height)
+    // short without the band being the thing that breaks. Compared against the canvas's *content*
+    // height, which is what the threshold is stated in.
+    expect(TUNING_BAND_MIN_HEIGHT).toBeLessThanOrEqual(contentSize(TABLET).height)
     expect(MIN_HEIGHT).toBeLessThan(TUNING_BAND_MIN_HEIGHT)
   })
 

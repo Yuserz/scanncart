@@ -10,7 +10,8 @@
 ##
 ## `test` is CI's target and stays fake-only, so it needs no data. `verify-clamp`,
 ## `verify-unsure`, `annotate`, `human-pass`, `doctor` and `accept-v2` are the ones that
-## do - see the notes above them.
+## do - see the notes above them. `verify-live-layout` needs no data either but does need
+## a display, which is the other thing CI runs it in its own job for.
 ##
 
 SIDECAR_DIR := sidecar
@@ -25,7 +26,7 @@ endif
 .DEFAULT_GOAL := help
 
 .PHONY: help install dev test docs-check docs-sync docs-sync-check build lint format typecheck clean \
-        verify-clamp verify-unsure doctor annotate human-pass accept-v2 \
+        verify-clamp verify-unsure verify-live-layout doctor annotate human-pass accept-v2 \
         sidecar-setup sidecar-run sidecar-test \
         desktop-install desktop-dev desktop-start desktop-test desktop-test-watch \
         desktop-build desktop-build-win desktop-build-mac desktop-build-linux \
@@ -38,9 +39,9 @@ help:
 	@echo "  dev                  run the desktop app in dev mode (spawns the sidecar)"
 	@echo "  test                 run desktop + sidecar test suites"
 	@echo "  docs-check           check that internal documentation links resolve"
-	@echo "  docs-sync            rewrite the numbers the docs state from the code that owns them"
-	@echo "  docs-sync-check      report doc numbers that no longer match the code (exit 1)"
-	@echo "  verify-clamp         re-check the frame-clamp claims (local data, not CI)"
+	@echo "  docs-sync            rewrite the numbers the docs state from the code that owns them"  @echo "  docs-sync-check      report doc numbers that no longer match the code (exit 1)"
+  @echo "  verify-live-layout   measure the Live tab's one-screen promise in a real engine (builds first)"
+  @echo "  verify-clamp         re-check the frame-clamp claims (local data, not CI)"
 	@echo "  verify-unsure        re-measure the unsure-phantom rule's cost and coverage (local data, not CI)"
 	@echo "  annotate             label a staged session locally in the browser (local data, not CI)"
 	@echo "  human-pass           render the human pass's checklist from the annotator's store (local data, not CI)"
@@ -115,6 +116,24 @@ docs-sync:
 
 docs-sync-check:
 	cd $(SIDECAR_DIR) && $(SIDECAR_VENV_PY) tools/docs_sync.py --check
+
+## --- the Live tab's one-screen promise, measured in a real engine ---
+
+# The console's premise is one screen with no page scroll, which is a claim about geometry - and
+# jsdom computes none of it (`scrollHeight` is 0 for everything), so the suite cannot assert it. This
+# builds the renderer and draws it in Electron at the canvas and at both corners of the window floor,
+# failing if the page scrolls (`desktop/scripts/check-live-layout.mjs`).
+#
+# Unlike the gates below it needs no data at all - no camera, no weights, no workspace - so it is out
+# of `test` for a different reason: a real Chromium, which CI's fast *test* path has no display for.
+# CI runs it in its own `live-layout` job under `xvfb-run`; locally the display is the one the
+# unshown window it draws would have used anyway. The structural half of the same promise - the CSS
+# facts it rests on - is `desktop/src/renderer/src/views/liveLayout.test.ts`, which is in `test`.
+#
+# It builds first on purpose: the harness measures `out/renderer/`, so a green run is a statement
+# about what ships rather than about the sources.
+verify-live-layout: desktop-build
+	cd $(DESKTOP_DIR) && node scripts/check-live-layout.mjs
 
 ## --- verification gates that need data the repo does not carry ---
 
