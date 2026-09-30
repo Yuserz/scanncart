@@ -50,6 +50,12 @@ from tests.desktop_mirrors import (
     ts_scalar,
     ts_value,
 )
+from tests.wording import (
+    WordingContract,
+    assert_canary_fires,
+    assert_fragments_present,
+    assert_wording_stays_retired,
+)
 
 pytestmark = pytest.mark.mirror
 
@@ -156,34 +162,6 @@ def test_the_settings_contracts_mirror_the_sidecar():
     )
 
 
-# The tokens a comment wrapper contributes. A wrapped TS comment repeats `//` on every line and
-# a CSS block carries `/*` and ` * `, and those markers land *inside* a sentence the fragments
-# cross - dropping them as tokens is what makes one sentence one fact wherever its lines break.
-#: A marker is matched as a whole token, so `http://127.0.0.1` and `a#b` survive untouched.
-_COMMENT_MARKER_TOKENS = frozenset({"//", "/*", "*/", "*", "#", "##", "<!--", "-->"})
-
-
-def _normalized_text(text: str) -> str:
-    """`text` as one string of single-spaced words, so a fragment survives its line wraps.
-
-    The wording these tests pin travels in comments - TypeScript, CSS and the sidecar's own -
-    which the formatter and the docstring convention wrap freely: the same sentence is one fact
-    whatever width it was written at, and a reader that demanded the original line breaks would
-    fail on the first reformat rather than on any real drift. Comment markers are dropped as
-    whole tokens (`_COMMENT_MARKER_TOKENS`), which is what keeps a fragment readable across the
-    `//` its continuation lines carry.
-    """
-    return " ".join(w for w in text.split() if w not in _COMMENT_MARKER_TOKENS)
-
-
-def _one_wording_surface(relative: str) -> str:
-    """One wording surface as text. A moved or renamed file fails here, not as an empty read."""
-    path = REPO_ROOT / relative
-    if not path.is_file():
-        raise AssertionError(f"the surface this guard reads is gone: {relative}")
-    return path.read_text(encoding="utf-8")
-
-
 #: What a null camera control means, and where a maintainer can read it. `_undo_for` in
 #: `app/camera.py` owns the answer - measured on this hardware, only autofocus has an automatic
 #: mode the app can name (`CAP_PROP_AUTOFOCUS=1`), and the getter lies about the rest
@@ -195,7 +173,16 @@ def _one_wording_surface(relative: str) -> str:
 #: except on the tuning card, where `settingsFields.ts`'s field hints render it, so there the
 #: wording is the explanation rather than a note beside the code. A rename can survive that
 #: silence; a reword that drifts back toward "auto" cannot.
-NULL_CONTROL_SURFACES: tuple[tuple[str, tuple[str, ...]], ...] = (
+NULL_CONTROL_CONTRACT = WordingContract(
+    name="null camera control",
+    owner="sidecar/app/camera.py::_undo_for",
+    claim="a surface that describes what a null camera control means no longer carries its wording.",
+    facts=(
+        "The semantics live in `sidecar/app/camera.py::_undo_for` - a queued None stops this app "
+        "writing the control: autofocus handed back to the lens, the other three left holding "
+        "whatever the device was last given, because nothing on the device says what that was."
+    ),
+    surfaces=(
     (
         "sidecar/app/camera.py",
         (
@@ -281,12 +268,30 @@ NULL_CONTROL_SURFACES: tuple[tuple[str, tuple[str, ...]], ...] = (
             'reverts a control back to "this app imposes no value"',
         ),
     ),
+    ),
+    # The sentence this wording replaced. It promised the camera an automatic mode only autofocus
+    # has, which is the exact claim the fix was written to stop making - so it is not just unused,
+    # it is wrong, and coming back is a regression rather than a leftover.
+    absent=("leave the camera alone",),
+    retired_why=(
+        "It promised the camera an automatic mode only autofocus has - measured, the other three "
+        "controls keep whatever this app last wrote, and neither a capture restart nor a reopen "
+        "gives it back."
+    ),
+    # The canary pins the long form of the "device keeps" sentence; the tuning card's short form
+    # ("the device keeps the last value it was given") also matches the fixture, and that is the
+    # engine's tolerated case - a substring of a pinned fragment is the same sentence in a
+    # shorter form, not drift. The marker sits inside the fragment's span, as a wrapped comment
+    # would put it, so this canary proves the marker-dropping too and not only the matching.
+    canary_fixture=(
+        'the old sentence promised null means "leave the camera alone", but the reset stops '
+        "this app writing the control, and the device keeps /* the last value it was given */ "
+        "until something writes it again"
+    ),
+    canary_fragments=(
+        "the device keeps the last value it was given until something writes it again",
+    ),
 )
-
-#: The sentence this wording replaced. It promised the camera an automatic mode only autofocus
-#: has, which is the exact claim the fix was written to stop making - so it is not just unused,
-#: it is wrong, and coming back is a regression rather than a leftover.
-RETIRED_NULL_WORDING = ("leave the camera alone",)
 
 
 def test_the_null_control_wording_survives_on_every_surface():
@@ -295,25 +300,12 @@ def test_the_null_control_wording_survives_on_every_surface():
     The semantics have one owner (`_undo_for`) and eleven tellers, and the tellers are comments
     and rendered copy (the tuning card's field hints): nothing fails to compile when one is
     deleted or reworded toward "auto", so the drift this pins is the quiet kind - the card keeps
-    working while its explanation starts promising a restoration the camera cannot do. The fragments are the load-bearing phrases, not the whole
-    sentences: rewriting a surface is fine, losing the fact is not. A fragment that no longer
-    fits what the code does should be updated in the same edit as the code, which is the
-    contract the failure message below states.
+    working while its explanation starts promising a restoration the camera cannot do. The
+    fragments are the load-bearing phrases, not the whole sentences: rewriting a surface is
+    fine, losing the fact is not. A fragment that no longer fits what the code does should be
+    updated in the same edit as the code, which is the contract the failure message states.
     """
-    missing: list[str] = []
-    for relative, fragments in NULL_CONTROL_SURFACES:
-        flat = _normalized_text(_one_wording_surface(relative))
-        missing.extend(
-            f"{relative}: {fragment!r}" for fragment in fragments if fragment not in flat
-        )
-    assert not missing, (
-        "a surface that describes what a null camera control means no longer carries its "
-        "wording. The semantics live in `sidecar/app/camera.py::_undo_for` - a queued None "
-        "stops this app writing the control: autofocus handed back to the lens, the other "
-        "three left holding whatever the device was last given, because nothing on the device "
-        "says what that was. Reword the surface or move the wording into whatever replaced "
-        "it, and update this guard in the same edit:\n  " + "\n  ".join(missing)
-    )
+    assert_fragments_present(NULL_CONTROL_CONTRACT)
 
 
 def test_the_retired_null_wording_stays_retired():
@@ -325,17 +317,7 @@ def test_the_retired_null_wording_stays_retired():
     returns - it restates the bug. Only the surfaces the wording guard reads are scanned,
     because those are the ones a maintainer edits while thinking about this exact sentence.
     """
-    stale: list[str] = []
-    for relative, _fragments in NULL_CONTROL_SURFACES:
-        flat = _normalized_text(_one_wording_surface(relative))
-        stale.extend(relative for phrase in RETIRED_NULL_WORDING if phrase in flat)
-    assert not stale, (
-        "the retired null-control wording came back. It promised the camera an automatic "
-        "mode only autofocus has - measured, the other three controls keep whatever this app "
-        "last wrote, and neither a capture restart nor a reopen gives it back. Reword the new "
-        "text rather than reverting to the sentence that promised the reset would work; the "
-        "owner of the answer is `sidecar/app/camera.py::_undo_for`:\n  " + "\n  ".join(stale)
-    )
+    assert_wording_stays_retired(NULL_CONTROL_CONTRACT)
 
 
 def test_the_null_wording_guard_is_wired_to_both_of_its_ends():
@@ -343,29 +325,11 @@ def test_the_null_wording_guard_is_wired_to_both_of_its_ends():
     matched everything, would let the tests above pass while checking nothing.
 
     The fixture is text shaped like the surfaces - one sentence carrying a kept fragment, one
-    carrying the retired phrase - and both halves have to fire on it. This is the same reason
-    `test_docs_paths.py` floors its invocation and note counts: a reader that stopped deciding
-    is invisible from its verdicts alone.
+    carrying the retired phrase - and the engine asserts exactly the pinned fragments matched,
+    no more and no fewer. This is the same reason `test_docs_paths.py` floors its invocation
+    and note counts: a reader that stopped deciding is invisible from its verdicts alone.
     """
-    fixture = _normalized_text(
-        'the old sentence promised null means "leave the camera alone", but the reset stops '
-        "this app writing the control, and the device keeps the last value it was given "
-        "until something writes it again"
-    )
-    kept = [
-        fragment
-        for _relative, fragments in NULL_CONTROL_SURFACES
-        for fragment in fragments
-        if fragment in fixture
-    ]
-    assert "the device keeps the last value it was given until something writes it again" in kept, (
-        "the kept-wording half of this guard matched nothing: the surfaces could all go quiet "
-        "and the presence test above would never fire"
-    )
-    assert "leave the camera alone" in fixture, (
-        "the retired-wording half of this guard matched nothing: the old sentence could come "
-        "back and the absence test above would never fire"
-    )
+    assert_canary_fires(NULL_CONTROL_CONTRACT)
 
 
 #: What a weight's class list says about the roster it was trained against, and where a maintainer
@@ -379,7 +343,16 @@ def test_the_null_wording_guard_is_wired_to_both_of_its_ends():
 #: them (models, schemas, main - including the TS-mirror comment that explains why the roster is
 #: not mirrored), the roster tests' verdict docstrings, CLAUDE.md's roster paragraph, and the
 #: desktop copy that renders or labels the findings (api.ts, AdminPanel, LiveView's stat chip).
-ROSTER_FINDING_SURFACES: tuple[tuple[str, tuple[str, ...]], ...] = (
+ROSTER_FINDING_CONTRACT = WordingContract(
+    name="class-list finding",
+    owner="sidecar/app/roster.py::class_list_problems",
+    claim="a surface that describes what a class-list finding means no longer carries its wording.",
+    facts=(
+        "The findings live in `sidecar/app/roster.py::class_list_problems` - a distance in a "
+        "name (one class per product-and-distance, no setting fixes it), names outside the "
+        "roster, and roster classes the head cannot predict."
+    ),
+    surfaces=(
     (
         "sidecar/app/roster.py",
         (
@@ -466,6 +439,12 @@ ROSTER_FINDING_SURFACES: tuple[tuple[str, tuple[str, ...]], ...] = (
             "'classes · roster ok'",
         ),
     ),
+    ),
+    canary_fixture=(
+        "// a head trained per product-and-distance /* is visible before it is selected, the */ "
+        "finding that the model logs one product under three labels"
+    ),
+    canary_fragments=("product-and-distance is visible before it is selected",),
 )
 
 
@@ -482,20 +461,7 @@ def test_the_roster_finding_wording_survives_on_every_surface():
     the load-bearing phrases, not the whole sentences: rewriting a surface is fine, losing the
     fact is not. The same-edit rule from the null-control guard above applies here too.
     """
-    missing: list[str] = []
-    for relative, fragments in ROSTER_FINDING_SURFACES:
-        flat = _normalized_text(_one_wording_surface(relative))
-        missing.extend(
-            f"{relative}: {fragment!r}" for fragment in fragments if fragment not in flat
-        )
-    assert not missing, (
-        "a surface that describes what a class-list finding means no longer carries its "
-        "wording. The findings live in `sidecar/app/roster.py::class_list_problems` - a "
-        "distance in a name (one class per product-and-distance, no setting fixes it), names "
-        "outside the roster, and roster classes the head cannot predict. Reword the surface or "
-        "move the wording into whatever replaced it, and update this guard in the same edit:\n  "
-        + "\n  ".join(missing)
-    )
+    assert_fragments_present(ROSTER_FINDING_CONTRACT)
 
 
 def test_the_roster_wording_guard_is_wired_to_its_end():
@@ -507,22 +473,7 @@ def test_the_roster_wording_guard_is_wired_to_its_end():
     succeeds when marker-dropping works. A marker outside the span would survive a broken
     normalizer, which is exactly how a canary stops proving anything while staying green.
     """
-    fixture = _normalized_text(
-        "// a head trained per product-and-distance /* is visible before it is selected, the */ "
-        "finding that the model logs one product under three labels"
-    )
-    kept = [
-        fragment
-        for _relative, fragments in ROSTER_FINDING_SURFACES
-        for fragment in fragments
-        if fragment in fixture
-    ]
-    assert kept == ["product-and-distance is visible before it is selected"], (
-        f"the canary matched the wrong things: {kept!r}. Exactly one fragment must match - "
-        "zero means the marker-dropping the wrapped comment surfaces depend on is broken or "
-        "the fragment set stopped matching (the presence test above would never fire); more "
-        "than one means this fixture drifted and no longer proves what it was written to"
-    )
+    assert_canary_fires(ROSTER_FINDING_CONTRACT)
 
 
 def test_the_rest_response_models_mirror_the_sidecar():
