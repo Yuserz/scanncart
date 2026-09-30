@@ -368,6 +368,163 @@ def test_the_null_wording_guard_is_wired_to_both_of_its_ends():
     )
 
 
+#: What a weight's class list says about the roster it was trained against, and where a maintainer
+#: can read it. `class_list_problems` in `app/roster.py` owns the three findings - a distance in a
+#: name (the per-product-and-distance head that logs one product under three labels), names outside
+#: the roster, and roster classes the head cannot predict (the quiet direction) - and every surface
+#: that *describes* those findings has to keep saying what they are. Unlike the null-control guard
+#: above there is no retired phrase here, so the guard is presence plus a canary and nothing else:
+#: nothing about the findings was ever reworded away, and inventing a forbidden sentence would be
+#: a rule with no history. The surfaces are the owner's own sentences, the comments that point at
+#: them (models, schemas, main - including the TS-mirror comment that explains why the roster is
+#: not mirrored), the roster tests' verdict docstrings, CLAUDE.md's roster paragraph, and the
+#: desktop copy that renders or labels the findings (api.ts, AdminPanel, LiveView's stat chip).
+ROSTER_FINDING_SURFACES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "sidecar/app/roster.py",
+        (
+            "predicts one class per product-and-distance instead of one per product",
+            "no setting here fixes it",
+            "are not in this app's",
+            "Nothing it *does* predict is wrong, which is why this is easy to miss",
+            # Deliberately starts after the string-concatenation boundary in the source: the
+            # sentence is built from two literals, so a fragment spanning the join would have
+            # to match the quote characters between them.
+            "products will simply never be logged",
+        ),
+    ),
+    (
+        "sidecar/app/models.py",
+        (
+            "judging it is `roster.class_list_problems`",
+            "the roster is a rule (`app/roster.py`) and a second copy in TypeScript could only",
+            "would turn that silence",
+            "into \"predicts none of the roster\" - a finding about a class list nobody has seen",
+        ),
+    ),
+    (
+        "sidecar/app/schemas.py",
+        (
+            "never \"predicts nothing\"",
+            "an empty list reports no findings rather than a verdict about",
+            "the same sentences `DetectorProbeResponse.class_warnings`",
+            "Empty means the weight's own class list matches",
+        ),
+    ),
+    (
+        "sidecar/app/main.py",
+        (
+            "What is wrong with the *running* model's class list",
+            "so this is the branch where the roster is least under our control",
+        ),
+    ),
+    (
+        "sidecar/tests/test_roster.py",
+        (
+            "The quiet direction: a head that cannot predict two of its classes passes every other check",
+        ),
+    ),
+    (
+        "CLAUDE.md",
+        (
+            "reports as one product under three labels with no error anywhere",
+            "Surfaced on `DetectorProbeResponse.class_warnings` from both probe branches",
+            "so `21` where an operator expects their own model",
+            "The findings name the roster they were judged against",
+            "a v2 head that lost a class reads as healthy",
+        ),
+    ),
+    (
+        "desktop/src/renderer/src/lib/api.ts",
+        (
+            "judged in the sidecar against the roster of the weight's own",
+            "logging one product under three labels",
+            "never \"predicts nothing\", so an empty list produces no findings below",
+            "product-and-distance is visible before it is selected",
+            "The sentences are rendered verbatim; the roster is not mirrored here",
+        ),
+    ),
+    (
+        "desktop/src/renderer/src/views/AdminPanel.tsx",
+        (
+            "class list was split by distance predicts three labels per product",
+            "way to notice is to run it and watch one item log three times",
+            "judged the names against the roster because it is the roster's owner, so its",
+            "sentences are rendered rather than re-derived here",
+            "against the roster of these weights' own generation because it is the only process",
+            "a second copy here could contradict it",
+        ),
+    ),
+    (
+        "desktop/src/renderer/src/views/LiveView.tsx",
+        (
+            "a **count of findings**",
+            "the sidecar's third finding is the quiet one",
+            "a model that simply cannot predict some roster names",
+            "a word like \"mismatch\" would be false",
+            "The sidecar's sentences, so the chip and the banner cannot describe one model differently",
+            "'classes · roster ok'",
+        ),
+    ),
+)
+
+
+def test_the_roster_finding_wording_survives_on_every_surface():
+    """Every surface that describes what a class-list finding means still says what it is.
+
+    The findings have one owner (`class_list_problems`) and ten tellers, and most of the tellers
+    are comments: nothing fails to compile when one is deleted, so the drift this pins is the
+    quiet kind - the desktop keeps rendering whatever arrives while its explanation of *why* a
+    class list is a problem quietly stops saying which problem it is. The distance finding's
+    sentence is the one an operator reads when the item log fills with near-duplicates; the
+    missing-class finding is the direction nothing else would ever notice, which is why its
+    "Nothing it *does* predict is wrong" sentence is pinned on three surfaces. The fragments are
+    the load-bearing phrases, not the whole sentences: rewriting a surface is fine, losing the
+    fact is not. The same-edit rule from the null-control guard above applies here too.
+    """
+    missing: list[str] = []
+    for relative, fragments in ROSTER_FINDING_SURFACES:
+        flat = _normalized_text(_one_wording_surface(relative))
+        missing.extend(
+            f"{relative}: {fragment!r}" for fragment in fragments if fragment not in flat
+        )
+    assert not missing, (
+        "a surface that describes what a class-list finding means no longer carries its "
+        "wording. The findings live in `sidecar/app/roster.py::class_list_problems` - a "
+        "distance in a name (one class per product-and-distance, no setting fixes it), names "
+        "outside the roster, and roster classes the head cannot predict. Reword the surface or "
+        "move the wording into whatever replaced it, and update this guard in the same edit:\n  "
+        + "\n  ".join(missing)
+    )
+
+
+def test_the_roster_wording_guard_is_wired_to_its_end():
+    """The guard's own canary: a fragment set that matched nothing, or a normalizer that stopped
+    dropping comment markers, would let the test above pass while checking nothing.
+
+    The fixture is text shaped like a surface - and the marker sits *inside* the fragment's span,
+    the way a JSX comment's wrapped lines put `/*` and `*` mid-sentence, so the match only
+    succeeds when marker-dropping works. A marker outside the span would survive a broken
+    normalizer, which is exactly how a canary stops proving anything while staying green.
+    """
+    fixture = _normalized_text(
+        "// a head trained per product-and-distance /* is visible before it is selected, the */ "
+        "finding that the model logs one product under three labels"
+    )
+    kept = [
+        fragment
+        for _relative, fragments in ROSTER_FINDING_SURFACES
+        for fragment in fragments
+        if fragment in fixture
+    ]
+    assert kept == ["product-and-distance is visible before it is selected"], (
+        f"the canary matched the wrong things: {kept!r}. Exactly one fragment must match - "
+        "zero means the marker-dropping the wrapped comment surfaces depend on is broken or "
+        "the fragment set stopped matching (the presence test above would never fire); more "
+        "than one means this fixture drifted and no longer proves what it was written to"
+    )
+
+
 def test_the_rest_response_models_mirror_the_sidecar():
     """The remaining response models, one pair each.
 
