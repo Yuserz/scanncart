@@ -191,8 +191,10 @@ def _one_wording_surface(relative: str) -> str:
 #: value back turned the image black), so a reset stops this app writing the control and the
 #: device keeps the last value it was given. Every surface that *describes* that behaviour, on
 #: either side of the wire, has to keep saying it: the wording is the operator's only explanation
-#: of what Revert does, and it lives in comments the compiler and the formatter never look at.
-#: A rename can survive that silence; a reword that drifts back toward "auto" cannot.
+#: of what Revert does, and it lives in comments the compiler and the formatter never look at —
+#: except on the tuning card, where `settingsFields.ts`'s field hints render it, so there the
+#: wording is the explanation rather than a note beside the code. A rename can survive that
+#: silence; a reword that drifts back toward "auto" cannot.
 NULL_CONTROL_SURFACES: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         "sidecar/app/camera.py",
@@ -239,6 +241,23 @@ NULL_CONTROL_SURFACES: tuple[tuple[str, tuple[str, ...]], ...] = (
             "cannot travel as a value",
         ),
     ),
+    # The four camera-control hints the tuning card renders — the one surface the
+    # operator reads without opening an editor, so here the wording is the
+    # explanation rather than a note beside the code. Each control's own claim is
+    # pinned: unset imposes no value and the device keeps what it was given
+    # (brightness, focus), unset stops the writing and nothing hands it back
+    # (exposure), unset *is* the hand-back (autofocus) — the one control whose
+    # hint must not drift toward the no-hand-back sentence.
+    (
+        "desktop/src/renderer/src/lib/settingsFields.ts",
+        (
+            "Unset means this app imposes no value",
+            "the device keeps the last value it was given",
+            "Unset stops this app writing the control",
+            "no automatic mode the app can name hands it back",
+            "Unset gives the lens back its own automatic mode",
+        ),
+    ),
     (
         "desktop/src/renderer/src/components/CameraTuning.tsx",
         (
@@ -273,10 +292,10 @@ RETIRED_NULL_WORDING = ("leave the camera alone",)
 def test_the_null_control_wording_survives_on_every_surface():
     """Every surface that says what a null camera control means still says what it is.
 
-    The semantics have one owner (`_undo_for`) and ten tellers, and the tellers are comments:
-    nothing fails to compile when one is deleted or reworded toward "auto", so the drift this
-    pins is the quiet kind - the card keeps working while its explanation starts promising a
-    restoration the camera cannot do. The fragments are the load-bearing phrases, not the whole
+    The semantics have one owner (`_undo_for`) and eleven tellers, and the tellers are comments
+    and rendered copy (the tuning card's field hints): nothing fails to compile when one is
+    deleted or reworded toward "auto", so the drift this pins is the quiet kind - the card keeps
+    working while its explanation starts promising a restoration the camera cannot do. The fragments are the load-bearing phrases, not the whole
     sentences: rewriting a surface is fine, losing the fact is not. A fragment that no longer
     fits what the code does should be updated in the same edit as the code, which is the
     contract the failure message below states.

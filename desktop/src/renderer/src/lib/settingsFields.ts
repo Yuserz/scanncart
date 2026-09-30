@@ -337,7 +337,7 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
   {
     key: 'camera_brightness',
     label: 'Brightness',
-    hint: 'Post-sensor boost — no framerate cost, but amplifies noise. Try exposure first.',
+    hint: 'Post-sensor boost — no framerate cost, but amplifies noise. Try exposure first. Unset means this app imposes no value — the device keeps the last value it was given.',
     type: 'number',
     min: 0,
     max: 255,
@@ -349,7 +349,7 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
     // The capture-fps sentence is load-bearing, not padding: it is the only
     // warning an operator gets before exposure quietly caps the camera at
     // 4 fps. See the design doc's "Exposure can destroy framerate".
-    hint: 'Log2 seconds: -6 = 1/64 s, -2 = 1/4 s. Each step up doubles the light and halves the framerate — -2 caps the camera at 4 fps. Watch the capture fps reading above after every change.',
+    hint: 'Log2 seconds: -6 = 1/64 s, -2 = 1/4 s. Each step up doubles the light and halves the framerate — -2 caps the camera at 4 fps. Watch the capture fps reading above after every change. Unset stops this app writing the control — the device keeps the last value it was given; no automatic mode the app can name hands it back.',
     type: 'number',
     min: -13,
     max: 0,
@@ -358,13 +358,13 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
   {
     key: 'camera_autofocus',
     label: 'Autofocus',
-    hint: 'Hunts for faces — off is steadier for a fixed checkout camera.',
+    hint: 'Hunts for faces — off is steadier for a fixed checkout camera. Unset gives the lens back its own automatic mode; the other controls have none the app can name.',
     type: 'boolean'
   },
   {
     key: 'camera_focus',
     label: 'Focus',
-    hint: 'Fixed distance, only meaningful with autofocus off. Lower is farther. Adjust until the sharpness reading above stops rising.',
+    hint: 'Fixed distance, only meaningful with autofocus off. Lower is farther. Adjust until the sharpness reading above stops rising. Unset stops the app writing it — the device keeps the last value it was given.',
     type: 'number',
     min: 0,
     max: 1023,
