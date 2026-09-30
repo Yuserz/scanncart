@@ -362,6 +362,25 @@ cd desktop && npm run dev   # electron-vite dev with HMR, opens a window
   **`high_end` preset (1920x1080@60)** — check capture settings in Admin before
   driving `capture` mode, and after a replug re-check the Camera dropdown
   (`Detecting cameras…` / Rescan), since the index can shift.
+- **A held device looks exactly like the MSMF wedge — check who holds the camera
+  first (hit Oct 2026).** Another process owning the StreamCam produces the same
+  symptoms as the staircase above: MSMF "opens" and every read fails with the
+  same `-1072875772`, and after enough failed openers even DSHOW refuses. So
+  before blaming MSMF or reaching for a replug, ask Windows who is using the
+  webcam — it records this itself, per desktop app, under
+  `HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\webcam\NonPackaged`:
+  one key per program, and `LastUsedTimeStop = 0` means *in use right now* (a
+  one-line `Get-ChildItem`/`Get-ItemProperty` read; no elevation, no device
+  opens, answers in seconds). The calibration session that found this watched
+  NVIDIA Broadcast take the camera ~20 s after a calibrate sweep released it —
+  a replug changed nothing, killing Broadcast took the device from 0/15 frames
+  to 20/20 immediately, and Broadcast then re-acquired it twice more (it lives
+  in the tray and can relaunch), with Edge and Discord taking turns after it.
+  Ordering matters: a held device can wedge MSMF for every later opener, so
+  free the holder first, re-run the bare `read()` loop as ground truth, and
+  only conclude "the staircase" when the registry shows no holder and frames
+  still do not flow. Killing another program's process is the user's call,
+  not the agent's — name the holder and ask.
 
 ## UI handles
 
