@@ -288,8 +288,11 @@ cd desktop && npm run dev   # electron-vite dev with HMR, opens a window
   response counts as an answer**, so a keyless workflow's 401 still reads as up)
   and pushes the verdict over the websocket. The Live view renders
   `[data-testid="inference-unresponsive"]` above the error banner, ungated by
-  capture state and not dismissible, naming the two fixes (`python
-  local_inference_server.py`, or `detector_backend` in Admin) plus the probe's
+  capture state and not dismissible, naming the two fixes (the local server's
+  start command, which the sidecar writes into the verdict — its own
+  `.venv-inference`, never a bare `python`, since that server's venv is not the
+  one the sidecar runs in; or the `DETECTOR_BACKENDS.md` §7a setup step when
+  that venv is not there yet — or `detector_backend` in Admin) plus the probe's
   own detail. The same verdict is on the **Admin Panel**, beside the backend picker
   (`[data-testid="inference-watch"]`), as the standing reading rather than a
   notice: the address actually being probed, the failure in the endpoint's own

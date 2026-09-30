@@ -146,7 +146,7 @@ If your layout differs from the repo, point the app at the sidecar explicitly:
 
 ```bash
 cd desktop
-SIDECAR_PYTHON=/path/to/python SIDECAR_SCRIPT=/path/to/run.py npm run dev
+SIDECAR_PYTHON=/path/to/sidecar/.venv/Scripts/python.exe SIDECAR_SCRIPT=/path/to/run.py npm run dev
 ```
 
 ### 5. Run the sidecar on its own (optional)

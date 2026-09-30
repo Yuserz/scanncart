@@ -86,6 +86,7 @@ from app.inference_health import (
     UNRESPONSIVE,
     InferenceHealthMonitor,
     InferenceStatus,
+    local_server_command,
     monitor_for,
     probe_url,
 )
@@ -132,24 +133,44 @@ def backend_url(settings: Settings) -> str:
     )
 
 
-def _inference_payload(status: InferenceStatus) -> InferenceStatusPayload:
+def _inference_payload(
+    status: InferenceStatus, command: str | None = None
+) -> InferenceStatusPayload:
     """The verdict's body, as both surfaces spell it.
 
     One builder for the stream message and the health read, so neither can describe the state, the
     endpoint or the failure differently from the other. The two differ in exactly one way, and
     deliberately: `age_seconds` is computed here, when the payload is built, so the pushed copy
     carries the age of the change and the polled copy carries the age of the most recent probe.
+
+    `command` is passed in rather than resolved here: it is a fact about this machine's layout, not
+    about the verdict, and the callers are the ones holding the app state that owns it.
     """
     return InferenceStatusPayload(
         backend=status.backend,
         url=status.url,
         state=status.state,
         detail=status.detail,
+        local_server_command=command,
         age_seconds=status.age_seconds(),
     )
 
 
-def _inference_read(status: InferenceStatus) -> InferenceStatusPayload | None:
+def _local_server_command(state: "AppState", status: InferenceStatus) -> str | None:
+    """The remedy to go with a verdict, but only where this app is the one that can name it.
+
+    Gated on `local_api` for the reason `retarget` blanks the URL off a native target: a payload
+    carrying a command for a backend that does not use it would be the notice telling an operator to
+    start a server this configuration never calls. The factory rather than the answer is held on the
+    app state, so the file it reads is read per payload - a venv created while the app is running is
+    then picked up by the notice that sent the operator to make it.
+    """
+    if status.backend != "local_api":
+        return None
+    return state.local_server_command_factory()
+
+
+def _inference_read(state: "AppState", status: InferenceStatus) -> InferenceStatusPayload | None:
     """The verdict for a *read*, or None when there is no server to watch.
 
     `None` on a blank URL, which is how `retarget` spells "nothing to watch" (`native`, or a remote
@@ -160,7 +181,7 @@ def _inference_read(status: InferenceStatus) -> InferenceStatusPayload | None:
     """
     if not status.url:
         return None
-    return _inference_payload(status)
+    return _inference_payload(status, _local_server_command(state, status))
 
 
 def _current_inference_status(state: "AppState") -> InferenceStatus:
@@ -180,14 +201,15 @@ def _current_inference_status(state: "AppState") -> InferenceStatus:
     return state.inference_health
 
 
-def _inference_message(status: InferenceStatus) -> InferenceMessage:
+def _inference_message(state: "AppState", status: InferenceStatus) -> InferenceMessage:
     """The one spelling of the message, used by the handshake and by every transition.
 
     A second construction at the handshake would be a second place to forget a field, and the
     handshake is exactly where a forgotten field stays invisible: the transition path is the one a
     test reaches by watching a server go down.
     """
-    return InferenceMessage(type="inference", **_inference_payload(status).model_dump())
+    payload = _inference_payload(status, _local_server_command(state, status))
+    return InferenceMessage(type="inference", **payload.model_dump())
 
 
 def _report_inference_health(state: "AppState", status: InferenceStatus) -> None:
@@ -203,7 +225,7 @@ def _report_inference_health(state: "AppState", status: InferenceStatus) -> None
     instrumenting anything.
     """
     state.inference_health = status
-    state.ws_manager.submit(_inference_message(status).model_dump())
+    state.ws_manager.submit(_inference_message(state, status).model_dump())
     if status.state == UNRESPONSIVE:
         print(
             f"[sidecar] the {status.backend} server at {status.url} is not answering: "
@@ -437,6 +459,12 @@ class AppState:
     # (`monitor_for` is the app's wiring: which probe, which callback).
     inference_monitor_factory: Callable[..., InferenceHealthMonitor] = monitor_for
     inference_monitor: InferenceHealthMonitor | None = None
+    # How an operator would start the local backend's server on this machine (`app/inference_health`),
+    # which the notices render as the remedy. Read per payload rather than resolved once, because the
+    # venv this names can be created while the app is running - and the notice that prompted that is
+    # still on screen, so it has to stop sending the operator to the setup step the moment it exists.
+    # `None` from the callable means this checkout has no such venv to run.
+    local_server_command_factory: Callable[[], str | None] = local_server_command
 
     def __post_init__(self):
         if self.settings is None:
@@ -716,7 +744,7 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
             # Read here rather than pushed, because this endpoint is polled: the age of a standing
             # verdict is only honest if it is recomputed, and a client has no way to know the
             # monitor went on probing after the message it last received.
-            inference=_inference_read(_current_inference_status(state)),
+            inference=_inference_read(state, _current_inference_status(state)),
         )
 
     @app.get("/api/settings", response_model=SettingsResponse)
@@ -1340,7 +1368,9 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
         # why. `unknown` is the ordinary answer for `native`, and a client renders nothing for it.
         try:
             await ws.send_json(snapshot)
-            await ws.send_json(_inference_message(_current_inference_status(state)).model_dump())
+            await ws.send_json(
+                _inference_message(state, _current_inference_status(state)).model_dump()
+            )
             while True:
                 await ws.receive_text()
         except Exception:  # noqa: BLE001

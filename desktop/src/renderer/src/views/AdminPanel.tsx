@@ -1077,9 +1077,24 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
               <>
                 {': '}
                 <span data-testid="inference-watch-detail">{inference.detail}</span>
-                {inference.backend === 'local_api'
-                  ? '. The app does not start it — run `python local_inference_server.py`, or correct '
-                  : '. Check the connection, or correct '}
+                {inference.backend === 'local_api' ? (
+                  <>
+                    {'. The app does not start it — '}
+                    {inference.local_server_command ? (
+                      <>
+                        {'run '}
+                        <code data-testid="inference-watch-command">
+                          {inference.local_server_command}
+                        </code>
+                        {' from sidecar/, or correct '}
+                      </>
+                    ) : (
+                      'set up its venv and run it (docs/DETECTOR_BACKENDS.md §7a), or correct '
+                    )}
+                  </>
+                ) : (
+                  '. Check the connection, or correct '
+                )}
                 <code>{inference.backend === 'local_api' ? 'local_api_url' : 'cloud_api_url'}</code>
                 {' below.'}
               </>

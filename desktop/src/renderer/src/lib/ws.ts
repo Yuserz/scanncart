@@ -73,6 +73,13 @@ export interface InferenceMessage {
   state: 'unknown' | 'ok' | 'unresponsive'
   // Why, in the endpoint's own words, when `state` is 'unresponsive'. Empty otherwise.
   detail: string
+  // The remedy for an unresponsive `local_api`: the command that starts the local inference server
+  // on this machine, written by the sidecar, which is the only side that can know it — that server
+  // runs in its own venv, so a bare `python` is an interpreter that cannot import it. `null` means
+  // there is no command to give (a `cloud_api` verdict, or a checkout with no `.venv-inference`),
+  // and the notice names the setup step instead. Same field as the polled copy carries; the Live
+  // view renders this one, because that is where the missing detections are being watched.
+  local_server_command?: string | null
   // Seconds since the last probe, as of the moment this message was built. Same meaning as the copy
   // /api/health carries (the same payload, the same live reading). Nothing on this side renders it:
   // the Admin Panel is where the age is shown, and it reads it from the polled copy, which is fresh

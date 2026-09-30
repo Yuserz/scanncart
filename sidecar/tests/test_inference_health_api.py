@@ -32,6 +32,11 @@ from app.main import AppState, build_app
 from app.settings import Settings
 
 LOCAL = "http://127.0.0.1:9001"
+#: What `local_server_command` answers on a machine that has the local backend set up. The app's
+#: default reads this checkout's disk, so every test here supplies its own: a payload assertion that
+#: depended on whether someone had run `uv venv .venv-inference` would fail on a bare checkout and
+#: pass on a working one, which is the one difference these tests must not be measuring.
+START_COMMAND = ".venv-inference/Scripts/python.exe local_inference_server.py"
 
 
 def settings(**over) -> Settings:
@@ -88,6 +93,7 @@ def _state(tmp_path, probe: _Probe, **over) -> AppState:
         settings_path=str(tmp_path / "settings.json"),
         inference_probe=probe,
         inference_monitor_factory=_factory(),
+        local_server_command_factory=lambda: START_COMMAND,
     )
 
 
@@ -230,6 +236,68 @@ def test_a_verdict_reaches_a_connected_client(tmp_path):
     assert message["state"] == UNRESPONSIVE
     assert message["detail"] == "ConnectError: refused"
     assert state.inference_health.state == UNRESPONSIVE
+
+
+def test_the_verdict_carries_the_command_that_starts_the_server(tmp_path):
+    """The remedy rides on the verdict, because only the sidecar can write it.
+
+    The renderer knows no filesystem and no platform, and the command is not `python
+    local_inference_server.py`: that server runs in its own venv, which the interpreter running the
+    sidecar cannot import. Both surfaces carry it off this one payload, so the pushed copy is what
+    the Live view renders.
+    """
+    probe = _Probe()
+    state = _state(tmp_path, probe, detector_backend="local_api", local_api_url=LOCAL)
+    state.inference_health = InferenceStatus(
+        backend="local_api", url=LOCAL, state=UNRESPONSIVE, detail="ConnectError: refused"
+    )
+
+    body = TestClient(build_app(lambda: state)).get("/api/health").json()
+    assert body["inference"]["local_server_command"] == START_COMMAND
+
+    client = TestClient(build_app(lambda: state))
+    with client.websocket_connect("/ws/stream") as ws:
+        ws.receive_json()
+        message = ws.receive_json()
+    assert message["local_server_command"] == START_COMMAND
+
+
+def test_a_cloud_verdict_carries_no_local_command(tmp_path):
+    """Gated on `local_api`, like the URL is gated on having a server to watch at all.
+
+    A command for a backend that does not use it would be a notice telling the operator to start a
+    server this configuration never calls.
+    """
+    probe = _Probe()
+    state = _state(tmp_path, probe, detector_backend="cloud_api")
+    state.inference_health = InferenceStatus(
+        backend="cloud_api", url="https://detect.roboflow.com", state=UNRESPONSIVE, detail="Timeout"
+    )
+
+    body = TestClient(build_app(lambda: state)).get("/api/health").json()
+    assert body["inference"]["local_server_command"] is None
+
+
+def test_the_remedy_is_read_again_on_every_payload(tmp_path):
+    """A venv created while the app is running has to stop the notice pointing at the setup step.
+
+    Which is the whole reason the app state holds a factory rather than the answer: the operator
+    reads the notice, follows it, and between those two moments the thing it said was missing appears.
+    """
+    probe = _Probe()
+    state = _state(tmp_path, probe, detector_backend="local_api", local_api_url=LOCAL)
+    # No venv yet, then one - read in order, one payload at a time.
+    answers: list[str | None] = [None, START_COMMAND]
+    state.local_server_command_factory = lambda: answers.pop(0)
+    state.inference_health = InferenceStatus(
+        backend="local_api", url=LOCAL, state=UNRESPONSIVE, detail="ConnectError: refused"
+    )
+
+    client = TestClient(build_app(lambda: state))
+    assert client.get("/api/health").json()["inference"]["local_server_command"] is None
+
+    # The operator did what that notice said and ran `uv venv .venv-inference`.
+    assert client.get("/api/health").json()["inference"]["local_server_command"] == START_COMMAND
 
 
 def test_changing_the_backend_moves_what_is_watched(tmp_path):

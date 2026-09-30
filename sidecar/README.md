@@ -146,7 +146,7 @@ crash is silent: the process exits with code `0xffffffff` / `4294967295` and
 prints **no traceback**. Because `torch` loads many DLLs, the sidecar then dies
 on almost every launch — the Electron app logs
 `[sidecar] exited unexpectedly (code 4294967295)` and shows no live feed, while
-`python run.py` on its own exits `255` with empty output.
+`.venv/Scripts/python.exe run.py` on its own exits `255` with empty output.
 
 The tell that it's a scan race (not a broken install) is that a heavy import
 succeeds only *some* of the time — e.g. `import torch` passing 0–3 times out of
@@ -169,7 +169,8 @@ $ok=0; 1..10 | %{ .venv\Scripts\python.exe -c "import torch,cv2,ultralytics" 2>$
 ## Run
 
 ```bash
-python run.py
+.venv/Scripts/python.exe run.py   # Windows
+.venv/bin/python run.py           # Linux/macOS
 # prints: SIDECAR_PORT=8765
 ```
 
@@ -209,7 +210,8 @@ Changing a restart-required field mid-capture is refused with a `409`.
 ## Tests
 
 ```bash
-python -m pytest -v
+.venv/Scripts/python.exe -m pytest -v   # Windows
+.venv/bin/python -m pytest -v           # Linux/macOS
 ```
 
 The whole suite runs against fakes — no camera, no GPU, no network, and no

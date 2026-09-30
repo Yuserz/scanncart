@@ -1,5 +1,5 @@
 import { useEffect, useState, type CSSProperties, type JSX } from 'react'
-import type { Detection, FrameMessage } from '../lib/ws'
+import type { Detection, FrameMessage, InferenceMessage } from '../lib/ws'
 import { useSidecarStream, type StreamDeps } from '../hooks/useSidecarStream'
 import { useActiveWeights } from '../hooks/useActiveWeights'
 import type { ClassRecall, UnrecordedResizeMode, ValidationRecord } from '../lib/api'
@@ -156,6 +156,28 @@ function classListReadout(
 // How long the last non-empty detection set stays on the overlay after an empty
 // inference frame. Long enough to read a box off a sparse detection, short
 // enough that an item leaving the counter does not leave a box behind.
+// What to do about a backend whose server is not answering, as one sentence.
+//
+// Two of these are decisions rather than wording. The **command is the sidecar's**, rendered as it
+// arrives and never composed here: this window can see neither the filesystem nor the platform, and
+// the local server runs in its own venv - the one interpreter this app's own sidecar cannot import -
+// so a line written on this side would be the bare `python` that fails where it is read. And a
+// verdict with no command to give (`null`, a checkout that never made that venv) gets the step that
+// comes first, rather than a line that would fail.
+function inferenceRemedy(inference: InferenceMessage): string {
+  if (inference.backend !== 'local_api') {
+    return 'Check this machine\u2019s connection, or switch detector_backend in Admin.'
+  }
+  const command = inference.local_server_command
+  if (!command) {
+    return (
+      'Start it with its own venv (docs/DETECTOR_BACKENDS.md \u00a77a), or switch ' +
+      'detector_backend in Admin.'
+    )
+  }
+  return `Start it from sidecar/ with its own venv (${command}), or switch detector_backend in Admin.`
+}
+
 const OVERLAY_HOLD_MS = 750
 
 export function LiveView({ port, deps }: LiveViewProps): JSX.Element {
@@ -277,7 +299,10 @@ export function LiveView({ port, deps }: LiveViewProps): JSX.Element {
     <div className="live-view">
       {/* The detector's backend has no server behind it, so a capture that starts will stream
           frames and log nothing - and with `local_api` the ordinary cause is simply that nobody
-          started `local_inference_server.py`, which no button in this app can do.
+          started `local_inference_server.py`, which no button in this app can do. The command it is
+          started with comes from the sidecar, which is the only side that can know it: that server
+          runs in its own venv, so the interpreter this app launches the sidecar with cannot import
+          it, and the sentence cannot be written here.
           Above the error banner rather than below it because it is the *explanation* for the one
           underneath: a detector that raises on its first frame stops the capture, and the banner
           below says that while this one says why.
@@ -295,10 +320,7 @@ export function LiveView({ port, deps }: LiveViewProps): JSX.Element {
               The {inference.backend === 'local_api' ? 'local API' : 'cloud API'} server at{' '}
               {inference.url} is not answering.
             </b>{' '}
-            Detections will fail while it is down.{' '}
-            {inference.backend === 'local_api'
-              ? 'Start it (python local_inference_server.py), or switch detector_backend in Admin.'
-              : 'Check this machine\u2019s connection, or switch detector_backend in Admin.'}
+            Detections will fail while it is down. {inferenceRemedy(inference)}
             {inference.detail ? ` (${inference.detail})` : ''}
           </span>
         </div>

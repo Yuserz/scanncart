@@ -112,6 +112,14 @@ class InferenceStatusPayload(BaseModel):
     #: the evidence an operator needs to tell a wrong port from a server that is not running: a
     #: refused connection, a timeout and an unresolvable host are three different sentences.
     detail: str = ""
+    #: How the operator starts the server this verdict is about, on the machine this sidecar runs on
+    #: (`app/inference_health.local_server_command`) - the remedy, spelled out by the only side that
+    #: can: the renderer knows no filesystem and no platform, and a bare `python` is the interpreter
+    #: that cannot import the local server's venv. `None` means *no command to give*: a `cloud_api`
+    #: verdict (this app knows no command for somebody else's server) or a checkout with no
+    #: `.venv-inference` yet, which the notices render as the setup step rather than as a command
+    #: that would fail.
+    local_server_command: str | None = None
     #: Seconds since the last completed probe, or `None` when there has not been one. Computed when
     #: the payload is built, from a reading the monitor re-stamps on *every* probe - so a verdict
     #: that has stood for an hour still reports seconds, which is the truth about it: it was checked

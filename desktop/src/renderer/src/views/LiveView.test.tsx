@@ -412,7 +412,9 @@ describe('LiveView', () => {
     it('names the server, the two ways out, and the sidecar’s own reason', () => {
       // The sidecar is the only process that can probe the endpoint, and it does so in the
       // background, so this renders a verdict rather than making one. The two fixes are the only
-      // two: nothing in this window can start `local_inference_server.py`.
+      // two: nothing in this window can start `local_inference_server.py` - and the line it is
+      // started with is the sidecar's to write, because that server runs in its own venv and this
+      // window can see neither the filesystem nor the platform.
       const h = makeHarness()
       render(<LiveView port={8765} deps={h.deps} />)
 
@@ -422,14 +424,20 @@ describe('LiveView', () => {
           backend: 'local_api',
           url: 'http://127.0.0.1:9001',
           state: 'unresponsive',
-          detail: 'ConnectError: connection refused'
+          detail: 'ConnectError: connection refused',
+          local_server_command: '.venv-inference/Scripts/python.exe local_inference_server.py'
         })
       })
 
       const banner = screen.getByTestId('inference-unresponsive')
       expect(banner).toHaveTextContent('http://127.0.0.1:9001')
       expect(banner).toHaveTextContent('not answering')
-      expect(banner).toHaveTextContent('local_inference_server.py')
+      // The command, as the sidecar spelled it for this machine. Not a bare `python`: the venv it
+      // has to run in is not the one the sidecar runs in, so that advice fails where it is read.
+      expect(banner).toHaveTextContent(
+        '.venv-inference/Scripts/python.exe local_inference_server.py'
+      )
+      expect(banner).toHaveTextContent('from sidecar/')
       expect(banner).toHaveTextContent('detector_backend in Admin')
       // The sidecar's own detail, because "unreachable" alone cannot tell a stopped server from a
       // wrong port.
@@ -486,6 +494,30 @@ describe('LiveView', () => {
         })
       })
       expect(screen.queryByTestId('inference-unresponsive')).not.toBeInTheDocument()
+    })
+
+    it('points at the setup step when this machine has no server to start', () => {
+      // `local_server_command` is `null` on a checkout that has never made the local backend's venv,
+      // and this is the case the old copy got wrong twice over: there is no command to print, and
+      // inventing one would hand the operator a line that fails. The remedy is then the step that
+      // comes first, which is where the command itself comes from.
+      const h = makeHarness()
+      render(<LiveView port={8765} deps={h.deps} />)
+      act(() => {
+        h.opts().onInference?.({
+          type: 'inference',
+          backend: 'local_api',
+          url: 'http://127.0.0.1:9001',
+          state: 'unresponsive',
+          detail: 'ConnectError: connection refused',
+          local_server_command: null
+        })
+      })
+
+      const banner = screen.getByTestId('inference-unresponsive')
+      expect(banner).toHaveTextContent('its own venv')
+      expect(banner).toHaveTextContent('DETECTOR_BACKENDS.md')
+      expect(banner).not.toHaveTextContent('python')
     })
 
     it('reads the cloud wording when the backend is the hosted one', () => {

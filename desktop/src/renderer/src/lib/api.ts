@@ -13,6 +13,12 @@ export interface InferenceStatusPayload {
   url?: string
   state?: 'unknown' | 'ok' | 'unresponsive'
   detail?: string
+  // The remedy for an unresponsive `local_api`, written by the side that knows: the command that
+  // starts the local inference server on *this* machine (`app/inference_health.local_server_command`).
+  // It is never a bare `python` - that server runs in its own venv, which is not the one the sidecar
+  // runs in - and it is absent when there is no command to give (a `cloud_api` verdict, or a checkout
+  // that has not set that venv up yet), which the notices render as the setup step.
+  local_server_command?: string | null
   age_seconds?: number | null
 }
 

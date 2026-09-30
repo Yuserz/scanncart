@@ -45,7 +45,7 @@ npm run dev
 Override the sidecar location if needed:
 
 ```bash
-SIDECAR_PYTHON=/path/to/python SIDECAR_SCRIPT=/path/to/run.py npm run dev
+SIDECAR_PYTHON=/path/to/sidecar/.venv/Scripts/python.exe SIDECAR_SCRIPT=/path/to/run.py npm run dev
 ```
 
 Click **Start** to begin capture; live boxes render on the StreamCam feed.

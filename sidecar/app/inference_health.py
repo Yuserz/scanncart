@@ -47,9 +47,11 @@ answer.
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Callable, Literal
 
 #: The three things a client can be told. `unknown` is not "fine" and not "broken": it is a backend
@@ -70,6 +72,48 @@ PROBE_INTERVAL_S = 5.0
 #: genuinely down misses every probe, so the cost of the third is a few seconds of latency on the
 #: notice, against never telling an operator to restart a server that is mid-request.
 FAILURES_BEFORE_UNRESPONSIVE = 3
+
+#: The local backend's server, and the venv it has to run in. `inference` pins numpy/opencv versions
+#: that conflict with this process's ultralytics stack (`docs/DETECTOR_BACKENDS.md` §7a), so the
+#: interpreter running *this* module is the one interpreter that cannot import it - which is why the
+#: command below is not `python local_inference_server.py`.
+LOCAL_SERVER_SCRIPT = "local_inference_server.py"
+LOCAL_SERVER_VENV = ".venv-inference"
+
+#: This module's own package directory: `sidecar/`. Both halves of that command live under it, and it
+#: is the directory every documented command for this server is written from.
+SIDECAR_DIR = Path(__file__).resolve().parents[1]
+
+
+def local_server_command(
+    sidecar_dir: Path | str | None = None, windows: bool | None = None
+) -> str | None:
+    """The command that starts the local inference server *on this machine*, or None when it cannot.
+
+    An unresponsive `local_api` leaves the operator with a live preview that detects nothing, and the
+    one fix no button in the app can perform is starting a second process - so the notice has to name
+    a command to run. Only this side can write that sentence: the renderer sees no filesystem and no
+    platform, and `python local_inference_server.py` - what it said before this existed - is a
+    command that fails on the machine it is printed on, because the interpreter running the sidecar
+    is precisely the one that cannot import `inference` (see `LOCAL_SERVER_VENV` above).
+
+    `None` is the other honest answer, and the reason this looks at the disk rather than formatting a
+    string: a checkout that has never set the local backend up has no venv to name, and handing an
+    operator a command that cannot run is worse than sending them to the one step that comes first.
+    Both inputs are parameters - they default to where this module actually is and to what this
+    machine actually is - so each half can be tested without either.
+    """
+    root = SIDECAR_DIR if sidecar_dir is None else Path(sidecar_dir)
+    on_windows = os.name == "nt" if windows is None else windows
+    interpreter = root / LOCAL_SERVER_VENV / ("Scripts/python.exe" if on_windows else "bin/python")
+    if not interpreter.is_file():
+        return None
+    # Relative to `sidecar/`, with forward slashes: the form the docs print it in (`§7a`) and the one
+    # a POSIX shell runs - Git Bash included, which is the shell this repo assumes on Windows. The
+    # backslash form is the one that breaks, since bash eats it as an escape. A reader in cmd or
+    # PowerShell adds a `.\`; the notice cannot say that per shell, and this is the shell the rest of
+    # the project's commands are written for.
+    return f"{interpreter.relative_to(root).as_posix()} {LOCAL_SERVER_SCRIPT}"
 
 
 @dataclass(frozen=True)
@@ -310,14 +354,18 @@ def monitor_for(
 
 __all__ = [
     "FAILURES_BEFORE_UNRESPONSIVE",
+    "LOCAL_SERVER_SCRIPT",
+    "LOCAL_SERVER_VENV",
     "OK",
     "PROBE_INTERVAL_S",
     "PROBE_TIMEOUT_S",
+    "SIDECAR_DIR",
     "UNKNOWN",
     "UNRESPONSIVE",
     "InferenceHealthMonitor",
     "InferenceState",
     "InferenceStatus",
+    "local_server_command",
     "monitor_for",
     "probe_url",
 ]

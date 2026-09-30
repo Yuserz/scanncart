@@ -140,7 +140,7 @@ setup differs:
 
 ```bash
 cd desktop
-SIDECAR_PYTHON=/path/to/python SIDECAR_SCRIPT=/path/to/run.py npm run dev
+SIDECAR_PYTHON=/path/to/sidecar/.venv/Scripts/python.exe SIDECAR_SCRIPT=/path/to/run.py npm run dev
 ```
 
 > **First capture start downloads `yolo11n.pt`** (the stock Ultralytics
@@ -257,7 +257,7 @@ capture. `local_api` can also run without Docker via a **separate** venv — see
 The failures below are the ones seen in practice. They are environment
 problems, not project ones.
 
-### `python run.py` exits with code `255` / `4294967295` and no traceback
+### `.venv/Scripts/python.exe run.py` exits with code `255` / `4294967295` and no traceback
 
 Windows Defender's real-time protection intermittently kills Python as it loads
 native extension DLLs (numpy, OpenCV, torch) — a scan race, not a broken

@@ -1717,7 +1717,8 @@ describe('AdminPanel', () => {
         url: 'http://127.0.0.1:9001',
         state: 'unresponsive',
         detail: 'ConnectError: [WinError 10061] No connection could be made',
-        age_seconds: 3.2
+        age_seconds: 3.2,
+        local_server_command: '.venv-inference/Scripts/python.exe local_inference_server.py'
       })
       render(<AdminPanel port={8765} deps={deps} />)
 
@@ -1729,6 +1730,32 @@ describe('AdminPanel', () => {
       expect(line).toHaveTextContent('checked 3 s ago')
       // The remedy has to name a field this screen actually edits, or the sentence is a dead end.
       expect(line).toHaveTextContent('local_api_url')
+      // And the command to run, as the sidecar spelled it for this machine: the local server's venv
+      // is not the one the sidecar runs in, so a bare `python` is advice that fails where it is read.
+      expect(screen.getByTestId('inference-watch-command')).toHaveTextContent(
+        '.venv-inference/Scripts/python.exe local_inference_server.py'
+      )
+      expect(line).toHaveTextContent('from sidecar/')
+    })
+
+    it('names the setup step when this checkout has no command to give', async () => {
+      // `local_server_command: null` is the honest answer on a machine that never made the local
+      // backend's venv - and the one case the panel cannot turn into a command line, because there
+      // is nothing to name. It sends the operator to the setup instead of printing a line that
+      // would fail.
+      const { deps } = withWatch({
+        backend: 'local_api',
+        url: 'http://127.0.0.1:9001',
+        state: 'unresponsive',
+        detail: 'ConnectError: connection refused',
+        local_server_command: null
+      })
+      render(<AdminPanel port={8765} deps={deps} />)
+
+      const line = await screen.findByTestId('inference-watch')
+      expect(screen.queryByTestId('inference-watch-command')).not.toBeInTheDocument()
+      expect(line).toHaveTextContent('DETECTOR_BACKENDS.md')
+      expect(line).not.toHaveTextContent('python')
     })
 
     it('shows the address being probed, not the one sitting unsaved in the field', async () => {

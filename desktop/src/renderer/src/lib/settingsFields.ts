@@ -267,7 +267,10 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
   {
     key: 'local_api_url',
     label: 'Self-hosted API URL',
-    hint: 'Where the local Roboflow inference server is listening. Start it with `inference server start`.',
+    // Not `inference server start`, which is the documented Docker path and needs Docker: this is the
+    // machine that has none, which is why §7a exists. The notice beside this field prints the
+    // command this machine actually runs, and only when that venv is there to run it.
+    hint: 'Where the local Roboflow inference server is listening. Start it with its own venv — see docs/DETECTOR_BACKENDS.md §7a.',
     type: 'text'
   },
   {

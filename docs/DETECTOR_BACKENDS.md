@@ -427,7 +427,8 @@ renderer. **A secret must never enter that object.**
 - `SettingsResponse` exposes **`roboflow_api_key_present: bool`** only. Never the value.
 
 Rationale for `.env` over Electron passing it through `spawn`: keeps the desktop app out of secret
-handling entirely, and the sidecar stays independently runnable via `python run.py`.
+handling entirely, and the sidecar stays independently runnable (`make sidecar-run`, or its own venv's
+`run.py` directly).
 
 ### New warnings in `compute_warnings()`
 
@@ -526,6 +527,14 @@ nothing but HTTP. Python must be **<3.13**; `inference` publishes no 3.13 wheels
 
 Then point the sidecar at it — `detector_backend: local_api`, `track_expiry_s: 2.0+` — and press
 **Test connection** in the Admin Panel.
+
+That same line is what the app tells an operator to run when this server stops answering: the Admin
+Panel's watch line and the Live view's notice carry it (`app/inference_health.local_server_command`),
+derived from where the sidecar is and what platform it is on. They print it **only when
+`.venv-inference` is actually there to run** — a checkout that has never done the setup above gets
+this section instead of a command that would fail. Which is the whole reason the sentence is not
+composed in the renderer: that side can see neither the filesystem nor the platform, and the bare
+`python` it used to name is the one interpreter that cannot import `inference`.
 
 ### Two things the wheel does not ship
 

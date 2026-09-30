@@ -15,13 +15,18 @@ import http.server
 import socket
 import threading
 import time
+from pathlib import Path
 
 from app.inference_health import (
+    LOCAL_SERVER_SCRIPT,
+    LOCAL_SERVER_VENV,
     OK,
+    SIDECAR_DIR,
     UNKNOWN,
     UNRESPONSIVE,
     InferenceHealthMonitor,
     InferenceStatus,
+    local_server_command,
     probe_url,
 )
 
@@ -350,6 +355,57 @@ def test_any_http_response_counts_as_answering():
             server.server_close()
         assert answering is True, f"a {status} is a server that answered"
         assert detail == ""
+
+
+def _fake_venv(root: Path, *, windows: bool) -> Path:
+    """A directory laid out like `sidecar/` with the local server's venv in it."""
+    interpreter = root / LOCAL_SERVER_VENV / ("Scripts/python.exe" if windows else "bin/python")
+    interpreter.parent.mkdir(parents=True, exist_ok=True)
+    interpreter.write_text("", encoding="utf-8")
+    return root
+
+
+def test_the_start_command_is_the_one_the_docs_print(tmp_path):
+    """The remedy an operator is handed has to be the line `DETECTOR_BACKENDS.md` §7a documents.
+
+    Those are the two places this command exists, and they are read by the same person at the same
+    moment: one who copies it out of the notice and one who copies it out of the doc have to get the
+    same line, on the platform they are reading it for. Compared rather than restated, so a change to
+    either surface is one failure with both sides in it.
+    """
+    windows = local_server_command(_fake_venv(tmp_path / "sidecar", windows=True), windows=True)
+    posix = local_server_command(_fake_venv(tmp_path / "nix", windows=False), windows=False)
+
+    assert windows == f"{LOCAL_SERVER_VENV}/Scripts/python.exe {LOCAL_SERVER_SCRIPT}"
+    assert posix == f"{LOCAL_SERVER_VENV}/bin/python {LOCAL_SERVER_SCRIPT}"
+    doc = (SIDECAR_DIR.parent / "docs" / "DETECTOR_BACKENDS.md").read_text(encoding="utf-8")
+    assert windows in doc, "the notice prints a command §7a does not"
+
+
+def test_a_checkout_without_the_venv_has_no_command_to_give(tmp_path):
+    """`None` rather than a command that cannot run, on either platform.
+
+    The ordinary case on a machine that has not set the local backend up, and the reason this reads
+    the disk: the notice then names the step that comes first instead of handing over a line that
+    fails, which is what the bare `python` it replaced did on every machine.
+    """
+    assert local_server_command(tmp_path, windows=True) is None
+    assert local_server_command(tmp_path, windows=False) is None
+
+
+def test_a_directory_of_that_name_is_not_an_interpreter(tmp_path):
+    """`is_file`, not `exists`: a directory answers `exists` and cannot be run."""
+    (tmp_path / LOCAL_SERVER_VENV / "Scripts" / "python.exe").mkdir(parents=True)
+    assert local_server_command(tmp_path, windows=True) is None
+
+
+def test_the_default_directory_is_the_one_the_script_lives_in():
+    """The default reads this module's own location, so the script has to be beside it.
+
+    Pinned because every wrong version of this - a `sidecar` name typed in, or a `parents` index off
+    by one - goes on returning a plausible-looking command while naming a path that is not there.
+    """
+    assert (SIDECAR_DIR / LOCAL_SERVER_SCRIPT).is_file()
 
 
 def test_a_port_with_nothing_on_it_is_not_answering():
