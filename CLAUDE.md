@@ -53,6 +53,14 @@ CI runs it in its own `live-layout` job under `xvfb-run`. The cheap half is in t
 standard the thresholds are stated against, and that the target, this line and that job still exist
 — because a measurement wired to nothing is the hand check it replaced.
 
+The Makefile is checked from two sides for the same reason, because nothing else in CI invoked
+`make`: a hand edit that merged two `@echo` lines in `help` and de-tabbed two more aborted the whole
+file with `missing separator`, which took every target down — `make dev` included — and stayed
+invisible to a green suite for a session. A `makefile` job now runs `make help` and dry-runs every
+target that index advertises, and the text half is `sidecar/tests/test_makefile.py` in
+`sidecar-tests` — the one that still holds where GNU Make is absent, Windows being the case the
+README calls optional and the reason it reads the file rather than shelling out.
+
 ### Sidecar (Python, in `sidecar/`)
 
 ```bash

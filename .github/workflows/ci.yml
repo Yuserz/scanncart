@@ -6,6 +6,44 @@ on:
   pull_request:
 
 jobs:
+  # The Makefile is the documented way to run this project - `README.md`'s only quick path, `make
+  # dev` included - and nothing else here ever runs `make`: every job below calls `pytest`/`npm`
+  # directly. So a hand edit that merged two `@echo` lines in `help` and de-tabbed two more was
+  # invisible to CI for a whole session and only bit a person at a terminal, where make aborts the
+  # *whole* file on the first bad line (`missing separator`) and every target fails, not just `help`.
+  #
+  # Its own job because the failure is read for one thing - the Makefile no longer parses - rather
+  # than mixed into a toolchain's tests. GNU Make is preinstalled on `ubuntu-latest` and parses with
+  # no dependencies, and `-n` executes nothing, so the whole advertised surface is checked for free.
+  #
+  # The text-level half of the same guard is `sidecar/tests/test_makefile.py`, which reads the file
+  # instead of shelling out (GNU Make is optional on Windows, the README says so) and runs inside
+  # `sidecar-tests`; this is the half that proves `make` itself still accepts it.
+  makefile:
+    name: Makefile parses
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # `make help` parses every line before it serves the first target, so the `missing separator`
+      # this job exists for fails here even though the corrupt line sat in `help`. Then every target
+      # the same index advertises is dry-run, which catches a recipe whose prerequisite no longer
+      # exists - a rename that left `make build` pointing at nothing - without running any of it
+      # (`make -n clean` prints its `rm`, it does not delete). The target list is read back off
+      # `make help` rather than restated, so the check follows the index a reader does.
+      - name: Parse the Makefile and dry-run every advertised target
+        run: |
+          make help
+          targets=$(make help | sed -n 's/^  \([a-z][a-z0-9-]*\) .*/\1/p')
+          # A read that matched nothing would dry-run nothing and pass, which is the shape of a guard
+          # that has quietly stopped guarding: the list is the index's, so an empty one is a broken
+          # read rather than a Makefile with nothing in it.
+          test -n "$targets"
+          for target in $targets; do
+            echo "--- make -n $target"
+            make -n "$target"
+          done
+
   sidecar-tests:
     name: Sidecar tests (Python)
     runs-on: ubuntu-latest

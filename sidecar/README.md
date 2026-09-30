@@ -49,7 +49,7 @@ build it was compiled for) — so always pin both to the same `cuXXX` tag:
 uv pip install --python .venv/Scripts/python.exe torch torchvision --index-url https://download.pytorch.org/whl/cu124 --reinstall-package torch --reinstall-package torchvision
 ```
 
-Verify with `python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"`.
+Verify with the venv's interpreter: `.venv/Scripts/python.exe -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"` (POSIX: `.venv/bin/python`).
 
 > Verified on the current dev machine (RTX 4060, driver 610.62): the base
 > install pulled `torch==2.13.0+cpu`; reinstalling from the `cu128` index gave
@@ -113,8 +113,8 @@ uv pip install --python .venv/Scripts/python.exe -r requirements-cuda.txt
 1. **The CUDA major version must match torch's.** `onnxruntime-gpu` 1.27 and
    later are built for CUDA 13 (`cublasLt64_13.dll`); 1.21–1.26 are built for
    CUDA 12.8. Check with
-   `python -c "import torch; print(torch.version.cuda)"` and pick the build to
-   match — a mismatch reports `CUDAExecutionProvider` as available and then
+   `.venv/Scripts/python.exe -c "import torch; print(torch.version.cuda)"`
+   (POSIX: `.venv/bin/python`) and pick the build to match — a mismatch reports `CUDAExecutionProvider` as available and then
    fails on the first frame with *"no data transfer registered"*.
 2. **onnxruntime-gpu does not ship its CUDA runtime.** It dlopen's cublas,
    cublasLt, cudart and cudnn from the loader path. torch already ships matching
@@ -129,7 +129,8 @@ uv pip install --python .venv/Scripts/python.exe -r requirements-cuda.txt
 Verify:
 
 ```bash
-python -c "import onnxruntime as o; print(o.get_available_providers())"
+.venv/Scripts/python.exe -c "import onnxruntime as o; print(o.get_available_providers())"   # Windows
+.venv/bin/python -c "import onnxruntime as o; print(o.get_available_providers())"           # Linux/macOS
 ```
 
 `ultralytics` also pip-installs dependencies at import time and will swap the

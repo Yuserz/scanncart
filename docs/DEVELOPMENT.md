@@ -113,9 +113,9 @@ make test               # desktop vitest + sidecar pytest
 Manual equivalent:
 
 ```bash
-cd sidecar && .venv/Scripts/python.exe -m pytest -v      # Windows
-cd sidecar && .venv/bin/python -m pytest -v               # Linux/macOS
-cd desktop && npm test
+(cd sidecar && .venv/Scripts/python.exe -m pytest -v)    # Windows
+(cd sidecar && .venv/bin/python -m pytest -v)             # Linux/macOS
+(cd desktop && npm test)
 ```
 
 There is nothing to configure for this step — no `.env`, no camera, no
