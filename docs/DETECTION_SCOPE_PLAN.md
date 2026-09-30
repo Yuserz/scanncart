@@ -318,7 +318,7 @@ raising `scale` past the 0.5 default widens the size range on top of the real mi
 Then the measurement, which is the answer to "does it meet our requirements":
 
 ```
-train_model.py --generation v2 --val --split test      # per-class table + the per-distance grid
+sidecar/.venv/Scripts/python.exe sidecar/tools/train_model.py --generation v2 --val --split test  # per-class table + per-distance grid
 ```
 
 The per-distance breakdown is on by default (three extra passes, one per distance, over the

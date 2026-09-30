@@ -62,12 +62,48 @@ target that index advertises, and the text half is `sidecar/tests/test_makefile.
 README calls optional and the reason it reads the file rather than shelling out.
 
 The commands those targets stand in for are checked as well, because a fenced block is meant to be
-pasted: `sidecar/tests/test_docs_commands.py` reads every instruction doc's shell fences and fails on
-a bare `python` in command position. The uv path the setup sections lead with activates nothing, so a
-bare one is the system interpreter and cannot import the app at all — and the local inference server
-is worse, since its venv exists precisely because the sidecar's cannot import it. Creating that venv
+pasted: three sidecar test modules read every instruction doc's shell fences over one shared reader
+(`sidecar/tests/docs_fences.py`), a rule family apiece so each owns its own rules and canaries.
+`sidecar/tests/test_docs_interpreters.py` fails on a bare `python` in command position. The uv path
+the setup sections lead with activates nothing, so a bare one is the system interpreter and cannot
+import the app at all — and the local inference server is worse, since its venv exists precisely
+because the sidecar's cannot import it. Creating that venv
 (`python -m venv .venv`) is the one legal bare interpreter, so it is a rule; prose is deliberately
 out of scope, because an inline mention is as likely to be a quotation of app copy as an instruction.
+
+`sidecar/tests/test_docs_paths.py` holds the second way a pasted line fails, which nothing else in the
+suite can see: the path or target it names is not *there* any more. A tool gets renamed, a Make target is dropped, an
+npm script is deleted, and every place the old spelling was written keeps reading as instructions —
+the tools' own tests import what exists, the `makefile` job runs the targets `make help` lists, and
+`scripts/check_doc_links.py` reads Markdown links, so only a reader pasting the block finds out. So a
+line in a shell fence is read as an invocation when it leads with a command word or a path, and then
+every path on it is checked against the checkout, a `make` target against the Makefile, an `npm` script
+against a `package.json`. The shape that keeps it quiet is the interesting half: a line that leads
+with *neither* is a note — a table row, a tree, a diagram — and none of its words are read, which is
+what stops a corpus whose fenced lines lead with 155 distinct words from becoming 155 judgements. A
+line that leads with a *path* is still ambiguous, since a listing's rows look the same, so that one is
+settled by typography rather than vocabulary: this repo aligns a listing's annotations into a column
+and draws its diagrams with arrows, while a command is paths and flags on single spaces. Deliberately outside it: trees a fresh
+clone does not carry (the venvs, the dataset workspace, `sidecar/models`, `runs/`), values only the
+reader knows (`path/to/...`, `<workspace>`, `$HOME`, globs), whether a *tool* is installed (`uv`,
+`docker`, `npx`'s binary — a machine fact, not a repo one), and a block's own working directory, which
+is why a path is accepted under the repo root, the doc's own directory or `sidecar/`/`desktop/` and a
+`cd` argument is not checked at all. The floors and the artifact count it reports are measured numbers
+in the module, pinned so a walker that stopped reading fences cannot pass by finding nothing.
+
+`sidecar/tests/test_docs_options.py` holds the third: the names *inside* those commands, judged
+against the file that owns the answer. The script a line runs is found (a `.py` at the head, the one
+an interpreter is handed, or
+`-m <module>` when that module is a file here), and every flag and leading verb on the line is checked
+against that script's own `add_argument`/`add_parser` calls — so a dropped `--strict`, or a
+`clean_v2.py` verb that was renamed, fails the suite rather than exiting 2 in a reader's shell. The
+options are read as *text*, like the Makefile's targets, because those entrypoints import torch,
+ultralytics and the app's runtime in their module bodies; the price is stated with it — a parser built
+through a shared helper is in the module that defines it, `-h`/`--help` are assumed unless the file
+passes `add_help=False`, and a flag that lives on a sibling subparser counts, so the claim is "this
+tool knows the option" rather than "this invocation is well-formed". A script that declares nothing
+accepts nothing, so the two entrypoints that are started and left alone are named in `NO_OPTIONS` and
+a third one appearing fails a canary instead of passing quietly.
 
 ### Sidecar (Python, in `sidecar/`)
 

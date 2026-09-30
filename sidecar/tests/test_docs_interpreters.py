@@ -1,17 +1,12 @@
-"""The docs' shell blocks, read for a command that cannot work on the machine it is printed on.
+"""A documented command that runs a *bare* `python`, which cannot import this app at all.
 
-The docs are how this project is run: `README.md` and `QUICKSTART.md` take a fresh clone to a running
-app, `docs/DEVELOPMENT.md` is the step-by-step beside them, the two package READMEs cover their own
-side, and `CLAUDE.md` plus the run-desktop skill are what an agent is told to follow. Every one of
-them answers "how do I run this?" with a fenced block, and a fenced block is meant to be pasted.
-
-What a pasted line can get wrong and no other guard can see: **a bare `python`**. The uv path these
-docs lead with activates nothing, so a bare one is the *system* interpreter - which cannot import
-this app's dependencies at all - and the local inference server is worse still, since it lives in its
-own venv precisely because the sidecar's cannot import it. A reader who pastes `python run.py` gets a
-`ModuleNotFoundError` and no hint that the command was wrong rather than the code; an agent that
-follows one gets the same, and the first fix that suggests itself (pip install into the system
-interpreter) is the wrong one.
+The docs are how this project is run, and a fenced block is meant to be pasted. What a pasted line can
+get wrong and no other guard can see: **a bare `python`**. The uv path these docs lead with activates
+nothing, so a bare one is the *system* interpreter - which cannot import this app's dependencies at
+all - and the local inference server is worse still, since it lives in its own venv precisely because
+the sidecar's cannot import it. A reader who pastes `python run.py` gets a `ModuleNotFoundError` and
+no hint that the command was wrong rather than the code; an agent that follows one gets the same, and
+the first fix that suggests itself (pip install into the system interpreter) is the wrong one.
 
 So: a command position inside a shell fence must name an interpreter by *path*
 (`.venv/Scripts/python.exe`, `.venv-inference/bin/python`, `sidecar/.venv/bin/python`) or go through
@@ -30,92 +25,36 @@ something that does (`make`, a script with a shebang). Two things are deliberate
 It also does not check *which* venv, or that the shell a block assumes is the one a reader has: those
 are judgements the fences in this repo make explicitly and visibly (a `# Windows` / `# Linux/macOS`
 pair, or §7a's `uv` setup), and a guard that guessed at them would be the kind that gets turned off.
+
+The reading - fences, logical lines, commands, and whether a line is an invocation at all - is in
+`tests/docs_fences.py`, shared with the path and option rules. This module owns the interpreter rule
+and its canaries: that every instruction doc is scanned, that the corpus's own `python -m venv` lines
+are still found, and that neither the positive nor the negative control has gone quiet.
 """
 
 from __future__ import annotations
 
-import os
 import re
 from dataclasses import dataclass
-from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.docs
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-
-# The docs that tell a reader to run something. Every one has to be in the scanned corpus - that is
-# what `test_every_instruction_doc_is_scanned` holds - because a corpus that quietly stopped matching
-# a path is how this guard would stop guarding anything.
-INSTRUCTION_DOCS = (
-    "README.md",
-    "QUICKSTART.md",
-    "CLAUDE.md",
-    "docs/DEVELOPMENT.md",
-    "docs/DETECTOR_BACKENDS.md",
-    "sidecar/README.md",
-    "desktop/README.md",
-    ".claude/skills/run-desktop/SKILL.md",
+from tests.docs_fences import (
+    INSTRUCTION_DOCS,
+    REPO_ROOT,
+    _commands,
+    _corpus,
+    _is_invocation,
+    _logical,
+    blocks,
 )
 
-# Directories that never hold hand-written instructions: build output, virtualenvs, caches, and the
-# scratch trees this workflow writes (`graphify-out`, `.superpowers/`, pytest's own). The same list
-# `scripts/check_doc_links.py` walks the repo with, plus that second scratch tree - the reports under
-# it are a session's own notes, not instructions.
-SKIP_DIRS = {
-    ".git",
-    ".pytest_cache",
-    ".superpowers",
-    ".venv",
-    ".venv-inference",
-    "__pycache__",
-    "dist",
-    "graphify-out",
-    "node_modules",
-    "out",
-}
+pytestmark = pytest.mark.docs
 
-# Subtrees that are a *record* rather than instructions. `docs/superpowers/` holds the plans and specs
-# of sessions that ran before any of this convention existed, and they quote the commands those
-# sessions used - `python -m pytest` among them. Editing history to satisfy a guard is the guard
-# rewriting its own evidence, and the reader who opens a plan is not following a setup step.
-HISTORY_PREFIXES = (("docs", "superpowers"),)
-# The dataset workspace: tool output, not documentation. (`scripts/check_doc_links.py` skips it too.)
-WORKSPACE_PREFIXES = (("sidecar", "data"),)
-
-#: The info strings whose contents are commands. An empty one is in, because this repo writes shell
-#: in bare fences as well as in ` ```bash ` - and a guard that only read the labelled ones would miss
-#: every block that forgot the label.
-SHELL_FENCES = {
-    "",
-    "bash",
-    "bat",
-    "cmd",
-    "console",
-    "ps1",
-    "powershell",
-    "pwsh",
-    "sh",
-    "shell",
-    "zsh",
-}
-
-FENCE = re.compile(r"^\s*```(\S*)")
-#: Every place a shell starts a new command. Good enough for the shapes these docs use (`cd x && y`,
-#: a pipe, a `;` list) and deliberately not a shell grammar: a bare interpreter inside a `$(...)`
-#: substitution is not a line a reader copies on its own.
-COMMAND_BOUNDARY = re.compile(r"&&|\|\||;|\|")
-#: `$ cmd` / `> cmd`, the prompt some blocks show.
-PROMPT = re.compile(r"^(?:\$\s+|>\s+)")
-#: `# Windows: cmd` / `# POSIX: cmd` - this repo's convention for showing one platform per line, so
-#: the command behind the label is as documented as a bare one. The label is capped at a few words so
-#: that a sentence ending in a colon does not make the rest of it look like a command.
-COMMENT_LABEL = re.compile(r"^#\s*(?:[A-Za-z][A-Za-z0-9_./ -]{0,23}:)?\s*")
 #: The interpreters a reader could reach from `PATH`: the system one on either platform, the `py`
 #: launcher, and a versioned `python3.12` - with or without `.exe`. A *path* to one is never matched,
 #: because this is anchored at the start of the command: `.venv\Scripts\python.exe` is a path, and
-#: the whole point of this module is that spelling the path is what makes the command work.
+#: the whole point of this rule is that spelling the path is what makes the command work.
 BARE_INTERPRETER = re.compile(r"^(?:python(?:3(?:\.\d+)?)?|py)(?:\.exe)?(?:\s|$)")
 #: The one legal use of a bare interpreter: making the venv it is about to be replaced by.
 VENV_CREATION = re.compile(r"^(?:python(?:3(?:\.\d+)?)?|py)(?:\.exe)?\s+-m\s+venv(?:\s|$)")
@@ -130,7 +69,7 @@ EXEMPT: tuple[tuple[str, str, str], ...] = ()
 #: The corpus's own bare-interpreter usage, which is exactly the `python -m venv .venv` lines the
 #: rule above legalises. Pinned so the scan is known to reach *inside* fences on real docs rather than
 #: only on the synthetic ones below: a fence reader that silently stopped entering blocks would find
-#: no violations and pass, which is the failure this whole module exists to prevent.
+#: no violations and pass, which is the failure this whole guard exists to prevent.
 EXEMPT_EXAMPLES = ("README.md", "sidecar/README.md", "docs/DEVELOPMENT.md")
 
 
@@ -156,14 +95,6 @@ class Invocation:
         return None
 
 
-def _command(text: str) -> str:
-    """`text` as the command a reader would retype: without a prompt, a comment marker or a label."""
-    text = text.strip()
-    if text.startswith("#"):
-        text = COMMENT_LABEL.sub("", text)
-    return PROMPT.sub("", text).strip()
-
-
 def scan(text: str, doc: str = "") -> tuple[list[Invocation], int]:
     """Every bare interpreter in `text`'s shell blocks, and how many such blocks there were.
 
@@ -172,52 +103,23 @@ def scan(text: str, doc: str = "") -> tuple[list[Invocation], int]:
     opened look identical from the list alone.
     """
     found: list[Invocation] = []
-    fences = 0
-    info: str | None = None
-    for number, raw in enumerate(text.splitlines(), 1):
-        opener = FENCE.match(raw)
-        if opener:
-            if info is None:
-                info = opener.group(1).lower()
-                if info in SHELL_FENCES:
-                    fences += 1
-            else:
-                info = None
-            continue
-        if info not in SHELL_FENCES:
-            continue
-        for part in COMMAND_BOUNDARY.split(raw):
-            command = _command(part)
-            if BARE_INTERPRETER.match(command):
-                found.append(
-                    Invocation(
-                        doc=doc,
-                        line=number,
-                        command=command,
-                        fence=info,
-                        creating_venv=VENV_CREATION.match(command) is not None,
+    shell = blocks(text)
+    for block in shell:
+        for number, line in _logical(block.lines):
+            for command in _commands(line):
+                if not _is_invocation(command):
+                    continue
+                if BARE_INTERPRETER.match(command):
+                    found.append(
+                        Invocation(
+                            doc=doc,
+                            line=number,
+                            command=command,
+                            fence=block.info,
+                            creating_venv=VENV_CREATION.match(command) is not None,
+                        )
                     )
-                )
-    return found, fences
-
-
-def _corpus() -> list[Path]:
-    """Every Markdown file that is instructions, in a stable order.
-
-    Walked with the skips pruning directories rather than filtering the result: `node_modules` and
-    the two venvs are the only reason a `rglob` over this repo is not instant, and descending into
-    them to then throw the files away is most of what this guard costs.
-    """
-    docs: list[Path] = []
-    for root, dirnames, filenames in os.walk(REPO_ROOT):
-        here = Path(root)
-        relative = here.relative_to(REPO_ROOT).parts
-        dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
-        if any(relative[: len(p)] == p for p in HISTORY_PREFIXES + WORKSPACE_PREFIXES):
-            dirnames[:] = []
-            continue
-        docs.extend(here / name for name in filenames if name.endswith(".md"))
-    return sorted(docs)
+    return found, len(shell)
 
 
 def scan_corpus() -> tuple[dict[str, list[Invocation]], dict[str, int]]:
@@ -226,15 +128,15 @@ def scan_corpus() -> tuple[dict[str, list[Invocation]], dict[str, int]]:
     fences: dict[str, int] = {}
     for path in _corpus():
         doc = path.relative_to(REPO_ROOT).as_posix()
-        found, blocks = scan(path.read_text(encoding="utf-8"), doc)
+        found, blocks_read = scan(path.read_text(encoding="utf-8"), doc)
         if found:
             hits[doc] = found
-        fences[doc] = blocks
+        fences[doc] = blocks_read
     return hits, fences
 
 
 def test_no_documented_command_runs_a_bare_python():
-    """The rule this module exists for, over every instruction doc in the repo."""
+    """The rule this guard exists for, over every instruction doc in the repo."""
     hits, _fences = scan_corpus()
     violations = [
         f"{doc}:{inv.line}: {inv.command}"
@@ -248,38 +150,6 @@ def test_no_documented_command_runs_a_bare_python():
         "nothing, so a bare one is the system interpreter and cannot import the app's dependencies "
         "(the local inference server is worse: it lives in its own `.venv-inference`). Name the "
         "venv's interpreter the way the rest of the docs do:\n  " + "\n  ".join(violations)
-    )
-
-
-def test_every_instruction_doc_is_scanned():
-    """The corpus canary: a doc that fell out of the walk would take its blocks with it."""
-    hits, fences = scan_corpus()
-    missing = [doc for doc in INSTRUCTION_DOCS if doc not in fences]
-    assert not missing, (
-        "these docs tell a reader what to run and were not scanned at all - a renamed or moved file "
-        "leaves this guard reading nothing on that side: " + ", ".join(missing)
-    )
-    silent = [doc for doc in INSTRUCTION_DOCS if fences[doc] == 0]
-    assert not silent, (
-        "an instruction doc with no shell block at all: either its commands moved somewhere this "
-        "walk does not read, or the fence syntax changed under it: " + ", ".join(silent)
-    )
-
-
-def test_the_scan_reaches_the_invocations_that_are_legal_by_rule():
-    """The other half of the canary, on real text: the venv rule has to keep being exercised.
-
-    `python -m venv .venv` is the whole of this corpus's bare-interpreter usage, and it is legal by
-    rule rather than by exemption - so it is also the proof that the walker is entering these fences
-    at all. Synthetic text in the tests below proves the reader works; this proves it is pointed at
-    the docs.
-    """
-    hits, _fences = scan_corpus()
-    seen = {doc for doc, found in hits.items() if any(inv.exempt for inv in found)}
-    assert set(EXEMPT_EXAMPLES) <= seen, (
-        "the `python -m venv` lines this rule legalises were not found, which means either the "
-        "scan stopped entering fences or the docs stopped showing the setup: expected "
-        f"{sorted(EXEMPT_EXAMPLES)}, saw {sorted(seen)}"
     )
 
 
@@ -362,6 +232,38 @@ def test_the_same_rule_fires_on_a_real_doc():
 
     assert [inv.command for inv in found] == ["python run.py"]
     assert not found[0].exempt, "the injected command is the one this guard exists for"
+
+
+def test_the_scan_reaches_the_invocations_that_are_legal_by_rule():
+    """The other half of the canary, on real text: the venv rule has to keep being exercised.
+
+    `python -m venv .venv` is the whole of this corpus's bare-interpreter usage, and it is legal by
+    rule rather than by exemption - so it is also the proof that the walker is entering these fences
+    at all. Synthetic text in the tests above proves the reader works; this proves it is pointed at
+    the docs.
+    """
+    hits, _fences = scan_corpus()
+    seen = {doc for doc, found in hits.items() if any(inv.exempt for inv in found)}
+    assert set(EXEMPT_EXAMPLES) <= seen, (
+        "the `python -m venv` lines this rule legalises were not found, which means either the "
+        "scan stopped entering fences or the docs stopped showing the setup: expected "
+        f"{sorted(EXEMPT_EXAMPLES)}, saw {sorted(seen)}"
+    )
+
+
+def test_every_instruction_doc_is_scanned():
+    """The corpus canary: a doc that fell out of the walk would take its blocks with it."""
+    hits, fences = scan_corpus()
+    missing = [doc for doc in INSTRUCTION_DOCS if doc not in fences]
+    assert not missing, (
+        "these docs tell a reader what to run and were not scanned at all - a renamed or moved file "
+        "leaves this guard reading nothing on that side: " + ", ".join(missing)
+    )
+    silent = [doc for doc in INSTRUCTION_DOCS if fences[doc] == 0]
+    assert not silent, (
+        "an instruction doc with no shell block at all: either its commands moved somewhere this "
+        "walk does not read, or the fence syntax changed under it: " + ", ".join(silent)
+    )
 
 
 def test_the_exemptions_are_still_live():
