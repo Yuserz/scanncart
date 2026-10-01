@@ -92,6 +92,8 @@ export interface PosSessionDeps {
 export const SYNC_HEARTBEAT_MS = 15000
 /** How often the capture state is checked (ms). */
 export const CAPTURE_HEALTH_POLL_MS = 2000
+/** Ceiling on the retry backoff while the webapp is unreachable, so a long outage still probes (ms). */
+export const RETRY_BACKOFF_CAP_MS = 30_000
 
 const nowSeconds = (): number => Date.now() / 1000
 
@@ -131,6 +133,15 @@ export class PosSessionOrchestrator {
   private lastHealthMs = 0
   private lastSessionPollMs = 0
   private error: string | null = null
+
+  /**
+   * Consecutive ticks whose webapp call failed, and whether the tick now running did. This is spec
+   * §5.3's "retry with backoff": a webapp that stays unreachable is retried on a doubling interval
+   * rather than at the poll cadence, so an outage does not become a request flood. A clean tick
+   * resets it to zero, so the cadence comes straight back once the webapp answers.
+   */
+  private consecutiveFailures = 0
+  private tickFailed = false
 
   /**
    * Whether the tick chain is scheduled or running. It is what keeps *one* chain: `start()` runs
@@ -200,6 +211,7 @@ export class PosSessionOrchestrator {
       this.looping = false
       return
     }
+    this.tickFailed = false
     try {
       await this.ensureCapture()
       if (this.bound) {
@@ -213,11 +225,25 @@ export class PosSessionOrchestrator {
         await this.pollSession()
       }
     } catch (error) {
+      this.tickFailed = true
       this.setError(error instanceof Error ? error.message : String(error))
     }
     if (this.stopped) return
-    const delay = this.bound ? this.cfg.logsPollMs : this.cfg.unboundPollMs
-    this.schedule(delay)
+    // A webapp failure is the only thing that backs the interval off — capture trouble is handled
+    // by `ensureCapture`'s own throttle, and a 409 is a session that is over rather than a retry.
+    this.consecutiveFailures = this.tickFailed ? this.consecutiveFailures + 1 : 0
+    this.schedule(this.retryDelay())
+  }
+
+  /**
+   * The delay before the next tick: the poll cadence normally, doubling per consecutive failure
+   * while the webapp is unreachable, capped so a long outage still probes rather than going silent.
+   */
+  private retryDelay(): number {
+    const cfg = this.cfg as PosConfig
+    const base = this.bound ? cfg.logsPollMs : cfg.unboundPollMs
+    if (this.consecutiveFailures === 0) return base
+    return Math.min(base * 2 ** this.consecutiveFailures, RETRY_BACKOFF_CAP_MS)
   }
 
   /** Make sure the camera is up; try exactly one auto-restart when it is not. */
@@ -263,6 +289,7 @@ export class PosSessionOrchestrator {
     try {
       remote = await this.deps.getRemoteSession(this.cfg.stationId)
     } catch (error) {
+      this.tickFailed = true
       this.setError(error instanceof Error ? error.message : String(error))
       return
     }
@@ -410,7 +437,9 @@ export class PosSessionOrchestrator {
         this.unbind()
         return
       }
-      // Webapp unreachable: keep the last state and surface the error; the loop retries.
+      // Webapp unreachable: keep the last state and surface the error. The tick is marked failed
+      // so the loop retries on the backoff rather than at the poll cadence.
+      this.tickFailed = true
       this.setError(error instanceof Error ? error.message : String(error))
     }
   }

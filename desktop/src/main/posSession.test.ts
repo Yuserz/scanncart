@@ -53,6 +53,8 @@ interface Harness {
     remote: RemoteSession | null
     startCaptureResult: { ok: boolean; status: number }
     syncQueue: Array<() => void>
+    /** When set, every sync rejects with it — for the persistent-outage backoff test. */
+    syncError: Error | null
   }
   calls: { logs: number[]; syncs: PosSyncPayload[]; starts: number; states: (PosState | null)[] }
   deps: PosSessionDeps
@@ -65,7 +67,8 @@ function harness(): Harness {
     logs: { sessionId: 1 as number | null, events: [] as SidecarLogEvent[] },
     remote: SESSION as RemoteSession | null,
     startCaptureResult: { ok: true, status: 200 },
-    syncQueue: [] as Array<() => void>
+    syncQueue: [] as Array<() => void>,
+    syncError: null as Error | null
   }
   const calls = {
     logs: [] as number[],
@@ -89,6 +92,7 @@ function harness(): Harness {
     getRemoteSession: async () => state.remote,
     postSync: async (payload) => {
       calls.syncs.push(payload)
+      if (state.syncError) throw state.syncError
       const behaviour = state.syncQueue.shift()
       if (behaviour) behaviour()
       return {
@@ -209,6 +213,29 @@ describe('PosSessionOrchestrator', () => {
     expect(h.calls.states.at(-1)?.phase).toBe('error')
 
     await vi.advanceTimersByTimeAsync(2_000)
+    expect(h.calls.states.at(-1)?.phase).toBe('bound')
+    expect(h.calls.states.at(-1)?.error).toBeNull()
+    orch.stop()
+  })
+
+  it('backs the retry off while the webapp stays unreachable, and resets on recovery', async () => {
+    const h = harness()
+    h.state.logs.events = [event({ enteredAt: BASE_S + 1 })]
+    h.state.syncError = new PosTransportError('webapp unreachable')
+    const orch = new PosSessionOrchestrator(h.deps)
+
+    await orch.start()
+    await vi.advanceTimersByTimeAsync(30_000)
+
+    // A fixed 1 s cadence would have made ~26 attempts in 30 s; the backoff makes far fewer.
+    const attempts = h.calls.syncs.length
+    expect(attempts).toBeGreaterThanOrEqual(3)
+    expect(attempts).toBeLessThan(8)
+    expect(h.calls.states.at(-1)?.phase).toBe('error')
+
+    // The webapp comes back: the next attempt succeeds and the cadence resets to the poll interval.
+    h.state.syncError = null
+    await vi.advanceTimersByTimeAsync(40_000)
     expect(h.calls.states.at(-1)?.phase).toBe('bound')
     expect(h.calls.states.at(-1)?.error).toBeNull()
     orch.stop()
