@@ -111,13 +111,21 @@ class LoggingStore:
             ).fetchone()
             return int(row["id"]) if row is not None else None
 
-    def query_events(self, session_id: int) -> list[EventRow]:
+    def query_events(self, session_id: int, since: float | None = None) -> list[EventRow]:
+        # `since` keeps the tracks still present at or after that moment - open ones, and ones that
+        # left at/after it - and drops the ones that were already gone. A capture left running all
+        # day accrues one row per track, and a poller that only cares about "from now on" (the POS
+        # integration) would otherwise re-read the whole day every second.
+        query = (
+            "SELECT track_id, class_name, confidence, max_conf, entered_at, left_at "
+            "FROM detection_events WHERE session_id = ?"
+        )
+        params: tuple = (session_id,)
+        if since is not None:
+            query += " AND (left_at IS NULL OR left_at >= ?)"
+            params = (session_id, since)
         with self._lock:
-            rows = self._conn.execute(
-                "SELECT track_id, class_name, confidence, max_conf, entered_at, left_at "
-                "FROM detection_events WHERE session_id = ? ORDER BY entered_at",
-                (session_id,),
-            ).fetchall()
+            rows = self._conn.execute(query + " ORDER BY entered_at", params).fetchall()
         return [
             EventRow(
                 track_id=r["track_id"],

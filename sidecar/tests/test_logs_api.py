@@ -62,3 +62,27 @@ def test_logs_report_current_session_events_after_a_run():
     assert ev["class_name"] == "banana"
     assert ev["max_conf"] == 0.9
     assert ev["left_at"] is not None   # capture/stop resolved the open track
+
+
+def test_logs_since_filters_out_tracks_that_left_before_it():
+    state = AppState(
+        settings=Settings(),
+        source_factory=lambda s: _StubSource(),
+        detector_factory=lambda s, d: _StubDetector(),
+        db_path=":memory:",
+    )
+    store = state.logging_store
+    sid = store.start_session("m", "cpu")
+    store.record_detection(sid, 1, "banana", 0.9, ts=1.0)
+    store.resolve_left(sid, 1, ts=2.0)
+    store.record_detection(sid, 2, "banana", 0.9, ts=3.0)
+    client = TestClient(build_app(lambda: state))
+
+    assert [e["track_id"] for e in client.get("/api/logs").json()["events"]] == [1, 2]
+    body = client.get("/api/logs", params={"since": 2.5}).json()
+    assert body["session_id"] == sid
+    assert [e["track_id"] for e in body["events"]] == [2]
+
+
+def test_logs_since_rejects_a_non_number():
+    assert _client().get("/api/logs", params={"since": "soon"}).status_code == 422

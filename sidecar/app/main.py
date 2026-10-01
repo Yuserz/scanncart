@@ -1313,7 +1313,11 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
         return DatasetStatusResponse(**asdict(await run_in_threadpool(load_dataset_status)))
 
     @app.get("/api/logs", response_model=LogsResponse)
-    async def logs():
+    async def logs(since: float | None = None):
+        # `since` (sidecar wall-clock seconds, the same clock as `entered_at`/`left_at`) drops tracks
+        # that had already left by then. Omitted, the whole current session is returned, which is
+        # what the renderer's reconnect recovery wants; the POS integration's poller passes its bind
+        # time so an all-day capture is not re-read in full every second.
         sid = state.logging_store.current_session_id()
         if sid is None:
             return LogsResponse(session_id=None, events=[])
@@ -1326,7 +1330,7 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
                 entered_at=r.entered_at,
                 left_at=r.left_at,
             )
-            for r in state.logging_store.query_events(sid)
+            for r in state.logging_store.query_events(sid, since=since)
         ]
         return LogsResponse(session_id=sid, events=events)
 
