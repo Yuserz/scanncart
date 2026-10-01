@@ -627,6 +627,87 @@ def test_the_resize_remedy_wording_guard_is_wired_to_its_end():
     assert_canary_fires(RESIZE_REMEDY_CONTRACT)
 
 
+#: What the remote backends cost per call, and where a maintainer can read it. This contract's
+#: owner is not code but a measurement - docs/DETECTOR_BACKENDS.md §6's live timings (~90 ms warm
+#: against a local server, 600-3250 ms against the serverless endpoint) - and the figures are
+#: copied by hand into the operator-facing backend hints, the comment that justifies the
+#: per-backend track-expiry floors, the README, and the tests that reproduce the expiry bug. No
+#: re-derivation is possible, so multi-copy agreement is the only guard there can be, and a
+#: re-measurement that updates one site while the floors stay justified by the old numbers is
+#: exactly the drift this pins. Written table-only against the engine, like the contract above.
+MEASURED_LATENCY_CONTRACT = WordingContract(
+    name="measured backend latency",
+    owner="docs/DETECTOR_BACKENDS.md §6 (the measurement itself - no code owns it)",
+    claim="a surface quoting the measured backend latencies no longer agrees with the record.",
+    facts=(
+        "The fact is the measurement in `docs/DETECTOR_BACKENDS.md` §6 - ~90 ms warm against a "
+        "local server, 600-3250 ms against the serverless endpoint - which is the evidence "
+        "behind `MIN_TRACK_EXPIRY_S_BY_BACKEND` and the numbers the operator is shown."
+    ),
+    surfaces=(
+        (
+            "docs/DETECTOR_BACKENDS.md",
+            (
+                "600 ms, and 3250 ms",
+                "94, 90 ms warm",
+                "90 ms warm (4.4 s cold)",
+                "600–3250 ms",
+                "far above the 150–300 ms this spec originally estimated",
+            ),
+        ),
+        (
+            "sidecar/README.md",
+            ("Measured ~90 ms warm on the same PC",),
+        ),
+        (
+            "desktop/src/renderer/src/lib/settingsFields.ts",
+            (
+                "measured ~90 ms warm",
+                "measured 600-3250 ms per call",
+                # The floor-justification comment, not the hint strings - its wording is
+                # distinct enough to pin apart from `measured 600-3250 ms per call`.
+                "against a local inference server, 600-3250 ms against the cloud",
+            ),
+        ),
+        (
+            "sidecar/app/settings_store.py",
+            (
+                "measured 600-3250 ms against the serverless endpoint",
+                "~90 ms warm against a local inference server",
+            ),
+        ),
+        (
+            "sidecar/tests/test_detector_backends.py",
+            (
+                "a 3250 ms round trip expired a stationary",
+                "the cloud took 600-3250 ms",
+            ),
+        ),
+    ),
+    canary_fixture=(
+        "// the backend hint still said measured 600-3250 /* ms per call */ while the floors "
+        "had been raised on newer numbers"
+    ),
+    canary_fragments=("measured 600-3250 ms per call",),
+)
+
+
+def test_the_measured_latency_wording_survives_on_every_surface():
+    """Every surface quoting the measured backend round trips still quotes the record.
+
+    Written table-only against the engine, like the contract above. A re-measurement is free to
+    move every number - the same-edit rule means the record and every quoting surface move
+    together, which is the point: the floors stay justified by figures the app still claims.
+    """
+    assert_fragments_present(MEASURED_LATENCY_CONTRACT)
+
+
+def test_the_measured_latency_wording_guard_is_wired_to_its_end():
+    """The guard's own canary: a fixture carrying its marker inside the fragment's span, matched
+    exactly, or the presence test above could pass while checking nothing."""
+    assert_canary_fires(MEASURED_LATENCY_CONTRACT)
+
+
 def test_the_rest_response_models_mirror_the_sidecar():
     """The remaining response models, one pair each.
 
