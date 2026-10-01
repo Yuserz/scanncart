@@ -16,6 +16,13 @@ export interface PosState {
   syncedItemCount: number
   lastSyncAgeS: number | null
   error: string | null
+  /**
+   * The deadline of the standing retry backoff, or null when the tick cadence is healthy. A
+   * deadline rather than seconds-remaining, so a push is a transition (backoff began, backoff
+   * ended, next attempt moved) rather than a message every second; the renderer counts it down
+   * locally. It is set only at the tick tail, only while `consecutiveFailures` stands above zero.
+   */
+  retryAtMs: number | null
 }
 
 /** A sidecar `/api/logs` event, camel-cased at the boundary. */
@@ -133,6 +140,12 @@ export class PosSessionOrchestrator {
   private lastHealthMs = 0
   private lastSessionPollMs = 0
   private error: string | null = null
+  /**
+   * Who set `error`. A successful webapp call clears only a webapp's error: the session poll runs
+   * every tick whether or not capture is up, and a webapp that started answering again says
+   * nothing about a camera that is still down.
+   */
+  private errorSource: 'webapp' | 'capture' | 'sidecar' | null = null
 
   /**
    * Consecutive ticks whose webapp call failed, and whether the tick now running did. This is spec
@@ -142,6 +155,12 @@ export class PosSessionOrchestrator {
    */
   private consecutiveFailures = 0
   private tickFailed = false
+  /**
+   * When the next tick is scheduled, while a backoff is standing. Kept beside the timeout so the
+   * emitted state can carry the deadline; cleared as soon as a tick succeeds, so it never claims a
+   * retry that is not coming.
+   */
+  private retryAtMs: number | null = null
 
   /**
    * Whether the tick chain is scheduled or running. It is what keeps *one* chain: `start()` runs
@@ -185,6 +204,9 @@ export class PosSessionOrchestrator {
   /** Re-read configuration after the Admin Panel saves it, without dropping the current binding. */
   async refreshConfig(): Promise<void> {
     this.cfg = await this.deps.getConfig()
+    // A fresh configuration is not a failure; a deadline a previous configuration scheduled would
+    // otherwise be reported under the new one's name.
+    this.retryAtMs = null
     this.emit()
     // Turning the feature on at runtime starts the loop here. Nothing else would: the app calls
     // `start()` exactly once, when the sidecar's port arrives, so a station configured afterwards
@@ -226,13 +248,25 @@ export class PosSessionOrchestrator {
       }
     } catch (error) {
       this.tickFailed = true
+      // The catch is reached only by failures this method owns directly — the health probe, the
+      // logs fetch, a capture start that threw. A webapp failure sets its own source inside
+      // `pollSession`/`postSync` and never gets here.
+      this.errorSource = 'sidecar'
       this.setError(error instanceof Error ? error.message : String(error))
     }
     if (this.stopped) return
-    // A webapp failure is the only thing that backs the interval off — capture trouble is handled
-    // by `ensureCapture`'s own throttle, and a 409 is a session that is over rather than a retry.
+    // Anything that fails the tick backs the interval off — the webapp unreachable, or the sidecar
+    // not answering (a `getHealth` throw). What does *not* back off is the capture trouble
+    // `ensureCapture` handles without throwing (a 409 calibration, its one failed restart), and a
+    // 409 from the webapp is a session that is over rather than a retry.
+    const wasBackingOff = this.retryAtMs !== null
     this.consecutiveFailures = this.tickFailed ? this.consecutiveFailures + 1 : 0
-    this.schedule(this.retryDelay())
+    const delay = this.retryDelay()
+    this.retryAtMs = this.consecutiveFailures > 0 ? Date.now() + delay : null
+    // Emits are transitions, and this one is: the backoff began, or it ended (possibly having
+    // moved when a still-failing tick pushes the deadline out again).
+    if (this.retryAtMs !== null || wasBackingOff) this.emit()
+    this.schedule(delay)
   }
 
   /**
@@ -262,6 +296,7 @@ export class PosSessionOrchestrator {
     // Any other state while POS is enabled means capture is down (a pipeline error tears down to idle).
     this.captureRunning = false
     if (this.restartTried) {
+      this.errorSource = 'capture'
       this.setError('capture is down — corrections happen on the tablet')
       return
     }
@@ -277,8 +312,10 @@ export class PosSessionOrchestrator {
       this.captureRunningSince = nowSeconds()
       this.captureRunning = true
       this.error = null
+      this.errorSource = null
       this.emit()
     } else {
+      this.errorSource = 'capture'
       this.setError('capture failed to restart')
     }
   }
@@ -290,18 +327,24 @@ export class PosSessionOrchestrator {
       remote = await this.deps.getRemoteSession(this.cfg.stationId)
     } catch (error) {
       this.tickFailed = true
+      this.errorSource = 'webapp'
       this.setError(error instanceof Error ? error.message : String(error))
       return
     }
 
     if (!remote || remote.cartStatus === 'paid') {
       if (this.bound) this.unbind()
+      this.clearTransportError()
       return
     }
 
     if (!this.bound || remote.sessionRef !== this.sessionRef) {
       this.bind(remote)
+      return
     }
+
+    // Bound to the same session and healthy.
+    this.clearTransportError()
   }
 
   private bind(remote: RemoteSession): void {
@@ -317,6 +360,7 @@ export class PosSessionOrchestrator {
     this.lastSyncAtMs = Date.now()
     this.syncedItemCount = 0
     this.error = null
+    this.errorSource = null
     this.emit()
   }
 
@@ -330,6 +374,20 @@ export class PosSessionOrchestrator {
     this.logsSessionId = null
     this.syncedItemCount = 0
     this.emit()
+  }
+
+  /**
+   * The session poll answered, which proves the webapp *and* the sidecar are reachable — the tick
+   * runs its health probe first, and a throw there never reaches the poll. So an error recorded by
+   * either transport is over; a capture error is not, because a webapp that started answering says
+   * nothing about a camera that is still down.
+   */
+  private clearTransportError(): void {
+    if (this.error && this.errorSource !== 'capture') {
+      this.error = null
+      this.errorSource = null
+      this.emit()
+    }
   }
 
   private isWarmingUp(now: number): boolean {
@@ -430,6 +488,7 @@ export class PosSessionOrchestrator {
       this.syncedItemCount =
         response.cart_totals?.item_count ?? items.reduce((sum, item) => sum + item.quantity, 0)
       this.error = null
+      this.errorSource = null
       this.emit()
     } catch (error) {
       if (error instanceof PosConflictError) {
@@ -440,6 +499,7 @@ export class PosSessionOrchestrator {
       // Webapp unreachable: keep the last state and surface the error. The tick is marked failed
       // so the loop retries on the backoff rather than at the poll cadence.
       this.tickFailed = true
+      this.errorSource = 'webapp'
       this.setError(error instanceof Error ? error.message : String(error))
     }
   }
@@ -461,7 +521,8 @@ export class PosSessionOrchestrator {
       cartCode: this.cartCode,
       syncedItemCount: this.syncedItemCount,
       lastSyncAgeS: this.lastSyncAtMs ? (Date.now() - this.lastSyncAtMs) / 1000 : null,
-      error: this.error
+      error: this.error,
+      retryAtMs: this.retryAtMs
     })
   }
 

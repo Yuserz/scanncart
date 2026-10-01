@@ -288,6 +288,16 @@
   line-height: 1.35;
 }
 
+/* The backoff's countdown, under the error it explains. Dimmed rather than red — the failure is
+   the line above it; this one is the recovery schedule, which is the reassurance. */
+.pos-retry {
+  margin: 4px 0 0;
+  color: var(--dim);
+  font-size: 11.5px;
+  line-height: 1.35;
+  font-family: var(--font-mono);
+}
+
 /* A fixed 2×2, not `repeat(auto-fit, minmax(90px, 1fr))`. The set of tiles is a constant — the
    four numbers a frame carries — and `auto-fit` is what let a per-frame tile re-wrap the strip,
    resize the rail and drag the item log with it. A fixed track also means a value wider than its

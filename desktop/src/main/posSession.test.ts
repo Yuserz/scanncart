@@ -5,6 +5,7 @@ import {
   PosConflictError,
   PosSessionOrchestrator,
   PosTransportError,
+  RETRY_BACKOFF_CAP_MS,
   SYNC_HEARTBEAT_MS,
   type PosSessionDeps,
   type PosState,
@@ -25,6 +26,29 @@ const CFG = {
   commitDwellS: 3,
   removeSettleS: 10,
   minCommitConf: 0.6
+}
+
+/**
+ * The states the loop emits must be total: every consumer of the push (the Live panel's retry
+ * countdown among them) reads the fields it needs off the object rather than checking for them, so
+ * a field forgotten here would arrive as `undefined` at the renderer instead of failing here.
+ */
+function assertPosStateShape(state: PosState | null): void {
+  if (state === null) return
+  // Present and defined — `null` is a legitimate value for several of these (no cart, no error,
+  // no standing retry), and it is *absence* the push must never carry.
+  for (const key of [
+    'phase',
+    'cartCode',
+    'syncedItemCount',
+    'lastSyncAgeS',
+    'error',
+    'retryAtMs'
+  ]) {
+    expect(state).toHaveProperty(key)
+    expect((state as unknown as Record<string, unknown>)[key]).not.toBeUndefined()
+  }
+  expect(state.retryAtMs === null || typeof state.retryAtMs === 'number').toBe(true)
 }
 
 const SESSION: RemoteSession = {
@@ -55,6 +79,8 @@ interface Harness {
     syncQueue: Array<() => void>
     /** When set, every sync rejects with it — for the persistent-outage backoff test. */
     syncError: Error | null
+    /** When set, every session poll rejects with it — the unbound failure path. */
+    sessionError: Error | null
   }
   calls: { logs: number[]; syncs: PosSyncPayload[]; starts: number; states: (PosState | null)[] }
   deps: PosSessionDeps
@@ -68,7 +94,8 @@ function harness(): Harness {
     remote: SESSION as RemoteSession | null,
     startCaptureResult: { ok: true, status: 200 },
     syncQueue: [] as Array<() => void>,
-    syncError: null as Error | null
+    syncError: null as Error | null,
+    sessionError: null as Error | null
   }
   const calls = {
     logs: [] as number[],
@@ -89,7 +116,10 @@ function harness(): Harness {
       calls.logs.push(since)
       return { sessionId: state.logs.sessionId, events: state.logs.events }
     },
-    getRemoteSession: async () => state.remote,
+    getRemoteSession: async () => {
+      if (state.sessionError) throw state.sessionError
+      return state.remote
+    },
     postSync: async (payload) => {
       calls.syncs.push(payload)
       if (state.syncError) throw state.syncError
@@ -102,7 +132,10 @@ function harness(): Harness {
         }
       }
     },
-    emit: (next) => calls.states.push(next)
+    emit: (next) => {
+      assertPosStateShape(next)
+      calls.states.push(next)
+    }
   }
 
   return { state, calls, deps }
@@ -238,6 +271,65 @@ describe('PosSessionOrchestrator', () => {
     await vi.advanceTimersByTimeAsync(40_000)
     expect(h.calls.states.at(-1)?.phase).toBe('bound')
     expect(h.calls.states.at(-1)?.error).toBeNull()
+    orch.stop()
+  })
+
+  it('carries the retry deadline in the state it emits, and clears it on recovery', async () => {
+    const h = harness()
+    h.state.logs.events = [event({ enteredAt: BASE_S + 1 })]
+    h.state.syncError = new PosTransportError('webapp unreachable')
+    const orch = new PosSessionOrchestrator(h.deps)
+
+    await orch.start()
+    await vi.advanceTimersByTimeAsync(2_000)
+
+    // The first sync attempt lands once the track has committed (enteredAt + commitDwellS).
+    await orch.start()
+    await vi.advanceTimersByTimeAsync(4_500)
+
+    const errored = h.calls.states.filter((s) => s?.phase === 'error')
+    expect(errored.length).toBeGreaterThanOrEqual(1)
+    // The deadline is a fact only the loop knows: the delay it scheduled for the next attempt.
+    expect(errored.at(-1)?.retryAtMs).toBeGreaterThan(Date.now())
+    const firstDeadline = errored.at(-1)!.retryAtMs as number
+    expect(firstDeadline).toBeLessThanOrEqual(Date.now() + RETRY_BACKOFF_CAP_MS)
+
+    // A still-failing tick pushes the deadline out; the emit between failures is what a countdown
+    // on an already-open window reads, since nothing else re-renders the line.
+    h.calls.states.length = 0
+    await vi.advanceTimersByTimeAsync(10_000)
+    const moved = h.calls.states.filter((s) => s?.retryAtMs != null)
+    expect(moved.length).toBeGreaterThanOrEqual(1)
+    expect(moved.at(-1)!.retryAtMs).toBeGreaterThan(firstDeadline)
+
+    // Recovery: the cadence comes back, and the state stops claiming a retry is scheduled.
+    h.state.syncError = null
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(h.calls.states.at(-1)?.retryAtMs).toBeNull()
+    expect(h.calls.states.at(-1)?.phase).toBe('bound')
+    expect(h.calls.states.at(-1)?.error).toBeNull()
+    orch.stop()
+  })
+
+  it('emits the cleared deadline even when the success emits nothing new', async () => {
+    // The recovery emit must reach the panel on a window that is already open: without it, the
+    // 'retrying in Ns' line would outlive the failure it belongs to. This walks the *unbound*
+    // failure path (the session poll, whose success emits nothing), so the tick tail is the only
+    // place the cleared deadline can come from.
+    const h = harness()
+    h.state.remote = null
+    h.state.sessionError = new PosTransportError('webapp unreachable')
+    const orch = new PosSessionOrchestrator(h.deps)
+
+    await orch.start()
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(h.calls.states.at(-1)?.retryAtMs).not.toBeNull()
+    expect(h.calls.states.at(-1)?.phase).toBe('error')
+
+    h.state.sessionError = null
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(h.calls.states.at(-1)?.retryAtMs).toBeNull()
+    expect(h.calls.states.at(-1)?.phase).toBe('unbound')
     orch.stop()
   })
 

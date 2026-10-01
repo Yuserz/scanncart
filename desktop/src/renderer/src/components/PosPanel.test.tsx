@@ -8,7 +8,8 @@ const BOUND: PosState = {
   cartCode: 'abcdef1234567890',
   syncedItemCount: 3,
   lastSyncAgeS: 12,
-  error: null
+  error: null,
+  retryAtMs: null
 }
 
 type Listener = (state: PosState) => void
@@ -93,6 +94,51 @@ describe('PosPanel', () => {
       expect(screen.getByTestId('pos-error')).toHaveTextContent('webapp unreachable')
     )
     expect(screen.getByTestId('pos-phase')).toHaveTextContent('error')
+  })
+
+  it('counts the retry down while the backoff stands, and drops the line when it clears', async () => {
+    vi.useFakeTimers()
+    try {
+      const bridge = stubBridge({
+        ...BOUND,
+        phase: 'error',
+        error: 'webapp unreachable',
+        retryAtMs: Date.now() + 8_000
+      })
+      render(<PosPanel />)
+
+      // The initial read resolves inside an act, so the first render carries the pushed state.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      expect(screen.getByTestId('pos-retry')).toHaveTextContent('retrying in 8s')
+
+      // The countdown ticks locally, so the line moves without a new push from the main process.
+      // Each advance is act-wrapped: the interval's setState flushes asynchronously, and without
+      // act the assertion can read the render that has not landed yet.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000)
+      })
+      expect(screen.getByTestId('pos-retry')).toHaveTextContent('retrying in 7s')
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(7_000)
+      })
+      expect(screen.getByTestId('pos-retry')).toHaveTextContent('retrying…')
+
+      // The next state stops carrying the deadline: the line is gone, not frozen at zero.
+      act(() => bridge.push({ ...BOUND, phase: 'bound', error: null, retryAtMs: null }))
+      expect(screen.queryByTestId('pos-retry')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('shows no retry line while the cadence is healthy', async () => {
+    stubBridge({ ...BOUND, retryAtMs: null })
+    render(<PosPanel />)
+
+    await waitFor(() => expect(screen.getByTestId('pos-phase')).toHaveTextContent('syncing'))
+    expect(screen.queryByTestId('pos-retry')).toBeNull()
   })
 
   it('renders nothing when the bridge has no POS methods', async () => {

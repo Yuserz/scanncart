@@ -16,7 +16,8 @@ Two machines, one hop:
 | pushcart-web host | Holds the cart, the order and the stock. Reachable from the desktop over the LAN or the internet. |
 
 The spec this implements is [POS_INTEGRATION_SPEC.md](POS_INTEGRATION_SPEC.md) — §4 is the
-pushcart-web half, §5 this repo's.
+pushcart-web half, §5 this repo's. To bring the two halves up together for the first time, or before
+the shop goes live, the ordered run is [POS_SMOKE_TEST.md](./POS_SMOKE_TEST.md).
 
 ## 1. What runs where
 
@@ -134,8 +135,10 @@ manual rows, which the camera never touches).
 | last sync | How long ago the last accepted snapshot was posted |
 
 A sync failure appears under those rows as red text (the same condition the banner above reports,
-kept here because this panel is where its detail still is). Nothing on the panel controls anything:
-the tablet's *Start* is what binds the desktop.
+kept here because this panel is where its detail still is). While the desktop is backing off from an
+unreachable webapp, that error is followed by `retrying in Ns`, counting down to the next attempt;
+the line goes away when the attempt runs and the state stops claiming a retry. Nothing on the panel
+controls anything: the tablet's *Start* is what binds the desktop.
 
 **Admin Panel** — the settings in §3.
 

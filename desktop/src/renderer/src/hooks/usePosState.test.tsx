@@ -8,7 +8,8 @@ const STATE: PosState = {
   cartCode: 'CODE-1',
   syncedItemCount: 2,
   lastSyncAgeS: 1,
-  error: null
+  error: null,
+  retryAtMs: null
 }
 
 function stubBridge(opts: {
