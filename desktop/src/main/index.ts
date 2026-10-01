@@ -5,6 +5,8 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { SidecarSupervisor } from './sidecar'
 import { HEALTH_TIMEOUT_MS, SidecarHealthMonitor, type SidecarHealth } from './sidecarHealth'
+import { PosController } from './pos'
+import type { PosConfig } from './posConfig'
 import { handleSecondInstance } from './singleInstance'
 import { tabletWindowBounds } from './windowSize'
 
@@ -32,6 +34,9 @@ let mainWindow: BrowserWindow | null = null
 // noise on every healthy start.
 let sidecarHealth: SidecarHealth = 'starting'
 let healthMonitor: SidecarHealthMonitor | null = null
+// The POS integration: owns its own loop and config, started once the sidecar reports its port.
+let posController: PosController | null = null
+let posStarted = false
 
 // Whether the sidecar on `port` answers its own health route. A refused connection rejects
 // immediately, which is the case this exists for (a process that is alive with nothing listening),
@@ -77,6 +82,12 @@ function startSidecar(): void {
       sidecarPort = port
       console.log(`[sidecar] ready on port ${port}`)
       healthMonitor?.start(port)
+      // Start the POS loop once the sidecar is reachable; a restart keeps the same controller,
+      // whose port is read live, so binding survives without re-binding.
+      if (!posStarted) {
+        posStarted = true
+        void posController?.start()
+      }
     },
     onExit: (code) => {
       console.error(`[sidecar] exited unexpectedly (code ${code})`)
@@ -184,6 +195,20 @@ if (!app.requestSingleInstanceLock()) {
     // ...and for whether it is answering, which the push above keeps current from then on.
     ipcMain.handle('sidecar:health', () => sidecarHealth)
 
+    // The POS integration's own surface. It lives in the main process because neither the
+    // pushcart-web host nor the sidecar is reachable from a sandboxed renderer.
+    posController = new PosController(() => sidecarPort, app.getPath('userData'))
+    ipcMain.handle('pos:get-state', () => posController?.getState() ?? null)
+    ipcMain.handle('pos:get-config', () => posController?.getConfig() ?? null)
+    ipcMain.handle('pos:save-config', (_event, patch) => {
+      if (!posController) throw new Error('POS controller is not ready')
+      return posController.saveConfig(patch as Partial<PosConfig>)
+    })
+    ipcMain.handle('pos:test-connection', () => {
+      if (!posController) throw new Error('POS controller is not ready')
+      return posController.testConnection()
+    })
+
     startSidecar()
     createWindow()
 
@@ -206,6 +231,8 @@ app.on('window-all-closed', () => {
 
 // Ensure the sidecar child is terminated with the app.
 app.on('before-quit', () => {
+  posController?.stop()
+  posController = null
   healthMonitor?.stop()
   healthMonitor = null
   supervisor?.stop()

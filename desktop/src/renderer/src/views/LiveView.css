@@ -242,6 +242,52 @@
   margin-bottom: 8px;
 }
 
+/* The POS readout: one row per fact, drawn like the standing readouts above it, because both are
+   text that lasts a session rather than numbers that change every frame. The card is absent
+   entirely while the integration is off (`usePosState` reports `null` and the panel renders
+   nothing) — which is most windows, and the rail is a fixed height budget, so a readout of a
+   feature nobody turned on would spend some of it on nothing. */
+.pos-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.pos-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.pos-row small {
+  color: var(--dim);
+  font-size: 11px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pos-row b {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 600;
+  text-align: right;
+}
+
+/* The one line that is a failure rather than a reading. Red because it is the same condition the
+   banner above carries (the webapp unreachable mid-session) and the panel is where its detail
+   lives once the banner is dismissed. */
+.pos-error {
+  margin: 8px 0 0;
+  color: #fca5a5;
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
 /* A fixed 2×2, not `repeat(auto-fit, minmax(90px, 1fr))`. The set of tiles is a constant — the
    four numbers a frame carries — and `auto-fit` is what let a per-frame tile re-wrap the strip,
    resize the rail and drag the item log with it. A fixed track also means a value wider than its

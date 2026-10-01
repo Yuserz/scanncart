@@ -961,10 +961,17 @@ def test_the_spawn_handshake_mirrors_the_sidecar():
     # The channels are read as a *set*, not as the first match. `re.search` here is what a second
     # channel would slip past, and a channel served by nothing that calls it is the same defect as
     # a renamed one from the renderer's side - it just fails without a name to grep for.
+    #
+    # The call is matched as a *name* followed by a closing paren or a comma rather than as
+    # `invoke('<channel>')` exactly, because a channel may carry a payload - `pos:save-config` hands
+    # over the edited patch - and reading the empty call as the only shape would have made "this
+    # channel takes no argument" a rule of the process boundary that it never was. The name is still
+    # required verbatim, which is the defect this half exists for: a renamed or newly added channel
+    # that nothing calls.
     channels = re.findall(r"ipcMain\.handle\('([^']+)'", main)
     assert channels, "the main process no longer serves an IPC channel"
     for channel in channels:
-        assert f"invoke('{channel}')" in preload, (
+        assert re.search(rf"invoke\('{re.escape(channel)}'[,)]", preload), (
             f"the main process serves {channel!r} and the preload does not call it"
         )
 
