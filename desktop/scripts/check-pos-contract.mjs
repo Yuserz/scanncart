@@ -13,8 +13,17 @@
 // and the stand-in against — `src/main/posContract.test.ts`, which runs on a bare checkout — and
 // running this is what keeps the copy from going stale.
 //
+// There are two copies of that contract, not one: pushcart-web derives and records the same surface
+// from its own routes (by `scripts/pos-contract.mjs` there), and each copy is checked against its own
+// source. A one-sided `--write` — this repo re-recording after a deliberate change without
+// pushcart-web re-recording its own — leaves *both* of those green while the two repos describe
+// different routes, which is the one failure neither repo's own guard can see. So the two records are
+// compared as well, here, because this is the only job that has both trees in hand.
+//
 // It needs `../pushcart-web`, which this repo does not carry, so it is not in `make test`, and it
-// fails loudly (exit 2) when the checkout is absent rather than skipping. The extraction is read as
+// fails loudly (exit 2) when the checkout — or the record pushcart-web keeps in it — is absent rather
+// than skipping: a comparison against a copy that is not there is the pass that would read as "the
+// two repos agree". The extraction is read as
 // text rather than parsed: these files import Supabase and Next's request types, and a regex over
 // four small files is the price of not dragging a TypeScript build of another app into this one. A
 // shape this does not recognise is an error naming the file, never a silent empty contract.
@@ -202,6 +211,42 @@ if (WRITE) {
     process.exit(1)
   }
 
+  // This repo's copy is a fresh reading of pushcart-web's source, so it says nothing about the copy
+  // pushcart-web keeps: a change recorded on one side only leaves both guards green on their own
+  // terms. Comparing the two records is what closes that, and it can only happen here.
+  //
+  // `note` is deliberately not compared. It names the script that generated the file, so it differs
+  // between the two by design and describes provenance rather than the surface.
+  const SIBLING_RECORD = join(pushcart, 'scripts', 'pos-contract.json')
+  const COMPARED = ['auth_header', 'outcomes', 'routes', 'statuses']
+
+  if (!existsSync(SIBLING_RECORD)) {
+    console.error(`check-pos-contract: pushcart-web records no contract at ${SIBLING_RECORD}`)
+    console.error('check-pos-contract: it is the other half of this comparison, so nothing was')
+    console.error('check-pos-contract: compared. Point at a checkout that carries one.')
+    process.exit(2)
+  }
+
+  const sibling = JSON.parse(readFileSync(SIBLING_RECORD, 'utf8'))
+  const disagree = COMPARED.filter((key) => render(recorded[key]) !== render(sibling[key]))
+
+  if (disagree.length > 0) {
+    console.error('check-pos-contract: this repo and pushcart-web recorded different contracts')
+    for (const key of disagree) {
+      console.error(`  ${key}:`)
+      console.error(`    pushcart-web:  ${JSON.stringify(canonical(sibling[key]))}`)
+      console.error(`    recorded here: ${JSON.stringify(canonical(recorded[key]))}`)
+    }
+    console.error(
+      'check-pos-contract: each repo records its own copy, so one of them has not been re-recorded.'
+    )
+    console.error(
+      'check-pos-contract: a deliberate change needs a --write on both sides; nothing else moves'
+    )
+    console.error('check-pos-contract: a record nobody regenerated.')
+    process.exit(1)
+  }
+
   const routeCount = Object.keys(derived.routes).length
   const statusCount = Object.keys(derived.statuses).length
   console.log(`check-pos-contract: ${CONTRACT} matches ${pushcart}`)
@@ -209,4 +254,5 @@ if (WRITE) {
     `check-pos-contract: ${routeCount} route(s), ${statusCount} status(es), ` +
       `auth header "${derived.auth_header}"`
   )
+  console.log(`check-pos-contract: the two recorded contracts agree on ${COMPARED.length} key(s)`)
 }

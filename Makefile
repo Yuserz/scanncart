@@ -55,7 +55,7 @@ help:
 	@echo "  accept-v2            measure v2 against v1 on the merged set's test split (local data, not CI)"
 	@echo "  replay-scenarios     replay the recorded counter corpus into the desktop fixtures (local data, not CI)"
 	@echo "  verify-pos-routes    check the POS stand-in against a real pushcart-web (needs a running server, not CI)"
-	@echo "  verify-pos-contract  re-read pushcart-web's POS routes and fail if the recorded contract is stale (needs the sibling checkout; CI checks it out)"
+	@echo "  verify-pos-contract  fail if pushcart-web's POS routes moved out from under the recorded contract, or the two repos' copies disagree (needs the sibling checkout; CI checks it out)"
 	@echo "  build                typecheck + build the desktop app"
 	@echo "  lint                 lint the desktop app"
 	@echo "  format               format the desktop app"
@@ -308,11 +308,21 @@ verify-pos-routes:
 # recorded copy (`src/main/posContract.json`) has gone stale, and `src/main/posContract.test.ts`
 # checks the modules against that copy and runs in `make test` on a bare checkout. This target needs
 # `../pushcart-web` and exits 2 when it is absent rather than skipping, which is why it is not in
-# `test`; `.github/workflows/pos-contract.yml` supplies the checkout in its own job and runs it there
-# on any PR, on a push to `main` and nightly - the drift starts in the *other* repo, so a schedule in
-# `ci.yml` would have made every job in it run nightly for a reason only this one has. That job also
-# proves the branch it watches still exists before checking it out, so a renamed branch fails there
-# naming the ref rather than quietly checking a contract against the default branch.
+# `test`.
+#
+# There are two copies of the contract, though, one per repo: pushcart-web derives and records the same
+# surface from its own routes, and each copy is checked against its own source. A change re-recorded
+# on one side only therefore satisfies both of those guards while the two repos describe different
+# routes - the failure neither repo can see on its own, since it changes neither source. So this also
+# compares the two records key by key (`auth_header`, `outcomes`, `routes`, `statuses`), and the
+# comparison has to happen where both trees are in hand rather than in a file both repos trust: the
+# two derivations are deliberately independent, and each record carries a note naming the script that
+# wrote it, which differs by design. `.github/workflows/pos-contract.yml` is that place - it supplies the checkout
+# in its own job and runs this target there on any PR, on a push to `main` and nightly, because the
+# drift starts in the *other* repo, so a schedule in `ci.yml` would have made every job in it run
+# nightly for a reason only this one has. That job also proves the branch it watches still exists
+# before checking it out, so a renamed branch fails there naming the ref rather than quietly checking a
+# contract against the default branch.
 # A deliberate pushcart-web change is one write away: POS_CONTRACT_ARGS=--write.
 POS_CONTRACT_ARGS ?=
 

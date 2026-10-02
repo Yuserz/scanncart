@@ -110,3 +110,34 @@ describe("the modules still encode pushcart-web's POS contract", () => {
     expect(statuses.conflictRequestResponse).toBe(409)
   })
 })
+
+// The third claim, and the only one about the *other* copy of this contract: pushcart-web derives
+// and records the same surface from its own routes, and `scripts/check-pos-contract.mjs` compares
+// the two records so a change recorded on one side only cannot leave both repos green while they
+// describe different routes. That comparison needs the sibling checkout, so it cannot run here — but
+// its *shape* can be pinned, and that is where it could quietly narrow: a fifth key added to
+// `posContract.json` that the comparison does not list is a fact the two repos may disagree about
+// unobserved.
+const script = readFileSync(join(here, '..', '..', 'scripts', 'check-pos-contract.mjs'), 'utf8')
+
+describe('the two recorded copies of the contract are compared key by key', () => {
+  it('compares every key of the record except the provenance note, and no others', () => {
+    const listed = /const COMPARED = \[([^\]]*)\]/.exec(script)?.[1] ?? ''
+    const compared = listed
+      .split(',')
+      .map((part) => part.trim().replace(/^'|'$/g, ''))
+      .filter(Boolean)
+
+    const keys = Object.keys(contract)
+    expect(keys).toContain('note')
+    expect([...compared].sort()).toEqual([...keys.filter((key) => key !== 'note')].sort())
+    expect([...compared].sort()).toEqual(['auth_header', 'outcomes', 'routes', 'statuses'])
+  })
+
+  it('reads that copy from the checkout it already has, and says why `note` is left out', () => {
+    expect(script).toContain("join(pushcart, 'scripts', 'pos-contract.json')")
+    expect(script, 'the exclusion needs its reason beside it, not just the omission').toContain(
+      '`note` is deliberately not compared'
+    )
+  })
+})
