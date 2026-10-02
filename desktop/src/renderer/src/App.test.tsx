@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import App from './App'
 
@@ -15,7 +15,10 @@ class NoopWS {
 }
 
 describe('App', () => {
-  beforeEach(() => {
+  // Stubbed for the whole file rather than per test. Torn down in an `afterEach`, the bridge could
+  // be gone by the time React's passive mount effect ran — which is a race, not a guarantee, and it
+  // failed about once in ten loaded runs with `window.api` undefined inside `useSidecarHealth`.
+  beforeAll(() => {
     vi.stubGlobal('WebSocket', NoopWS as never)
     // The preload bridge. `AppShell` reads the sidecar's health through it as soon as it mounts,
     // so a test that gets as far as a port needs one — the same reason `WebSocket` is stubbed here.
@@ -25,7 +28,7 @@ describe('App', () => {
       onSidecarHealth: () => () => {}
     })
   })
-  afterEach(() => {
+  afterAll(() => {
     vi.unstubAllGlobals()
   })
 
