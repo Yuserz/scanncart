@@ -9,8 +9,9 @@
 ## from within WSL or a Git Bash shell that has `make` on PATH.
 ##
 ## `test` is CI's target and stays fake-only, so it needs no data. `verify-clamp`,
-## `verify-unsure`, `annotate`, `human-pass`, `doctor`, `accept-v2`, `replay-scenarios`
-## and `verify-pos-routes` are the ones that do - see the notes above them.
+## `verify-unsure`, `annotate`, `human-pass`, `doctor`, `accept-v2`, `replay-scenarios`,
+## `verify-pos-routes` and `verify-pos-contract` are the ones that do - see the notes
+## above them.
 ## `verify-live-layout` needs no data either but does need a display, which is the other
 ## thing CI runs it in its own job for.
 ##
@@ -27,7 +28,7 @@ endif
 .DEFAULT_GOAL := help
 
 .PHONY: help install dev test docs-check docs-sync docs-sync-check build lint format typecheck clean \
-        verify-clamp verify-unsure verify-live-layout verify-pos-routes \
+        verify-clamp verify-unsure verify-live-layout verify-pos-routes verify-pos-contract \
         doctor annotate human-pass accept-v2 replay-scenarios \
         sidecar-setup sidecar-run sidecar-test \
         desktop-install desktop-dev desktop-start desktop-test desktop-test-watch \
@@ -53,6 +54,7 @@ help:
 	@echo "  accept-v2            measure v2 against v1 on the merged set's test split (local data, not CI)"
 	@echo "  replay-scenarios     replay the recorded counter corpus into the desktop fixtures (local data, not CI)"
 	@echo "  verify-pos-routes    check the POS stand-in against a real pushcart-web (needs a running server, not CI)"
+	@echo "  verify-pos-contract  re-read pushcart-web's POS routes and fail if the recorded contract is stale (not CI)"
 	@echo "  build                typecheck + build the desktop app"
 	@echo "  lint                 lint the desktop app"
 	@echo "  format               format the desktop app"
@@ -295,6 +297,22 @@ verify-pos-routes:
 	cd $(DESKTOP_DIR) && \
 		POS_E2E_BASE_URL=$(POS_E2E_BASE_URL) POS_E2E_SECRET=$(POS_E2E_SECRET) \
 		POS_E2E_STATION_ID=$(POS_E2E_STATION_ID) npx vitest run src/main/posRoutes.integration.test.ts
+
+# Does this repo still speak pushcart-web's POS routes? The desktop's half of the integration is a
+# contract with a codebase in another checkout - two route paths, a header name, and the status codes
+# they answer in - and nothing here can notice it moving: the stand-in was written from those files
+# and the integration suite tests it against a client written beside it, so a header that moved in
+# both would pass every test this repo owns. Two halves, because neither can do the other's half:
+# `scripts/check-pos-contract.mjs` reads the contract out of the sibling checkout and fails when the
+# recorded copy (`src/main/posContract.json`) has gone stale, and `src/main/posContract.test.ts`
+# checks the modules against that copy and runs in `make test` on a bare checkout. This target needs
+# `../pushcart-web`, so it is out of CI and exits 2 when the checkout is absent rather than skipping.
+# A deliberate pushcart-web change is one write away: POS_CONTRACT_ARGS=--write.
+POS_CONTRACT_ARGS ?=
+
+verify-pos-contract:
+	cd $(DESKTOP_DIR) && node scripts/check-pos-contract.mjs $(POS_CONTRACT_ARGS)
+	cd $(DESKTOP_DIR) && npx vitest run src/main/posContract.test.ts
 
 build: desktop-build
 

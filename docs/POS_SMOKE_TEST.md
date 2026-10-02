@@ -83,7 +83,11 @@ Supabase, no mapping table, no stock. Because a stand-in is only as faithful as 
 it was written from, the same protocol checks — auth, an unregistered station, snapshot validation, a
 session that is not open — can be pointed at a real server instead: `make verify-pos-routes` wants
 `POS_E2E_BASE_URL`, `POS_E2E_SECRET` and `POS_E2E_STATION_ID`, and says so loudly rather than
-reporting a green skip when they are missing. The rest of this table needs the shop — a camera, a
+reporting a green skip when they are missing. And because both sides of those tests were written from
+one reading of pushcart-web, a header or a path that moved in *both* would pass them green:
+`make verify-pos-contract` re-reads pushcart-web's route source and fails if the contract this repo
+records has gone stale, with `posContract.test.ts` checking the modules against that record in
+`npm test`. The rest of this table needs the shop — a camera, a
 tablet, the database and a person — and this list does not replace it.
 
 | Break it like this | Expect |
