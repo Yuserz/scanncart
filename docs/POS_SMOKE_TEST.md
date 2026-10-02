@@ -73,6 +73,19 @@ These are the paths that decide whether a wrong count is *fixable* at the counte
 
 Each of these is one run's worth of setup and a great deal of confidence.
 
+The rows that are only about the desktop's two POS routes — a dead host and its retry countdown, the
+host coming back, a session that ends under the desktop, and a rotated secret or unregistered station
+— are also an automated integration test. `desktop/src/main/posRoutes.integration.test.ts` drives the
+real transport and orchestrator over a loopback stand-in for pushcart-web's `/api/pos/session` and
+`/api/pos/sync`, so a route, a header or a status code that moves fails `npm test` rather than
+surprising someone at the counter. It is a stand-in for pushcart-web's *routes*, not its database: no
+Supabase, no mapping table, no stock. Because a stand-in is only as faithful as the pushcart-web files
+it was written from, the same protocol checks — auth, an unregistered station, snapshot validation, a
+session that is not open — can be pointed at a real server instead: `make verify-pos-routes` wants
+`POS_E2E_BASE_URL`, `POS_E2E_SECRET` and `POS_E2E_STATION_ID`, and says so loudly rather than
+reporting a green skip when they are missing. The rest of this table needs the shop — a camera, a
+tablet, the database and a person — and this list does not replace it.
+
 | Break it like this | Expect |
 | --- | --- |
 | Stop pushcart-web (or point the desktop at a dead port) with items in the cart | The panel shows the sync error **and `retrying in Ns`**, counting down; the retry interval backs off instead of flooding. The tablet keeps showing the cart, editing and **Finish still works** — it reads the database, not the desktop |

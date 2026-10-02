@@ -5,6 +5,12 @@
 
 import { BrowserWindow } from 'electron'
 import {
+  fetchRemoteSession,
+  postCartSync,
+  probePosSession,
+  type PosSessionProbe
+} from './posClient'
+import {
   DEFAULT_TRACK_EXPIRY_S,
   insecureBaseUrlWarning,
   isPosEnabled,
@@ -12,9 +18,7 @@ import {
   type PosConfig
 } from './posConfig'
 import {
-  PosConflictError,
   PosSessionOrchestrator,
-  PosTransportError,
   type PosConnectionResult,
   type PosSessionDeps,
   type PosState,
@@ -27,11 +31,6 @@ import {
 export const POS_STATE_CHANNEL = 'pos:state'
 
 const SIDECAR_TIMEOUT_MS = 6000
-const WEBAPP_TIMEOUT_MS = 8000
-
-function trimSlash(url: string): string {
-  return url.replace(/\/+$/, '')
-}
 
 export class PosController {
   private readonly store: PosConfigStore
@@ -109,25 +108,22 @@ export class PosController {
       }
     }
 
-    let response: Response
-    try {
-      response = await fetch(
-        `${trimSlash(config.posBaseUrl)}/api/pos/session?station_id=${encodeURIComponent(config.stationId)}`,
-        {
-          headers: { 'x-pos-token': config.posSecret },
-          signal: AbortSignal.timeout(WEBAPP_TIMEOUT_MS)
-        }
-      )
-    } catch (error) {
+    const probe: PosSessionProbe = await probePosSession(
+      config.posBaseUrl,
+      config.posSecret,
+      config.stationId
+    )
+
+    if (probe.unreachable !== null) {
       return {
         ...base,
         ok: false,
         status: null,
-        message: `Unreachable: ${error instanceof Error ? error.message : String(error)}`
+        message: `Unreachable: ${probe.unreachable}`
       }
     }
 
-    if (response.status === 401) {
+    if (probe.status === 401) {
       return {
         ...base,
         ok: false,
@@ -135,7 +131,7 @@ export class PosController {
         message: 'Secret rejected — check POS_INGEST_SECRET on the server.'
       }
     }
-    if (response.status === 404) {
+    if (probe.status === 404) {
       return {
         ...base,
         ok: false,
@@ -143,18 +139,16 @@ export class PosController {
         message: 'Station not registered — add it on the pushcart-web admin POS screen.'
       }
     }
-    if (!response.ok) {
+    if (probe.status === null || probe.status >= 400) {
       return {
         ...base,
         ok: false,
-        status: response.status,
-        message: `Unexpected response (${response.status}).`
+        status: probe.status,
+        message: `Unexpected response (${probe.status}).`
       }
     }
 
-    const data =
-      ((await response.json().catch(() => null)) as { data?: Record<string, unknown> } | null)
-        ?.data ?? null
+    const data = probe.data
 
     if (trackExpiryS !== null && config.commitDwellS <= trackExpiryS) {
       return {
@@ -227,45 +221,16 @@ export class PosController {
     return typeof body.track_expiry_s === 'number' ? body.track_expiry_s : DEFAULT_TRACK_EXPIRY_S
   }
 
-  // ---- webapp ----
+  // ---- webapp: the routes themselves live in `posClient.ts`, so they are drivable over a socket
+  // in `posRoutes.integration.test.ts`; here they are only given the stored connection details.
   private async getRemoteSession(stationId: string): Promise<RemoteSession | null> {
     const config = await this.store.load()
-    const response = await fetch(
-      `${trimSlash(config.posBaseUrl)}/api/pos/session?station_id=${encodeURIComponent(stationId)}`,
-      {
-        headers: { 'x-pos-token': config.posSecret },
-        signal: AbortSignal.timeout(WEBAPP_TIMEOUT_MS)
-      }
-    )
-
-    if (response.status === 409) throw new PosConflictError('session conflict')
-    if (!response.ok) throw new PosTransportError(`session poll failed (${response.status})`)
-
-    const data = ((await response.json()) as { data?: Record<string, unknown> | null }).data
-    if (!data) return null
-
-    return {
-      sessionRef: String(data.session_ref),
-      cartId: String(data.cart_id),
-      cartCode: String(data.cart_code ?? ''),
-      cartStatus: String(data.cart_status ?? '')
-    }
+    return fetchRemoteSession(config.posBaseUrl, config.posSecret, stationId)
   }
 
   private async postSync(payload: PosSyncPayload): Promise<PosSyncResponse> {
     const config = await this.store.load()
-    const response = await fetch(`${trimSlash(config.posBaseUrl)}/api/pos/sync`, {
-      method: 'POST',
-      headers: { 'x-pos-token': config.posSecret, 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(WEBAPP_TIMEOUT_MS)
-    })
-
-    if (response.status === 409) throw new PosConflictError('session closed or cart paid')
-    if (!response.ok) throw new PosTransportError(`sync failed (${response.status})`)
-
-    const data = ((await response.json()) as { data?: PosSyncResponse }).data
-    return data ?? {}
+    return postCartSync(config.posBaseUrl, config.posSecret, payload)
   }
 
   // ---- state push ----

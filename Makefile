@@ -9,8 +9,8 @@
 ## from within WSL or a Git Bash shell that has `make` on PATH.
 ##
 ## `test` is CI's target and stays fake-only, so it needs no data. `verify-clamp`,
-## `verify-unsure`, `annotate`, `human-pass`, `doctor`, `accept-v2` and `replay-scenarios`
-## are the ones that do - see the notes above them.
+## `verify-unsure`, `annotate`, `human-pass`, `doctor`, `accept-v2`, `replay-scenarios`
+## and `verify-pos-routes` are the ones that do - see the notes above them.
 ## `verify-live-layout` needs no data either but does need a display, which is the other
 ## thing CI runs it in its own job for.
 ##
@@ -27,7 +27,8 @@ endif
 .DEFAULT_GOAL := help
 
 .PHONY: help install dev test docs-check docs-sync docs-sync-check build lint format typecheck clean \
-        verify-clamp verify-unsure verify-live-layout doctor annotate human-pass accept-v2 replay-scenarios \
+        verify-clamp verify-unsure verify-live-layout verify-pos-routes \
+        doctor annotate human-pass accept-v2 replay-scenarios \
         sidecar-setup sidecar-run sidecar-test \
         desktop-install desktop-dev desktop-start desktop-test desktop-test-watch \
         desktop-build desktop-build-win desktop-build-mac desktop-build-linux \
@@ -51,6 +52,7 @@ help:
 	@echo "  doctor               check the merged set before training it (local data, not CI)"
 	@echo "  accept-v2            measure v2 against v1 on the merged set's test split (local data, not CI)"
 	@echo "  replay-scenarios     replay the recorded counter corpus into the desktop fixtures (local data, not CI)"
+	@echo "  verify-pos-routes    check the POS stand-in against a real pushcart-web (needs a running server, not CI)"
 	@echo "  build                typecheck + build the desktop app"
 	@echo "  lint                 lint the desktop app"
 	@echo "  format               format the desktop app"
@@ -270,6 +272,29 @@ REPLAY_ARGS ?=
 
 replay-scenarios:
 	cd $(SIDECAR_DIR) && $(SIDECAR_VENV_PY) tools/replay_scenarios.py $(REPLAY_ARGS)
+
+# The POS route fidelity check (spec §7; docs/POS_SMOKE_TEST.md §3): run the protocol half of
+# `desktop/src/main/posRoutes.integration.test.ts` against a *real* pushcart-web rather than the
+# in-repo stand-in. The stand-in exists so the desktop's status-code mapping is exercised in
+# `make test` with no server; this target is the other half, and the only thing that can catch the
+# stand-in drifting from the routes it mirrors - a header, a path, a status code, a validation rule.
+# It needs a running server with a station registered on its admin POS screen, so it is out of CI -
+# and it fails loudly (exit 2, naming the three variables) rather than reporting a green skip.
+POS_E2E_BASE_URL ?=
+POS_E2E_SECRET ?=
+POS_E2E_STATION_ID ?=
+
+verify-pos-routes:
+	@if [ -z "$(POS_E2E_BASE_URL)" ] || [ -z "$(POS_E2E_SECRET)" ] || [ -z "$(POS_E2E_STATION_ID)" ]; then \
+		echo "verify-pos-routes needs a running pushcart-web, and it is not configured."; \
+		echo "Set POS_E2E_BASE_URL (e.g. http://192.168.1.20:3000), POS_E2E_SECRET (the same"; \
+		echo "POS_INGEST_SECRET the desktop holds) and POS_E2E_STATION_ID (a station registered on"; \
+		echo "pushcart-web's admin POS screen), then run this target again."; \
+		exit 2; \
+	fi
+	cd $(DESKTOP_DIR) && \
+		POS_E2E_BASE_URL=$(POS_E2E_BASE_URL) POS_E2E_SECRET=$(POS_E2E_SECRET) \
+		POS_E2E_STATION_ID=$(POS_E2E_STATION_ID) npx vitest run src/main/posRoutes.integration.test.ts
 
 build: desktop-build
 
