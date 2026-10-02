@@ -9,9 +9,10 @@
 ## from within WSL or a Git Bash shell that has `make` on PATH.
 ##
 ## `test` is CI's target and stays fake-only, so it needs no data. `verify-clamp`,
-## `verify-unsure`, `annotate`, `human-pass`, `doctor` and `accept-v2` are the ones that
-## do - see the notes above them. `verify-live-layout` needs no data either but does need
-## a display, which is the other thing CI runs it in its own job for.
+## `verify-unsure`, `annotate`, `human-pass`, `doctor`, `accept-v2` and `replay-scenarios`
+## are the ones that do - see the notes above them.
+## `verify-live-layout` needs no data either but does need a display, which is the other
+## thing CI runs it in its own job for.
 ##
 
 SIDECAR_DIR := sidecar
@@ -26,7 +27,7 @@ endif
 .DEFAULT_GOAL := help
 
 .PHONY: help install dev test docs-check docs-sync docs-sync-check build lint format typecheck clean \
-        verify-clamp verify-unsure verify-live-layout doctor annotate human-pass accept-v2 \
+        verify-clamp verify-unsure verify-live-layout doctor annotate human-pass accept-v2 replay-scenarios \
         sidecar-setup sidecar-run sidecar-test \
         desktop-install desktop-dev desktop-start desktop-test desktop-test-watch \
         desktop-build desktop-build-win desktop-build-mac desktop-build-linux \
@@ -49,6 +50,7 @@ help:
 	@echo "                       HUMAN_PASS_ARGS=--check verifies it, =--status exits nonzero while the gate is dirty"
 	@echo "  doctor               check the merged set before training it (local data, not CI)"
 	@echo "  accept-v2            measure v2 against v1 on the merged set's test split (local data, not CI)"
+	@echo "  replay-scenarios     replay the recorded counter corpus into the desktop fixtures (local data, not CI)"
 	@echo "  build                typecheck + build the desktop app"
 	@echo "  lint                 lint the desktop app"
 	@echo "  format               format the desktop app"
@@ -251,6 +253,23 @@ accept-v2:
 	cd $(SIDECAR_DIR) && $(SIDECAR_VENV_PY) tools/accept_v2.py \
 		--baseline $(ACCEPT_BASELINE) --candidate $(ACCEPT_CANDIDATE) \
 		--split $(ACCEPT_SPLIT) --iou-sweep
+
+# The counting-accuracy corpus (spec §7.1): replay each recorded scenario through the app's own
+# `Pipeline` and write its track log to `desktop/src/main/__fixtures__/scenarios/<name>.json`.
+# `npm test` then scores those fixtures with `cartState.ts` - no camera, no GPU - which is what makes
+# tuning `commitDwellS`/`removeSettleS`/`minCommitConf` a test run rather than a trip to the counter.
+#
+# Same data needs as `verify-clamp`, and the same contract: the videos and their scripts are recorded
+# with the counter camera into the gitignored workspace (`sidecar/data/scenarios/`), and an installed
+# weight is required, so it is not in `test` and not in CI - and it fails loudly rather than skipping
+# when the corpus is absent, because a corpus that quietly shrank is a counting-accuracy gate that
+# stopped measuring anything. The fixtures it writes are committed; the corpus is not, and both
+# formats are documented in `desktop/src/main/__fixtures__/scenarios/README.md`.
+# `REPLAY_ARGS=--only 04_place_three_take_one` replays one scenario while iterating on it.
+REPLAY_ARGS ?=
+
+replay-scenarios:
+	cd $(SIDECAR_DIR) && $(SIDECAR_VENV_PY) tools/replay_scenarios.py $(REPLAY_ARGS)
 
 build: desktop-build
 
