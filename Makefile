@@ -9,11 +9,12 @@
 ## from within WSL or a Git Bash shell that has `make` on PATH.
 ##
 ## `test` is CI's target and stays fake-only, so it needs no data. `verify-clamp`,
-## `verify-unsure`, `annotate`, `human-pass`, `doctor`, `accept-v2`, `replay-scenarios`,
-## `verify-pos-routes` and `verify-pos-contract` are the ones that do - see the notes
-## above them.
+## `verify-unsure`, `annotate`, `human-pass`, `doctor`, `accept-v2`, `replay-scenarios`
+## and `verify-pos-routes` are the ones that do - see the notes above them.
 ## `verify-live-layout` needs no data either but does need a display, which is the other
-## thing CI runs it in its own job for.
+## thing CI runs it in its own job for. `verify-pos-contract` needs the sibling
+## pushcart-web checkout rather than data, and `.github/workflows/pos-contract.yml`
+## checks that repo out beside this one to run it.
 ##
 
 SIDECAR_DIR := sidecar
@@ -54,7 +55,7 @@ help:
 	@echo "  accept-v2            measure v2 against v1 on the merged set's test split (local data, not CI)"
 	@echo "  replay-scenarios     replay the recorded counter corpus into the desktop fixtures (local data, not CI)"
 	@echo "  verify-pos-routes    check the POS stand-in against a real pushcart-web (needs a running server, not CI)"
-	@echo "  verify-pos-contract  re-read pushcart-web's POS routes and fail if the recorded contract is stale (not CI)"
+	@echo "  verify-pos-contract  re-read pushcart-web's POS routes and fail if the recorded contract is stale (needs the sibling checkout; CI checks it out)"
 	@echo "  build                typecheck + build the desktop app"
 	@echo "  lint                 lint the desktop app"
 	@echo "  format               format the desktop app"
@@ -306,7 +307,12 @@ verify-pos-routes:
 # `scripts/check-pos-contract.mjs` reads the contract out of the sibling checkout and fails when the
 # recorded copy (`src/main/posContract.json`) has gone stale, and `src/main/posContract.test.ts`
 # checks the modules against that copy and runs in `make test` on a bare checkout. This target needs
-# `../pushcart-web`, so it is out of CI and exits 2 when the checkout is absent rather than skipping.
+# `../pushcart-web` and exits 2 when it is absent rather than skipping, which is why it is not in
+# `test`; `.github/workflows/pos-contract.yml` supplies the checkout in its own job and runs it there
+# on any PR, on a push to `main` and nightly - the drift starts in the *other* repo, so a schedule in
+# `ci.yml` would have made every job in it run nightly for a reason only this one has. That job also
+# proves the branch it watches still exists before checking it out, so a renamed branch fails there
+# naming the ref rather than quietly checking a contract against the default branch.
 # A deliberate pushcart-web change is one write away: POS_CONTRACT_ARGS=--write.
 POS_CONTRACT_ARGS ?=
 
