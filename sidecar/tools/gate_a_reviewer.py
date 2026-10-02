@@ -20,6 +20,7 @@ Usage (run from sidecar/):
     .venv/Scripts/python.exe tools/gate_a_reviewer.py --out data/gate_a_footage --session s1 --reviewer R1
     .venv/Scripts/python.exe tools/gate_a_reviewer.py --out data/gate_a_footage --session s1 --reviewer R1 --trial DEP-01
     .venv/Scripts/python.exe tools/gate_a_reviewer.py --out data/gate_a_footage --session s1 --summary
+    .venv/Scripts/python.exe tools/gate_a_reviewer.py --out data/gate_a_footage --session s1 --from-csv paper.csv
 
 Playback controls (in the OpenCV window): SPACE pause/resume, LEFT/RIGHT arrow seek
 1 s, S restart clip, Q or ESC advance to grading. When no window can be opened
@@ -31,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import io
 import json
 import sys
 from dataclasses import dataclass
@@ -306,6 +308,139 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+# ---------------------------------------------------------------------------
+# Paper-scorecard import (--from-csv)
+# ---------------------------------------------------------------------------
+
+#: The five indicator columns an import file must carry. `trial_id` selects the trial;
+#: everything else about it (kind, sku, actor, light) comes from the manifest, which is
+#: the authority — a typo'd kind in a hand-typed row must not rewrite the scorecard.
+IMPORT_INDICATOR_COLUMNS = (
+    "sku_legible",
+    "direction_correct",
+    "endpoint_reached",
+    "hold_valid",
+    "no_ambiguity",
+)
+
+
+def _parse_mark(cell: str, column: str, kind: str) -> bool | None:
+    """A paper mark transcribed into text: y/n/1/0/x/checked... None means unparseable.
+
+    `sku_legible` is the one column a no-transfer row may leave empty — the paper sheet
+    has no SKU question for those trials — and defaults to the same True the interactive
+    grader uses. Every other column must carry a mark.
+    """
+    raw = (cell or "").strip().lower()
+    if raw in ("", "-", "n/a"):
+        if column == "sku_legible" and kind == "no_transfer":
+            return True
+        return None
+    if raw in ("y", "yes", "1", "x", "true", "checked"):
+        return True
+    if raw in ("n", "no", "0", "false", "unchecked"):
+        return False
+    return None
+
+
+def parse_import_csv(
+    text: str,
+    manifest_trials: dict[str, dict[str, Any]],
+    reviewer: str,
+) -> tuple[dict[str, Grade], list[str]]:
+    """Parse a transcribed paper scorecard into grades keyed by trial_id.
+
+    The file must have a header row naming `trial_id`, the five indicator columns and —
+    optionally — `notes`, in any order: a self-describing header is what keeps a row
+    from sliding between columns, the same positional-ambiguity failure the interactive
+    prompts were reworked to kill. Verdicts are derived from the indicators, never read
+    from the file (a hand-typed verdict could disagree with the marks beside it).
+
+    Row-level problems (unknown trial, duplicate trial, unparseable mark, a cell count
+    that does not match the header) are returned as rejection messages rather than
+    raising, so one bad line does not lose the other transcriptions. Structural
+    problems (no header, missing columns) raise ValueError.
+    """
+    text = text.lstrip("\ufeff")
+    rows = list(csv.reader(io.StringIO(text)))
+    if not rows:
+        return {}, []
+
+    header = [h.strip().lower() for h in rows[0]]
+    if "trial_id" not in header:
+        raise ValueError(
+            "import CSV needs a header row: trial_id, sku_legible, direction_correct, "
+            "endpoint_reached, hold_valid, no_ambiguity[, notes]"
+        )
+    missing = [c for c in IMPORT_INDICATOR_COLUMNS if c not in header]
+    if missing:
+        raise ValueError(f"import CSV is missing indicator column(s): {', '.join(missing)}")
+    column_index = {name: header.index(name) for name in ["trial_id", *IMPORT_INDICATOR_COLUMNS, "notes"] if name in header}
+
+    grades: dict[str, Grade] = {}
+    rejections: list[str] = []
+    for lineno, cells in enumerate(rows[1:], start=2):
+        if not any(c.strip() for c in cells):
+            continue  # blank line between blocks
+        if len(cells) != len(header):
+            # A short or long row would shift every cell after the gap onto the wrong
+            # column — rejected rather than guessed at.
+            rejections.append(
+                f"line {lineno}: expected {len(header)} cells, got {len(cells)} — row may have shifted columns"
+            )
+            continue
+
+        def cell(name: str, _cells=cells) -> str:
+            return _cells[column_index[name]] if name in column_index else ""
+
+        trial_id = cell("trial_id").strip().upper()
+        if not trial_id:
+            rejections.append(f"line {lineno}: no trial_id")
+            continue
+        trial = manifest_trials.get(trial_id)
+        if trial is None:
+            rejections.append(f"line {lineno}: trial '{trial_id}' is not in the manifest")
+            continue
+        if trial_id in grades:
+            rejections.append(f"line {lineno}: duplicate trial '{trial_id}' in the import file")
+            continue
+        kind = trial.get("kind", "")
+
+        values: dict[str, bool] = {}
+        bad: str | None = None
+        for column in IMPORT_INDICATOR_COLUMNS:
+            mark = _parse_mark(cell(column), column, kind)
+            if mark is None:
+                raw = cell(column).strip()
+                shown = raw if raw else "(empty)"
+                bad = (
+                    f"line {lineno}: {trial_id} column {column}: {shown!r} is not a recognizable "
+                    "mark (y/n/1/0/x — sku_legible may be empty on a no-transfer)"
+                )
+                break
+            values[column] = mark
+        if bad:
+            rejections.append(bad)
+            continue
+
+        grades[trial_id] = Grade(
+            trial_id=trial_id,
+            kind=kind,
+            sku=trial.get("sku"),
+            actor=trial.get("actor", ""),
+            light=trial.get("light", ""),
+            reviewer=reviewer,
+            sku_legible=values["sku_legible"],
+            direction_correct=values["direction_correct"],
+            endpoint_reached=values["endpoint_reached"],
+            hold_valid=values["hold_valid"],
+            no_ambiguity=values["no_ambiguity"],
+            notes=cell("notes").strip(),
+            graded_at=utc_now_iso(),
+        )
+    return grades, rejections
+
+
 def grade_trial(
     trial: dict[str, Any],
     reviewer: str,
@@ -470,6 +605,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Print the Gate A summary from the existing scorecard and exit (no playback).",
     )
     parser.add_argument(
+        "--from-csv",
+        help=(
+            "Import grades from a transcribed CSV instead of interactive grading "
+            "(header: trial_id + the five indicator columns, notes optional; '-' reads stdin)."
+        ),
+    )
+    parser.add_argument(
         "--no-playback",
         action="store_true",
         help="Skip video playback (grade from metadata / paper scorecard only).",
@@ -481,6 +623,10 @@ def run(args: argparse.Namespace, input_func: Callable[[str], str] = input) -> i
     session_dir = Path(args.out) / args.session
     scorecard_path = session_dir / f"scorecard_{args.reviewer}.csv"
 
+    if args.from_csv and args.trial:
+        print("Error: --from-csv and --trial are mutually exclusive.")
+        return 2
+
     try:
         manifest = load_manifest(session_dir)
     except FileNotFoundError as exc:
@@ -488,6 +634,33 @@ def run(args: argparse.Namespace, input_func: Callable[[str], str] = input) -> i
         return 2
 
     manifest_trials = {t.get("trial_id"): t for t in manifest.get("trials", [])}
+
+    # --- paper-scorecard import mode ---
+    if args.from_csv:
+        try:
+            if args.from_csv == "-":
+                text = sys.stdin.read()
+            else:
+                text = Path(args.from_csv).read_text(encoding="utf-8-sig")
+            imported, rejections = parse_import_csv(text, manifest_trials, reviewer=args.reviewer)
+        except (OSError, ValueError) as exc:
+            print(f"Error: {exc}")
+            return 2
+        if not imported and not rejections:
+            print(f"Error: no grade rows found in {args.from_csv}.")
+            return 2
+        grades = load_grades(scorecard_path)
+        for trial_id, grade in imported.items():
+            grades[trial_id] = grade.to_row()
+            print(f"  {trial_id}: {grade.verdict} imported")
+        for message in rejections:
+            print(f"  REJECTED {message}")
+        overwrite_grades(scorecard_path, grades)
+        print(f"  {len(imported)} imported, {len(rejections)} rejected -> {scorecard_path.name}")
+        print_summary(summarize(grades))
+        # A rejected row means the transcription was not fully taken: exit nonzero so a
+        # scripted import notices, while the valid rows still land on the scorecard.
+        return 0 if not rejections else 2
 
     # --- summary-only mode ---
     if args.summary:

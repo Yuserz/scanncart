@@ -9,6 +9,7 @@ and grade against dict rows rather than pixels.
 from __future__ import annotations
 
 import csv
+import io
 import json
 from datetime import datetime
 from pathlib import Path
@@ -24,6 +25,7 @@ from tools.gate_a_reviewer import (
     load_manifest,
     overwrite_grades,
     parse_args,
+    parse_import_csv,
     parse_yes_no,
     print_summary,
     run,
@@ -414,3 +416,230 @@ def test_run_unknown_trial_id_errors(tmp_path, capsys):
 def test_manifest_loader_reports_missing_file(tmp_path):
     with pytest.raises(FileNotFoundError):
         load_manifest(tmp_path / "s1")
+
+
+# --- paper-scorecard import (--from-csv) ----------------------------------------
+
+IMPORT_HEADER = "trial_id,sku_legible,direction_correct,endpoint_reached,hold_valid,no_ambiguity,notes"
+
+
+def _import_manifest():
+    return {
+        "DEP-01": _trial("DEP-01", "deposit"),
+        "DEP-02": _trial("DEP-02", "deposit"),
+        "NOT-01": _trial("NOT-01", "no_transfer", sku=None),
+    }
+
+
+def test_parse_import_csv_happy_path_with_scrambled_headers():
+    # Column order should not matter — the header is what binds a cell to a field.
+    text = (
+        "notes,no_ambiguity,hold_valid,endpoint_reached,direction_correct,sku_legible,trial_id\n"
+        "clear label,1,1,1,1,1,DEP-01\n"
+    )
+    grades, rejections = parse_import_csv(text, _import_manifest(), reviewer="R2")
+    assert rejections == []
+    g = grades["DEP-01"]
+    assert (g.sku_legible, g.direction_correct, g.endpoint_reached, g.hold_valid, g.no_ambiguity) == (
+        True, True, True, True, True
+    )
+    assert g.verdict == "PASS"
+    assert g.notes == "clear label"
+    assert g.reviewer == "R2"
+
+
+def test_parse_import_csv_accepts_paper_marks_and_derives_verdict():
+    # x and 1 both mean checked; a single unchecked indicator flips the verdict.
+    text = (
+        f"{IMPORT_HEADER}\n"
+        "DEP-01,x,1,yes,checked,true,\n"
+        "DEP-02,1,1,1,1,0,\n"
+    )
+    grades, rejections = parse_import_csv(text, _import_manifest(), reviewer="R1")
+    assert rejections == []
+    assert grades["DEP-01"].verdict == "PASS"
+    assert grades["DEP-02"].verdict == "FAIL"
+    assert grades["DEP-02"].no_ambiguity is False
+
+
+def test_parse_import_csv_no_transfer_may_leave_sku_cell_empty():
+    # The paper sheet has no SKU question for no-transfers; empty defaults to True.
+    text = (
+        f"{IMPORT_HEADER}\n"
+        "NOT-01,,y,y,y,y,no transfer observed\n"
+    )
+    grades, rejections = parse_import_csv(text, _import_manifest(), reviewer="R1")
+    assert rejections == []
+    g = grades["NOT-01"]
+    assert g.sku_legible is True
+    assert g.kind == "no_transfer"
+    assert g.notes == "no transfer observed"
+
+
+def test_parse_import_csv_rejects_empty_indicator_on_a_transfer():
+    # On a transfer, an empty indicator cell is missing evidence, not a default.
+    text = (
+        f"{IMPORT_HEADER}\n"
+        "DEP-01,y,y,,y,,\n"
+    )
+    grades, rejections = parse_import_csv(text, _import_manifest(), reviewer="R1")
+    assert grades == {}
+    assert len(rejections) == 1
+    assert "endpoint_reached" in rejections[0]
+
+
+def test_parse_import_csv_rejects_unknown_trial_and_duplicates():
+    text = (
+        f"{IMPORT_HEADER}\n"
+        "ZZZ-99,1,1,1,1,1,\n"
+        "DEP-01,1,1,1,1,1,\n"
+        "dep-01,1,1,1,1,0,dup\n"
+    )
+    grades, rejections = parse_import_csv(text, _import_manifest(), reviewer="R1")
+    # The valid row lands; the unknown trial and the (case-insensitive) duplicate do not.
+    assert grades["DEP-01"].verdict == "PASS"
+    assert len(rejections) == 2
+    assert any("ZZZ-99" in r for r in rejections)
+    assert any("duplicate" in r for r in rejections)
+
+
+def test_parse_import_csv_garbage_mark_is_rejected_not_guessed():
+    text = (
+        f"{IMPORT_HEADER}\n"
+        "DEP-01,maybe,1,1,1,,\n"
+    )
+    grades, rejections = parse_import_csv(text, _import_manifest(), reviewer="R1")
+    assert grades == {}
+    assert "maybe" in rejections[0]
+
+
+def test_parse_import_csv_requires_header_and_indicator_columns():
+    # No header: DictReader would treat data as fieldnames -> structural error.
+    with pytest.raises(ValueError, match="header"):
+        parse_import_csv("DEP-01,1,1,1,1,\n", _import_manifest(), reviewer="R1")
+    # Header present but an indicator column missing.
+    with pytest.raises(ValueError, match="missing indicator"):
+        parse_import_csv("trial_id,sku_legible,notes\nDEP-01,1,\n", _import_manifest(), reviewer="R1")
+
+
+def test_parse_import_csv_stamps_import_time():
+    text = f"{IMPORT_HEADER}\nDEP-01,1,1,1,1,1,\n"
+    grades, _ = parse_import_csv(text, _import_manifest(), reviewer="R1")
+    datetime.fromisoformat(grades["DEP-01"].graded_at)  # parses
+    assert grades["DEP-01"].graded_at.endswith("+00:00")
+
+
+def test_parse_import_csv_rejects_a_cell_count_mismatch():
+    # A short row would slide every cell after the gap onto the wrong column — the
+    # shifted-column failure the header format exists to prevent.
+    text = (
+        f"{IMPORT_HEADER}\n"
+        "DEP-01,1,1,1,1,from paper\n"
+    )
+    grades, rejections = parse_import_csv(text, _import_manifest(), reviewer="R1")
+    assert grades == {}
+    assert len(rejections) == 1
+    assert "shifted columns" in rejections[0]
+
+
+def test_run_from_csv_imports_into_scorecard(tmp_path, capsys):
+    _manifest(tmp_path, [_trial(), _trial("DEP-02")])
+    import_file = tmp_path / "paper.csv"
+    import_file.write_text(
+        f"{IMPORT_HEADER}\nDEP-01,1,1,1,1,1,from paper\n", encoding="utf-8"
+    )
+    args = parse_args([
+        "--out", str(tmp_path), "--session", "s1", "--reviewer", "R1",
+        "--from-csv", str(import_file),
+    ])
+    assert run(args) == 0
+    out = capsys.readouterr().out
+    assert "DEP-01: PASS imported" in out
+    assert "1 imported, 0 rejected" in out
+    session = tmp_path / "s1"
+    rows = load_grades(session / "scorecard_R1.csv")
+    assert rows["DEP-01"]["verdict"] == "PASS"
+    assert rows["DEP-01"]["notes"] == "from paper"
+    assert rows["DEP-01"]["graded_at"]  # stamped at import
+    assert "Gate A summary" in out  # verdict block follows the import
+
+
+def test_run_from_csv_merges_with_existing_and_replaces(tmp_path, capsys):
+    session = _manifest(tmp_path, [_trial()])
+    path = session / "scorecard_R1.csv"
+    append_grade(path, _grade("DEP-01", verdict="FAIL", sku_legible=False))
+    import_file = tmp_path / "paper.csv"
+    import_file.write_text(f"{IMPORT_HEADER}\nDEP-01,1,1,1,1,1,rewatch\n", encoding="utf-8")
+    args = parse_args([
+        "--out", str(tmp_path), "--session", "s1", "--reviewer", "R1",
+        "--from-csv", str(import_file),
+    ])
+    assert run(args) == 0
+    rows = load_grades(path)
+    assert rows["DEP-01"]["verdict"] == "PASS"
+    assert rows["DEP-01"]["notes"] == "rewatch"
+    with open(path, newline="", encoding="utf-8") as f:
+        assert len(list(csv.DictReader(f))) == 1  # replaced, not appended
+
+
+def test_run_from_csv_rejections_exit_nonzero_but_keep_valid_rows(tmp_path, capsys):
+    _manifest(tmp_path, [_trial(), _trial("DEP-02")])
+    import_file = tmp_path / "paper.csv"
+    import_file.write_text(
+        f"{IMPORT_HEADER}\nDEP-01,1,1,1,1,1,\nZZZ-99,1,1,1,1,1,\n", encoding="utf-8"
+    )
+    args = parse_args([
+        "--out", str(tmp_path), "--session", "s1", "--reviewer", "R1",
+        "--from-csv", str(import_file),
+    ])
+    assert run(args) == 2
+    out = capsys.readouterr().out
+    assert "REJECTED" in out and "ZZZ-99" in out
+    rows = load_grades(tmp_path / "s1" / "scorecard_R1.csv")
+    assert rows["DEP-01"]["verdict"] == "PASS"  # the valid row still landed
+
+
+def test_run_from_csv_stdin_dash(tmp_path, capsys, monkeypatch):
+    _manifest(tmp_path, [_trial()])
+    monkeypatch.setattr(
+        "sys.stdin", io.StringIO(f"{IMPORT_HEADER}\nDEP-01,y,n,y,y,y,\n")
+    )
+    args = parse_args([
+        "--out", str(tmp_path), "--session", "s1", "--reviewer", "R1",
+        "--from-csv", "-",
+    ])
+    assert run(args) == 0
+    rows = load_grades(tmp_path / "s1" / "scorecard_R1.csv")
+    assert rows["DEP-01"]["verdict"] == "FAIL"  # direction marked n
+
+
+def test_run_from_csv_conflicts_with_trial(tmp_path, capsys):
+    _manifest(tmp_path, [_trial()])
+    args = parse_args([
+        "--out", str(tmp_path), "--session", "s1", "--reviewer", "R1",
+        "--from-csv", "paper.csv", "--trial", "DEP-01",
+    ])
+    assert run(args) == 2
+    assert "mutually exclusive" in capsys.readouterr().out
+
+
+def test_run_from_csv_missing_file_errors(tmp_path, capsys):
+    _manifest(tmp_path, [_trial()])
+    args = parse_args([
+        "--out", str(tmp_path), "--session", "s1", "--reviewer", "R1",
+        "--from-csv", str(tmp_path / "nope.csv"),
+    ])
+    assert run(args) == 2
+    assert "Error" in capsys.readouterr().out
+
+
+def test_run_from_csv_empty_file_errors(tmp_path, capsys):
+    _manifest(tmp_path, [_trial()])
+    import_file = tmp_path / "paper.csv"
+    import_file.write_text("", encoding="utf-8")
+    args = parse_args([
+        "--out", str(tmp_path), "--session", "s1", "--reviewer", "R1",
+        "--from-csv", str(import_file),
+    ])
+    assert run(args) == 2
+    assert "no grade rows" in capsys.readouterr().out

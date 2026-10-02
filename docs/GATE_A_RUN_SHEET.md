@@ -61,7 +61,28 @@ sidecar/.venv/Scripts/python.exe sidecar/tools/gate_a_reviewer.py --out data/gat
 
 # Print the Gate A verdict from an existing scorecard without playback:
 sidecar/.venv/Scripts/python.exe sidecar/tools/gate_a_reviewer.py --out data/gate_a_footage --session s1 --summary
+
+# Import a transcribed paper scorecard (typed from the printed §5 tables) directly:
+sidecar/.venv/Scripts/python.exe sidecar/tools/gate_a_reviewer.py --out data/gate_a_footage --session s1 --reviewer R1 --from-csv paper.csv
 ```
+
+The import file needs a header row naming `trial_id`, the five indicator columns and —
+optionally — `notes`, in any order:
+
+```text
+trial_id,sku_legible,direction_correct,endpoint_reached,hold_valid,no_ambiguity,notes
+DEP-01,x,1,yes,checked,1,clear label on the paper sheet
+NOT-01,,y,y,y,y,endpoint correctly withheld
+```
+
+Marks may be `y`/`n`, `1`/`0`, `x`/blank or `yes`/`no` — whatever the typist finds fastest.
+Verdicts are derived from the marks, never read from the file; `graded_at` is stamped at import
+(the transcription moment). A row is **rejected**, never guessed at, when its trial is not in the
+manifest, when it names a trial twice, when a mark is unrecognizable, or when its cell count does
+not match the header (a short row would slide every cell after the gap onto the wrong column).
+Rejected rows print with their line number and the run exits nonzero, while the valid rows still
+land on the scorecard — an incomplete transcription is visible, not silent. `--from-csv -` reads
+the same format from stdin, and combining it with `--trial` is refused.
 
 In the scorecard CSV, `endpoint_reached` for a **no-transfer** row means "the endpoint was correctly
 withheld" — a `0` there is a false commit, which is how the summary counts them. Deposits and removals
