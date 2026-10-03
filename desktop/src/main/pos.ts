@@ -91,9 +91,9 @@ export class PosController {
   // ---- lifecycle ----
   async start(): Promise<void> {
     await this.applyZones()
-    const port = this.getPort()
-    if (port !== null) {
-      this.basket.connect(port)
+    if (this.basketTimer === null) {
+      // The port is resolved per connection attempt, not here: see `BasketTracker.connect`.
+      this.basket.connect(() => this.getPort())
       this.basketTimer = setInterval(() => this.basket.tick(), BASKET_TICK_MS)
       void this.syncConfThreshold()
       this.confTimer = setInterval(() => void this.syncConfThreshold(), CONF_POLL_MS)

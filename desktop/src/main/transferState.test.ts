@@ -207,6 +207,61 @@ describe('#5 #7 no-transfer families', () => {
   })
 })
 
+describe('a dip back over the opening (review finding)', () => {
+  it('a deposit lifted back over the opening and set down again is one +1 and no review', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    const { events, removed } = feed(m, [
+      ...at(OUT, 2),
+      ...at(OPEN, 1),
+      ...at(IN, 2), // lowered in, not yet held
+      ...at(OPEN, 1), // lifted back over the rim
+      ...at(IN, 6) // set down and left
+    ])
+    expect(events.map((e) => e.kind)).toEqual(['inbound'])
+    expect(removed).toEqual([])
+  })
+
+  it('the hold restarts after the dip, so it cannot complete early', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    // 0.8 s inside, dip, then only 0.6 s back inside: neither stretch is a full 1 s hold.
+    const { events } = feed(m, [
+      ...at(OUT, 2),
+      ...at(OPEN, 1),
+      ...at(IN, 5),
+      ...at(OPEN, 1),
+      ...at(IN, 4)
+    ])
+    expect(events).toEqual([])
+  })
+
+  it('a removal that dips back over the opening is one −1 and no review', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    const { events, removed } = feed(m, [
+      ...at(IN, 2),
+      ...at(OPEN, 1),
+      ...at(OUT, 2),
+      ...at(OPEN, 1),
+      ...at(OUT, 6)
+    ])
+    expect(events.map((e) => e.kind)).toEqual(['outbound'])
+    expect(removed).toEqual([])
+  })
+
+  it('an item resting on the cart/opening boundary after a deposit never reviews or re-fires', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    expect(feed(m, deposit()).events).toHaveLength(1)
+    const jitter = Array.from({ length: 12 }, (_, i) => obs({ cy: i % 2 === 0 ? OPEN : IN }))
+    const { events, removed } = feed(m, jitter)
+    expect(events).toEqual([])
+    expect(removed.filter((r) => r.review)).toEqual([])
+  })
+
+  it('jumping from outside straight into the cart is not ordered evidence of the path', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    expect(feed(m, [...at(OUT, 2), ...at(IN, 6)]).events).toEqual([])
+  })
+})
+
 describe('#9 identity conflicts', () => {
   it('a class change mid-path goes to review and commits nothing', () => {
     const m = new TransferStateMachine(regions, cfg)

@@ -135,6 +135,26 @@ describe('basket ledger persistence', () => {
     await expect(readFile(join(dir, BASKET_LEDGER_FILENAME), 'utf8')).rejects.toThrow()
   })
 
+  it('a restored ledger never reuses a review id that is still open (review finding)', async () => {
+    const a = ledger(new BasketLedgerFileStore(dir))
+    await a.bind('s1', 0)
+    a.flag(null, 'one', 1) // r1
+    a.flag(null, 'two', 2) // r2
+    a.flag(null, 'three', 3) // r3
+    a.resolveReview('r1')
+    a.resolveReview('r2')
+    await a.flushed()
+
+    const b = ledger(new BasketLedgerFileStore(dir))
+    await b.bind('s1', 100) // adds the restart notice
+    b.flag(null, 'four', 101)
+    const ids = b.pendingReview().map((r) => r.id)
+    expect(new Set(ids).size).toBe(ids.length)
+    b.resolveReview('r3')
+    expect(b.pendingReview().map((r) => r.reason)).not.toContain('three')
+    expect(b.pendingReview()).toHaveLength(2)
+  })
+
   it('a corrupt file reads as nothing saved', async () => {
     await writeFile(join(dir, BASKET_LEDGER_FILENAME), '{nope', 'utf8')
     expect(await new BasketLedgerFileStore(dir).load()).toBeNull()

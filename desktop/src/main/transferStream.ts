@@ -251,13 +251,33 @@ export class BasketTracker {
     }
   }
 
-  connect(port: number): void {
+  /**
+   * Open the stream, asking `getPort` for the sidecar's port on **every** attempt. A restarted
+   * sidecar can come back on another port (`run.py` falls back to a free one when 8765 is taken),
+   * and a socket that kept redialling the first one would leave the basket blind for the rest of
+   * the run while every REST call — which reads the port live — went on working.
+   */
+  connect(getPort: () => number | null): void {
     this.closed = false
     const factory =
       this.opts.wsFactory ??
       ((u: string) =>
         new (globalThis as unknown as { WebSocket: new (u: string) => WSLike }).WebSocket(u))
+    const retry = (): void => {
+      if (this.closed || this.reconnectTimer !== null) return
+      this.reconnectTimer = setTimeout(() => {
+        this.reconnectTimer = null
+        open()
+      }, this.opts.reconnectDelayMs ?? 1000)
+    }
     const open = (): void => {
+      if (this.closed) return
+      const port = getPort()
+      if (port === null) {
+        // No sidecar yet (or it is between restarts): ask again shortly rather than giving up.
+        retry()
+        return
+      }
       this.ws = factory(`ws://127.0.0.1:${port}/ws/stream`)
       this.ws.onmessage = (e) => {
         if (typeof e.data !== 'string') return
@@ -272,13 +292,7 @@ export class BasketTracker {
       }
       this.ws.onopen = null
       this.ws.onerror = () => {}
-      this.ws.onclose = () => {
-        if (this.closed || this.reconnectTimer !== null) return
-        this.reconnectTimer = setTimeout(() => {
-          this.reconnectTimer = null
-          open()
-        }, this.opts.reconnectDelayMs ?? 1000)
-      }
+      this.ws.onclose = retry
     }
     open()
   }

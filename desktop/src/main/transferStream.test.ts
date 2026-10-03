@@ -2,7 +2,7 @@
 // The basket tracker end to end on synthetic frame messages: the sidecar's wire shape in,
 // the ledger's quantities and review list out.
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { DEFAULT_ZONE_PRESET } from './transferGeometry'
 import { BasketTracker, type StreamFrame } from './transferStream'
@@ -172,6 +172,47 @@ describe('basket tracker', () => {
     await h.tracker.bind('s1')
     h.run(IN, 2, { conf: 0.7 }) // below the scanner's cut: not evidence of anything
     expect(h.tracker.pendingReview()).toEqual([])
+  })
+
+  it('redials the port the sidecar has now, not the one it had at start (review finding)', async () => {
+    vi.useFakeTimers()
+    try {
+      const sockets: Array<{ url: string; onclose: (() => void) | null }> = []
+      let port: number | null = 8765
+      const tracker = new BasketTracker(DEFAULT_ZONE_PRESET, {
+        reconnectDelayMs: 100,
+        wsFactory: (url) => {
+          const ws = {
+            url,
+            onopen: null,
+            onmessage: null,
+            onclose: null,
+            onerror: null,
+            close: () => {}
+          }
+          sockets.push(ws)
+          return ws
+        }
+      })
+      tracker.connect(() => port)
+      expect(sockets.map((s) => s.url)).toEqual(['ws://127.0.0.1:8765/ws/stream'])
+
+      // The sidecar restarts on another port: nothing answers for a moment, then 8766 does.
+      port = null
+      sockets[0].onclose?.()
+      await vi.advanceTimersByTimeAsync(100)
+      expect(sockets).toHaveLength(1) // no port yet: it waits rather than dialling a dead one
+      port = 8766
+      await vi.advanceTimersByTimeAsync(100)
+      expect(sockets.at(-1)?.url).toBe('ws://127.0.0.1:8766/ws/stream')
+
+      tracker.close()
+      sockets.at(-1)?.onclose?.()
+      await vi.advanceTimersByTimeAsync(500)
+      expect(sockets).toHaveLength(2) // closed means closed
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('a new session starts from an empty basket', async () => {

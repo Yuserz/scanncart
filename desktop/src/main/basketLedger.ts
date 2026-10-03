@@ -103,7 +103,13 @@ export class BasketLedger {
     }
     this.state = restored ?? { sessionRef, items: [], journal: [], review: [], blindSince: null }
     this.seen = new Set(this.state.journal.map((e) => e.id))
-    this.reviewSeq = this.state.review.length
+    // Continue from the highest id in use, not from how many are open: with r1 and r2 resolved
+    // and r3 still listed, counting would hand out r2 and then r3 again, and resolving one r3
+    // would clear both.
+    this.reviewSeq = this.state.review.reduce((max, r) => {
+      const n = Number(/^r(\d+)$/.exec(r.id)?.[1] ?? 0)
+      return Number.isFinite(n) ? Math.max(max, n) : max
+    }, 0)
     if (restored)
       this.addReview(null, 'the app restarted during this session; check the basket', now)
     this.persist()

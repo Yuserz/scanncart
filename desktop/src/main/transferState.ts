@@ -188,9 +188,17 @@ const REGION_ORDER_IN: Region[] = ['outside', 'opening', 'inside']
 const REGION_ORDER_OUT: Region[] = ['inside', 'opening', 'outside']
 
 /**
- * Classify the visited-region sequence against one direction. `incomplete` when the path
- * has not started from that direction's origin, or has started but not reached the end;
- * `reversed` when it started and then went back; `ordered` when it reached the end in order.
+ * Classify the visited-region sequence against one direction.
+ *
+ * - `reversed` only when the path goes back to the side it **started** from after reaching the
+ *   opening: a hover that pulled back, or an item lifted and set back down where it was.
+ * - `ordered` when the item is on the destination side now and has crossed the opening on the
+ *   way. A dip from the destination back over the opening is *not* a reversal — a customer
+ *   lowering an item, lifting it slightly and setting it down again is still one deposit — it
+ *   is `incomplete` until the item is back on the destination side (and the hold restarts).
+ * - `incomplete` otherwise: not started from this direction's origin, not yet at the
+ *   destination, or at it without ever being seen in the opening (a jump between two
+ *   inferences is not ordered evidence of the path).
  */
 export function classifyVisit(
   visited: Region[],
@@ -198,14 +206,12 @@ export function classifyVisit(
 ): 'ordered' | 'reversed' | 'incomplete' {
   const expected = direction === 'inbound' ? REGION_ORDER_IN : REGION_ORDER_OUT
   if (visited.length === 0 || visited[0] !== expected[0]) return 'incomplete'
-  let matched = 0
-  for (const r of visited) {
-    if (matched < expected.length && r === expected[matched]) matched += 1
-    else if (r === expected[Math.max(0, matched - 1)])
-      continue // same region again
-    else return 'reversed'
+  let sawOpening = false
+  for (const r of visited.slice(1)) {
+    if (r === expected[0]) return 'reversed'
+    if (r === 'opening') sawOpening = true
   }
-  return matched === expected.length ? 'ordered' : 'incomplete'
+  return sawOpening && visited[visited.length - 1] === expected[2] ? 'ordered' : 'incomplete'
 }
 
 interface TrackHistory {
@@ -396,7 +402,10 @@ export class TransferStateMachine {
     const destRegion: Region = direction === 'inbound' ? 'inside' : 'outside'
     const originObs = h.counts[originRegion]
     const arrived = visit === 'ordered' && region === destRegion
-    if (arrived && h.destSince === null) h.destSince = obs.t
+    // The hold is continuous: leaving the destination (a dip back over the opening) restarts it,
+    // so a deposit completes only after the item has rested in the cart band for the full hold.
+    if (!arrived) h.destSince = null
+    else if (h.destSince === null) h.destSince = obs.t
     const destObs = arrived ? h.counts[destRegion] : 0
 
     const originOk = originObs >= this.cfg.minObservationsPerSide
