@@ -52,6 +52,20 @@ describe('PosAdminSection', () => {
     expect(saved).toMatchObject({ stationId: 'counter-2', commitDwellS: 4 })
   })
 
+  it('saves the cart mode, the cart edge and the band sizes', async () => {
+    stubBridge()
+    render(<PosAdminSection />)
+    await waitFor(() => expect(screen.getByTestId('pos-cartMode')).toHaveValue('counter'))
+
+    fireEvent.change(screen.getByTestId('pos-cartMode'), { target: { value: 'basket' } })
+    fireEvent.change(screen.getByTestId('pos-cartEdge'), { target: { value: 'left' } })
+    fireEvent.change(screen.getByTestId('pos-insideFraction'), { target: { value: '0.3' } })
+    fireEvent.click(screen.getByText('Save POS settings'))
+
+    await waitFor(() => expect(saved).not.toBeNull())
+    expect(saved).toMatchObject({ cartMode: 'basket', cartEdge: 'left', insideFraction: 0.3 })
+  })
+
   it('reports the connection test, including the TLS warning', async () => {
     result = {
       ok: true,

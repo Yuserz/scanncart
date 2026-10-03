@@ -65,11 +65,14 @@ Admin Panel → **Self-checkout (POS integration)**:
 | POS secret | The same value as pushcart-web's `POS_INGEST_SECRET`. |
 | Station id | The `id` of the station registered for **this** counter (§2 step 3). |
 | Commit dwell (s) | How long an item must be seen before it counts. Default 3. |
-| Remove settle (s) | How long a lower count must hold before an item is removed. Default 10. |
+| Remove settle (s) | How long a lower count must hold before an item is removed. Default 10. **Suspended 2026-10-03:** until the removal-capable model ships, no automatic removal happens — a verified count is a floor for the rest of the session, and this window only carries the count through camera dropouts. |
 | Min commit confidence | Confidence below which a detection never counts. Default 0.6, to be tuned at the counter. |
 | Unbound poll (ms) | How often the desktop asks for a session while unbound. Default 1000. |
 | Session poll (ms) | The same, while bound. Default 5000. |
 | Logs poll (ms) | How often the sidecar's tracks are read while bound. Default 1000. |
+| Cart mode | `Counter` (default): the cart is what the camera sees, with the posted count as a floor. `Basket`: the cart is the transfer ledger — a confirmed deposit adds, a confirmed removal subtracts, hiding changes nothing. See §4a. |
+| Cart is at | Which edge of the camera frame the cart is at (the camera's own edge, not the mirrored preview's). A deposit moves toward it. Default bottom. |
+| Cart band / Opening band | The share of the frame, from that edge, that is inside the cart (default 0.35) and the opening just past it (default 0.2). The rest is outside. Save refuses a pair that leaves no outside band. |
 
 **An empty URL, secret or station id turns the feature off** — a state, not an error: the Live view
 then shows no POS panel at all, and capture behaves exactly as it did before. The configuration is
@@ -105,6 +108,11 @@ running rather than the default.
    shorter than the settle window.
 5. **Taking an item away.** The count drops, and it is removed from the cart after `removeSettleS`
    of the lower count holding — so a hand passing over an item does not remove it.
+   **Suspended 2026-10-03:** the next model is not ready to tell a taken item from a lost track,
+   so the desktop holds every verified count for the rest of the session (the camera can only add
+   to it, and the count survives an app restart — the floor is kept beside `pos.json`, keyed to
+   the session; the tablet's Remove button, an override, is still the way out). This step
+   describes the behavior the removal model restores.
 6. **The customer disagrees.** Removing or changing a quantity on the tablet is recorded as an
    override, and the camera stops managing that product for the rest of the session (it will not
    re-add it, however long it sits there). If a second unit is then placed, the customer increments
@@ -123,6 +131,17 @@ If SCANnCART is off, or the camera has died, the tablet keeps working: the custo
 items, can still edit them, and can still finish. They just add the rest by hand (staff add those as
 manual rows, which the camera never touches).
 
+## 4a. Basket mode (camera-only add and remove)
+
+Basket mode replaces "what is visible" with **confirmed transfers**, which is what makes automatic removal safe: an item covered by another one is still in the basket, because only a confirmed removal takes it out.
+
+- **Deposit (+1):** the item is seen at least twice outside, crosses the opening band, and is seen at least twice in the cart band over a one-second hold. Every sighting on the path has to clear the scanner's own **confidence threshold** (`conf_threshold`, Camera tuning) — set it to 0.9 and nothing under 0.9 counts, here or in the empty-basket check. The basket has no threshold of its own; it re-reads the scanner's every few seconds.
+- **Removal (−1):** the same path in reverse, ending with the item held clear of the cart band for a second.
+- **No change:** showing an item outside, hovering at the opening and pulling back, rearranging inside the cart, an empty hand reaching in, or an item hidden after it was deposited.
+- **Needs review (cart unchanged):** the class changes mid-path, two items cross the opening at once, an item stops mid-path, an item appears in the opening with no origin, a removal of something the ledger does not hold, a product already in the cart band at Start, an app restart mid-session, or the camera seeing nothing for more than a few seconds. Review is sent to pushcart-web as `pending_review`; staff clear it with **Basket checked** on the Live view.
+
+The ledger runs in counter mode too, as a shadow, so it can be compared with the real basket before switching. Keep `Counter` until a rehearsal (`CART_TRANSFER_SPEC.md` Gate C) shows the shadow matching. The ledger is kept beside `pos.json` as `basket-ledger.json`, keyed to the session.
+
 ## 5. What the desktop shows
 
 **Live view** — a read-only *Self-checkout* panel, present only while the feature is on:
@@ -133,12 +152,14 @@ manual rows, which the camera never touches).
 | cart | The first 8 characters of the cart code — the same one the tablet displays |
 | items synced | What pushcart-web currently totals for this cart |
 | last sync | How long ago the last accepted snapshot was posted |
+| basket / basket (shadow) | Units the transfer ledger holds — the posted cart in basket mode, a comparison in counter mode — with `camera blind` while no fresh frames arrive |
+| needs review | The unresolved interactions, with a **Basket checked** button that clears them once staff have looked |
 
 A sync failure appears under those rows as red text (the same condition the banner above reports,
 kept here because this panel is where its detail still is). While the desktop is backing off from an
 unreachable webapp, that error is followed by `retrying in Ns`, counting down to the next attempt;
-the line goes away when the attempt runs and the state stops claiming a retry. Nothing on the panel
-controls anything: the tablet's *Start* is what binds the desktop.
+the line goes away when the attempt runs and the state stops claiming a retry. The only control on
+the panel is **Basket checked**: the tablet's *Start* is what binds the desktop.
 
 **Admin Panel** — the settings in §3.
 

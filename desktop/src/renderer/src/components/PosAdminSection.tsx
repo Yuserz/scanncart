@@ -1,5 +1,6 @@
 import { useEffect, useState, type JSX } from 'react'
-import type { PosConfig } from '../../../main/posConfig'
+import type { CartMode, PosConfig } from '../../../main/posConfig'
+import type { CartEdge } from '../../../main/transferGeometry'
 import type { PosConnectionResult } from '../../../main/posSession'
 
 interface NumericField {
@@ -14,8 +15,22 @@ const NUMERIC_FIELDS: NumericField[] = [
   { key: 'minCommitConf', label: 'Min commit confidence', step: 0.05 },
   { key: 'unboundPollMs', label: 'Unbound poll (ms)', step: 100 },
   { key: 'sessionPollMs', label: 'Session poll (ms)', step: 500 },
-  { key: 'logsPollMs', label: 'Logs poll (ms)', step: 100 }
+  { key: 'logsPollMs', label: 'Logs poll (ms)', step: 100 },
+  { key: 'insideFraction', label: 'Cart band (share of frame)', step: 0.05 },
+  { key: 'openingFraction', label: 'Opening band (share of frame)', step: 0.05 }
 ]
+
+const CART_MODE_LABELS: Record<CartMode, string> = {
+  counter: 'Counter — what is visible (basket shown as shadow)',
+  basket: 'Basket — confirmed deposits and removals'
+}
+
+const CART_EDGE_LABELS: Record<CartEdge, string> = {
+  bottom: 'Bottom of the frame',
+  top: 'Top of the frame',
+  left: 'Left of the frame (camera’s left)',
+  right: 'Right of the frame (camera’s right)'
+}
 
 function numberOr(value: string, fallback: number): number {
   const parsed = Number(value)
@@ -44,6 +59,8 @@ export function PosAdminSection(): JSX.Element {
   const [secret, setSecret] = useState('')
   const [stationId, setStationId] = useState('')
   const [numbers, setNumbers] = useState<Record<string, string>>({})
+  const [cartMode, setCartMode] = useState<CartMode>('counter')
+  const [cartEdge, setCartEdge] = useState<CartEdge>('bottom')
   const [message, setMessage] = useState<string | null>(null)
   const [result, setResult] = useState<PosConnectionResult | null>(null)
   const [busy, setBusy] = useState(false)
@@ -59,6 +76,8 @@ export function PosAdminSection(): JSX.Element {
         setBaseUrl(loaded.posBaseUrl)
         setSecret(loaded.posSecret)
         setStationId(loaded.stationId)
+        setCartMode(loaded.cartMode ?? 'counter')
+        setCartEdge(loaded.cartEdge ?? 'bottom')
         const draft: Record<string, string> = {}
         for (const field of NUMERIC_FIELDS) draft[field.key] = String(loaded[field.key])
         setNumbers(draft)
@@ -73,7 +92,9 @@ export function PosAdminSection(): JSX.Element {
     const patch: Partial<PosConfig> = {
       posBaseUrl: baseUrl.trim(),
       posSecret: secret.trim(),
-      stationId: stationId.trim()
+      stationId: stationId.trim(),
+      cartMode,
+      cartEdge
     }
     for (const field of NUMERIC_FIELDS) {
       ;(patch[field.key] as number) = numberOr(
@@ -121,6 +142,12 @@ export function PosAdminSection(): JSX.Element {
         The tablet opens the session; the desktop binds to it. Leave the URL, secret or station id
         empty to turn the feature off.
       </p>
+      <p className="field-hint">
+        Basket mode adds an item when it crosses from outside, through the opening band, into the
+        cart band and rests there for a second, and removes it on the reverse path. Hiding an item
+        never removes it. Keep Counter until the basket readout on the Live view matches the real
+        basket over a rehearsal.
+      </p>
 
       <div className="admin-grid">
         <label>
@@ -150,6 +177,34 @@ export function PosAdminSection(): JSX.Element {
             value={stationId}
             onChange={(e) => setStationId(e.target.value)}
           />
+        </label>
+        <label>
+          <span>Cart mode</span>
+          <select
+            data-testid="pos-cartMode"
+            value={cartMode}
+            onChange={(e) => setCartMode(e.target.value as CartMode)}
+          >
+            {(Object.keys(CART_MODE_LABELS) as CartMode[]).map((m) => (
+              <option key={m} value={m}>
+                {CART_MODE_LABELS[m]}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>Cart is at (deposit moves toward it)</span>
+          <select
+            data-testid="pos-cartEdge"
+            value={cartEdge}
+            onChange={(e) => setCartEdge(e.target.value as CartEdge)}
+          >
+            {(Object.keys(CART_EDGE_LABELS) as CartEdge[]).map((edge) => (
+              <option key={edge} value={edge}>
+                {CART_EDGE_LABELS[edge]}
+              </option>
+            ))}
+          </select>
         </label>
         {NUMERIC_FIELDS.map((field) => (
           <label key={field.key}>

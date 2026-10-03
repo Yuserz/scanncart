@@ -34,6 +34,8 @@ const api = {
   savePosConfig: (patch: Partial<PosConfig>): Promise<PosConfig> =>
     ipcRenderer.invoke('pos:save-config', patch),
   testPosConnection: (): Promise<PosConnectionResult> => ipcRenderer.invoke('pos:test-connection'),
+  // Staff looked at the basket and confirmed it: clear one review item by id, or all of them.
+  resolvePosReview: (id?: string): Promise<void> => ipcRenderer.invoke('pos:resolve-review', id),
   // `null` is a state this channel really carries - the feature being switched off, or nothing
   // configured - rather than a value that only ever appears in a read, so it is part of the
   // signature instead of something the renderer has to know to expect.

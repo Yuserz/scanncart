@@ -1,6 +1,8 @@
 # Plan: camera-first cart additions and removals
 
-Status: **Proposed; transfer detection is not implemented or measured** · 2026-10-02
+Status: **Implemented in shadow mode; not yet measured on real footage** · updated 2026-10-03
+
+Shipped on the desktop: the transfer state machine (`desktop/src/main/transferState.ts`), the v1 zone preset (bands from one frame edge, `transferGeometry.presetRegions` — drawn polygons are a later version), the persistent ledger and review list (`basketLedger.ts`) and the stream tracker that feeds them from fresh, unmirrored sidecar frames (`transferStream.ts`; the sidecar marks `fresh`/`mirrored` on every frame message). The ledger runs on every session as a **shadow** beside the counter; `cartMode: basket` in `pos.json` makes it the posted cart, and that switch waits on Gate C. The pushcart-web half (no customer add/remove, review blocks Finish, staff-PIN removal as the fallback) is not done yet. The §3 gates are still the go/no-go: nothing here has been run against Gate A footage.
 
 ## 1. Goal and existing behavior
 

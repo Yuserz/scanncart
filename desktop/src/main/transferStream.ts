@@ -1,0 +1,297 @@
+// The basket tracker: the sidecar's frame stream → the transfer machine → the basket ledger.
+//
+// It runs in the main process, beside the POS orchestrator, on its own WebSocket to the
+// sidecar (the renderer has one too; the sidecar serves any number). Three rules decide what
+// counts as evidence:
+// - **Fresh only.** `fresh: false` frames are preview fill-ins repeating the last boxes; feeding
+//   them would let one inference satisfy "two observations per side" by itself.
+// - **True orientation.** Boxes reflected for a mirrored preview are reflected back
+//   (`frameBox`), so "the cart is at the left edge" means the camera's left, not the mirror's.
+// - **Tracked only.** A detection with no `track_id` cannot be followed along a path, so it is
+//   no evidence of a transfer at all.
+//
+// It also owns the two checks that need the stream rather than a single event: the camera going
+// blind (no fresh frame for `blindAfterS`, or capture leaving `running`), which the ledger turns
+// into review when it lasts, and the empty-basket baseline at bind (#16) — a product already
+// sitting in the cart band when a session starts is flagged, because the ledger begins at zero
+// and that item would otherwise never be billed.
+
+import { BasketLedger, type LedgerStore, type ReviewItem } from './basketLedger'
+import type { CartEntry } from './cartState'
+import { frameBox, presetRegions, type ZonePreset } from './transferGeometry'
+import {
+  DEFAULT_TRANSFER_CONFIG,
+  TransferStateMachine,
+  regionOf,
+  type Candidate,
+  type TransferStateConfig
+} from './transferState'
+
+/** The subset of a sidecar frame message this reads. */
+export interface StreamFrame {
+  type: 'frame'
+  ts: number
+  seq: number
+  fresh?: boolean
+  mirrored?: boolean
+  detections: Array<{
+    track_id: number | null
+    cls: string
+    conf: number
+    box: [number, number, number, number]
+  }>
+}
+
+interface WSLike {
+  onopen: (() => void) | null
+  onmessage: ((e: { data: unknown }) => void) | null
+  onclose: (() => void) | null
+  onerror: ((e: unknown) => void) | null
+  close(): void
+}
+
+export interface BasketReadout {
+  /** In-flight candidates (shadow readout). */
+  candidates: number
+  /** Units the ledger holds. */
+  itemCount: number
+  items: Array<{ className: string; quantity: number }>
+  review: ReviewItem[]
+  blind: boolean
+}
+
+export interface BasketTrackerOptions {
+  store?: LedgerStore
+  transfer?: TransferStateConfig
+  /** Seconds without a fresh frame before the camera counts as blind. */
+  blindAfterS?: number
+  /** A blind interval shorter than this is not worth a review (a dropped frame or two). */
+  blindReviewAfterS?: number
+  /** Seconds after bind during which a product in the cart band means the basket was not empty. */
+  baselineS?: number
+  now?: () => number
+  wsFactory?: (url: string) => WSLike
+  reconnectDelayMs?: number
+  onChange?: (readout: BasketReadout) => void
+}
+
+export function zonesKey(p: ZonePreset): string {
+  return `preset:${p.cartEdge}:${p.insideFraction}:${p.openingFraction}`
+}
+
+export class BasketTracker {
+  readonly ledger: BasketLedger
+  private machine: TransferStateMachine
+  private zones: string
+  private lastFreshT: number | null = null
+  private captureRunning = true
+  private baselineUntil: number | null = null
+  private baselineFlagged = false
+  private ws: WSLike | null = null
+  private closed = true
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private readonly now: () => number
+
+  constructor(
+    preset: ZonePreset,
+    private readonly opts: BasketTrackerOptions = {}
+  ) {
+    this.ledger = new BasketLedger(opts.store)
+    this.machine = new TransferStateMachine(
+      presetRegions(preset),
+      opts.transfer ?? DEFAULT_TRANSFER_CONFIG
+    )
+    this.zones = zonesKey(preset)
+    this.now = opts.now ?? (() => Date.now() / 1000)
+  }
+
+  /** The scanner's live `conf_threshold`, so the basket infers nothing the operator cut. */
+  setConfThreshold(value: number): void {
+    this.machine.setConfThreshold(value)
+  }
+
+  /** A new zone preset (the Admin Panel saved one). In-flight candidates survive. */
+  setZones(preset: ZonePreset): void {
+    const key = zonesKey(preset)
+    if (key === this.zones) return
+    this.machine.setRegions(presetRegions(preset))
+    this.zones = key
+  }
+
+  // ---- the port the POS orchestrator uses ----
+
+  async bind(sessionRef: string): Promise<void> {
+    const fresh = this.ledger.sessionRef !== sessionRef
+    await this.ledger.bind(sessionRef, this.now())
+    if (fresh) {
+      this.machine.reset()
+      this.baselineUntil = this.now() + (this.opts.baselineS ?? 3)
+      this.baselineFlagged = false
+    }
+    this.changed()
+  }
+
+  unbind(): void {
+    this.ledger.unbind()
+    this.machine.reset()
+    this.baselineUntil = null
+    this.changed()
+  }
+
+  snapshot(): Map<string, CartEntry> {
+    return this.ledger.snapshot()
+  }
+
+  pendingReview(): ReviewItem[] {
+    return this.ledger.pendingReview()
+  }
+
+  resolveReview(id?: string): void {
+    this.ledger.resolveReview(id)
+    this.changed()
+  }
+
+  readout(): BasketReadout {
+    const items = [...this.ledger.snapshot()].map(([className, e]) => ({
+      className,
+      quantity: e.quantity
+    }))
+    return {
+      candidates: this.machine.snapshot().length,
+      itemCount: items.reduce((n, i) => n + i.quantity, 0),
+      items,
+      review: this.ledger.pendingReview(),
+      blind: this.ledger.isBlind()
+    }
+  }
+
+  candidates(): Candidate[] {
+    return this.machine.snapshot()
+  }
+
+  // ---- the stream ----
+
+  /** Feed one sidecar frame message. Public so tests (and a replay tool) can drive it directly. */
+  onFrame(msg: StreamFrame): void {
+    if (msg.fresh === false) return
+    const t = msg.ts
+    let dirty = false
+    if (this.lastFreshT === null || this.ledger.isBlind()) {
+      this.ledger.markSeeing(t, this.opts.blindReviewAfterS ?? 3)
+      dirty = true
+    }
+    this.lastFreshT = t
+
+    for (const d of msg.detections) {
+      if (d.track_id === null) continue
+      const box = frameBox(d.box, msg.mirrored === true)
+
+      if (this.baselineUntil !== null && t <= this.baselineUntil && !this.baselineFlagged) {
+        if (
+          regionOf(this.machine.getRegions(), box) === 'inside' &&
+          d.conf >= this.machine.getConfThreshold()
+        ) {
+          this.ledger.flag(d.cls, `the basket was not empty at Start (${d.cls} already inside)`, t)
+          this.baselineFlagged = true
+          dirty = true
+        }
+      }
+
+      const out = this.machine.observe({
+        seq: msg.seq,
+        t,
+        trackId: d.track_id,
+        className: d.cls,
+        conf: d.conf,
+        box
+      })
+      for (const e of out.events) {
+        this.ledger.apply(e, this.zones)
+        dirty = true
+      }
+      if (out.removed?.review) {
+        this.ledger.flag(out.removed.className, out.removed.reason, t)
+        dirty = true
+      }
+    }
+    if (this.baselineUntil !== null && t > this.baselineUntil) this.baselineUntil = null
+
+    for (const x of this.machine.sweep(t)) {
+      if (x.review) {
+        this.ledger.flag(x.className, `${x.className} stopped being seen mid-transfer`, t)
+        dirty = true
+      }
+    }
+    if (dirty || this.machine.snapshot().length > 0) this.changed()
+  }
+
+  /** Capture state from the stream's status messages: anything but running is blind. */
+  onStatus(state: string): void {
+    const running = state === 'running'
+    if (running === this.captureRunning) return
+    this.captureRunning = running
+    if (!running) {
+      this.machine.reset()
+      this.ledger.markBlind(this.lastFreshT ?? this.now())
+      this.changed()
+    }
+  }
+
+  /** Periodic check for a stream that went quiet without a status (a hung sidecar). */
+  tick(): void {
+    const blindAfter = this.opts.blindAfterS ?? 2
+    if (
+      this.lastFreshT !== null &&
+      this.now() - this.lastFreshT > blindAfter &&
+      !this.ledger.isBlind()
+    ) {
+      this.machine.reset()
+      this.ledger.markBlind(this.lastFreshT)
+      this.changed()
+    }
+  }
+
+  connect(port: number): void {
+    this.closed = false
+    const factory =
+      this.opts.wsFactory ??
+      ((u: string) =>
+        new (globalThis as unknown as { WebSocket: new (u: string) => WSLike }).WebSocket(u))
+    const open = (): void => {
+      this.ws = factory(`ws://127.0.0.1:${port}/ws/stream`)
+      this.ws.onmessage = (e) => {
+        if (typeof e.data !== 'string') return
+        let msg: { type?: string; state?: string }
+        try {
+          msg = JSON.parse(e.data)
+        } catch {
+          return
+        }
+        if (msg?.type === 'frame') this.onFrame(msg as StreamFrame)
+        else if (msg?.type === 'status' && typeof msg.state === 'string') this.onStatus(msg.state)
+      }
+      this.ws.onopen = null
+      this.ws.onerror = () => {}
+      this.ws.onclose = () => {
+        if (this.closed || this.reconnectTimer !== null) return
+        this.reconnectTimer = setTimeout(() => {
+          this.reconnectTimer = null
+          open()
+        }, this.opts.reconnectDelayMs ?? 1000)
+      }
+    }
+    open()
+  }
+
+  close(): void {
+    this.closed = true
+    if (this.reconnectTimer !== null) clearTimeout(this.reconnectTimer)
+    this.reconnectTimer = null
+    this.ws?.close()
+    this.ws = null
+  }
+
+  private changed(): void {
+    this.opts.onChange?.(this.readout())
+  }
+}

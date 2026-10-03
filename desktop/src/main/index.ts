@@ -208,6 +208,10 @@ if (!app.requestSingleInstanceLock()) {
       if (!posController) throw new Error('POS controller is not ready')
       return posController.testConnection()
     })
+    // Staff checked the basket by eye: clear the camera's unresolved interactions (one, or all).
+    ipcMain.handle('pos:resolve-review', (_event, id) => {
+      posController?.resolveBasketReview(typeof id === 'string' ? id : undefined)
+    })
 
     startSidecar()
     createWindow()

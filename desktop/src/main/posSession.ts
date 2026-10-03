@@ -1,12 +1,16 @@
 // The POS orchestrator (spec §5.3): keeps capture running, binds to whatever session the
-// pushcart-web tablet opened on this station, and posts the derived desired cart state.
+// pushcart-web tablet opened on this station, and posts the derived desired cart state —
+// merged with the session's cumulative floor, because D2's automatic removal is suspended until
+// the next model can tell a taken item from a lost track.
 //
 // Capture is always on rather than started per customer — opening the StreamCam takes ~37 s, and
 // binding is a timestamp (`bindAt`) instead, so the previous customer's tracks never enter a new
 // cart. Every dependency is injected so the whole loop runs against fakes with fake timers.
 
+import type { ReviewItem } from './basketLedger'
 import { deriveCartState, type CartEntry, type CartStateConfig, type TrackEvent } from './cartState'
-import { isPosEnabled, type PosConfig } from './posConfig'
+import { isPosEnabled, type CartMode, type PosConfig } from './posConfig'
+import type { BasketReadout } from './transferStream'
 
 export type PosPhase = 'unbound' | 'warming_up' | 'bound' | 'error'
 
@@ -23,6 +27,27 @@ export interface PosState {
    * locally. It is set only at the tick tail, only while `consecutiveFailures` stands above zero.
    */
   retryAtMs: number | null
+  /** Which derivation the posted cart follows (`posConfig.cartMode`). */
+  cartMode: CartMode
+  /**
+   * The transfer ledger's view, or null when no basket tracker is wired. In `counter` mode this
+   * is the shadow readout — what the basket *would* post — shown beside the posted count so the
+   * two can be compared before anyone switches modes.
+   */
+  basket: BasketReadout | null
+}
+
+/**
+ * The basket tracker as the orchestrator sees it (`transferStream.BasketTracker`). Bound and
+ * unbound with the session in both modes, so the shadow ledger covers exactly the customer the
+ * counter is posting for; only `basket` mode posts its snapshot.
+ */
+export interface BasketPort {
+  bind(sessionRef: string): Promise<void>
+  unbind(): void
+  snapshot(): Map<string, CartEntry>
+  pendingReview(): ReviewItem[]
+  readout(): BasketReadout
 }
 
 /** A sidecar `/api/logs` event, camel-cased at the boundary. */
@@ -52,10 +77,30 @@ export interface PosSyncItem {
   max_confidence: number
 }
 
+/** One class's cumulative floor entry, as persisted for a restart. */
+export interface PosFloorItem {
+  className: string
+  quantity: number
+  maxConfidence: number
+}
+
+/** The floor of one POS session, saved so an app restart cannot un-count verified items. */
+export interface PosFloor {
+  sessionRef: string
+  items: PosFloorItem[]
+}
+
 export interface PosSyncPayload {
   session_ref: string
   station_id: string
   items: PosSyncItem[]
+  /**
+   * Basket mode only: observed interactions the camera could not resolve. Above zero, the tablet
+   * shows a review notice and refuses Finish — the cart may be missing a deposit or holding an
+   * item that went back out. Absent in counter mode, which has no such notion.
+   */
+  pending_review?: number
+  review_reasons?: string[]
 }
 
 export interface PosSyncResponse {
@@ -86,6 +131,17 @@ export interface PosSessionDeps {
   getRemoteSession: (stationId: string) => Promise<RemoteSession | null>
   postSync: (payload: PosSyncPayload) => Promise<PosSyncResponse>
   /**
+   * The persisted cumulative floor, keyed by `session_ref`. The floor is memory-only by nature,
+   * so an app restart mid-session would drop it and the next snapshot could empty the cart; the
+   * store restores what this exact session already verified. Optional and failure-tolerant: a
+   * floor that cannot be read or written costs the restart protection, never the sync.
+   */
+  floorStore?: {
+    load(): Promise<PosFloor | null>
+    save(floor: PosFloor): Promise<void>
+    clear(): Promise<void>
+  }
+  /**
    * The state to show, or `null` for "there is no integration to report" — the feature is off
    * (spec §5.1: an empty URL, secret or station id disables it). `null` is deliberately not the
    * same as an `unbound` phase with nothing in the cart: one means nobody turned this on, the
@@ -93,6 +149,8 @@ export interface PosSessionDeps {
    * nothing, the same way it renders a native backend's absent inference verdict.
    */
   emit: (state: PosState | null) => void
+  /** The basket tracker; optional so the counter-only orchestrator (and its tests) need none. */
+  basket?: BasketPort
 }
 
 /** Heartbeat cadence while bound, so the webapp sees liveness even with no change (ms). */
@@ -129,8 +187,19 @@ export class PosSessionOrchestrator {
   /** Sidecar seconds of the last successful logs fetch, used to close tracks abandoned by a restart. */
   private lastLogsAtS = 0
   private lastSent = new Map<string, CartEntry>()
+  /**
+   * The cumulative per-class floor of the bound session: the largest quantity ever posted for a
+   * class. D2's automatic removal is suspended until the removal-capable model ships, so a
+   * verified count never drops — the camera can only add to it. Cleared with the rest of the
+   * session state in `bind`/`unbind`, so a new cart never inherits the previous customer's
+   * counts. Customer corrections still work: an A6 override makes the webapp ignore the camera
+   * for that product entirely.
+   */
+  private cumulative = new Map<string, CartEntry>()
   private lastSyncAtMs = 0
   private syncedItemCount = 0
+  /** Review items in the last posted basket snapshot, so a change in review alone is posted. */
+  private lastReviewSent = -1
 
   /** Sidecar-time seconds when capture was (re)started by this orchestrator, for the warm-up guard. */
   private captureRunningSince: number | null = null
@@ -171,6 +240,15 @@ export class PosSessionOrchestrator {
   private looping = false
 
   constructor(private readonly deps: PosSessionDeps) {}
+
+  /** The basket tracker's readout changed: push it, without waiting for a POS transition. */
+  notifyBasketChanged(): void {
+    this.emit()
+  }
+
+  private basketMode(): boolean {
+    return this.cfg?.cartMode === 'basket' && this.deps.basket !== undefined
+  }
 
   private cartCfg(): CartStateConfig {
     const cfg = this.cfg as PosConfig
@@ -339,7 +417,7 @@ export class PosSessionOrchestrator {
     }
 
     if (!this.bound || remote.sessionRef !== this.sessionRef) {
-      this.bind(remote)
+      await this.bind(remote)
       return
     }
 
@@ -347,20 +425,45 @@ export class PosSessionOrchestrator {
     this.clearTransportError()
   }
 
-  private bind(remote: RemoteSession): void {
+  private async bind(remote: RemoteSession): Promise<void> {
     this.bound = true
     this.sessionRef = remote.sessionRef
     this.cartCode = remote.cartCode
     this.bindAt = nowSeconds()
     this.cache.clear()
     this.lastSent.clear()
+    this.cumulative.clear()
     this.logsSessionId = null
     // The heartbeat clock starts at binding, so an empty first snapshot is not posted as if
     // the 15 s had already elapsed.
     this.lastSyncAtMs = Date.now()
     this.syncedItemCount = 0
+    this.lastReviewSent = -1
     this.error = null
     this.errorSource = null
+    try {
+      await this.deps.basket?.bind(remote.sessionRef)
+    } catch {
+      // The shadow ledger failing to bind must not stop the counter from serving the customer.
+    }
+    // Restore the persisted floor for this exact session: an app restart mid-session must not
+    // un-count what was already verified (the camera can be blind to items already bagged). A
+    // floor saved for any other session is stale and is dropped, not served.
+    try {
+      const saved = (await this.deps.floorStore?.load()) ?? null
+      if (saved && saved.sessionRef === remote.sessionRef) {
+        for (const item of saved.items) {
+          this.cumulative.set(item.className, {
+            quantity: item.quantity,
+            maxConfidence: item.maxConfidence
+          })
+        }
+      } else if (saved) {
+        await this.deps.floorStore?.clear()
+      }
+    } catch {
+      // A floor that cannot be read must not stop the bind; the camera remains source of truth.
+    }
     this.emit()
   }
 
@@ -371,8 +474,13 @@ export class PosSessionOrchestrator {
     this.cartCode = null
     this.cache.clear()
     this.lastSent.clear()
+    this.cumulative.clear()
     this.logsSessionId = null
     this.syncedItemCount = 0
+    this.lastReviewSent = -1
+    this.deps.basket?.unbind()
+    // The session is over: a saved floor for it must not survive to be restored by mistake.
+    void this.deps.floorStore?.clear().catch(() => {})
     this.emit()
   }
 
@@ -391,6 +499,9 @@ export class PosSessionOrchestrator {
   }
 
   private isWarmingUp(now: number): boolean {
+    // The ledger is not derived from what is visible, so there is nothing to warm up: a blind
+    // camera leaves it exactly where it was, which is the hold the warm-up exists to provide.
+    if (this.basketMode()) return false
     if (!this.captureRunning) return true
     if (this.captureRunningSince === null) return false
     const cfg = this.cartCfg()
@@ -406,6 +517,18 @@ export class PosSessionOrchestrator {
    */
   private async syncOnce(): Promise<void> {
     if (!this.cfg || !this.sessionRef) return
+    const basket = this.deps.basket
+    if (this.basketMode() && basket) {
+      // Basket mode posts the ledger: no logs, no warm-up, no floor. A confirmed removal is the
+      // only thing that lowers a count, so there is nothing for the floor to protect against.
+      const snapshot = basket.snapshot()
+      const review = basket.pendingReview()
+      const changed =
+        !sameSnapshot(snapshot, this.lastSent) || review.length !== this.lastReviewSent
+      const due = Date.now() - this.lastSyncAtMs >= SYNC_HEARTBEAT_MS
+      if (changed || due) await this.postSync(snapshot, review)
+      return
+    }
     const logSince = this.bindAt
     const logs = await this.deps.getLogs(logSince)
     const fetchedAtS = nowSeconds()
@@ -462,6 +585,20 @@ export class PosSessionOrchestrator {
       snapshot.set(className, { quantity, maxConfidence })
     }
 
+    // D2 suspended: the posted quantity is a floor for the rest of the session. `deriveCartState`
+    // still answers "what is on the counter now" — including the dips of a track swap or a taken
+    // item — and this merge is what keeps the billing side from following it down until a model
+    // can distinguish the two.
+    for (const [className, floor] of this.cumulative) {
+      const current = snapshot.get(className)
+      if (!current || current.quantity < floor.quantity) {
+        snapshot.set(className, {
+          quantity: floor.quantity,
+          maxConfidence: Math.max(floor.maxConfidence, current?.maxConfidence ?? 0)
+        })
+      }
+    }
+
     const changed = !sameSnapshot(snapshot, this.lastSent)
     const due = Date.now() - this.lastSyncAtMs >= SYNC_HEARTBEAT_MS
     if (!changed && !due) return
@@ -469,21 +606,54 @@ export class PosSessionOrchestrator {
     await this.postSync(snapshot)
   }
 
-  private async postSync(snapshot: Map<string, CartEntry>): Promise<void> {
+  private async postSync(snapshot: Map<string, CartEntry>, review?: ReviewItem[]): Promise<void> {
     if (!this.cfg || !this.sessionRef) return
     const items: PosSyncItem[] = [...snapshot].map(([className, entry]) => ({
       class_name: className,
       quantity: entry.quantity,
       max_confidence: entry.maxConfidence
     }))
+    const payload: PosSyncPayload = {
+      session_ref: this.sessionRef,
+      station_id: this.cfg.stationId,
+      items
+    }
+    if (review !== undefined) {
+      payload.pending_review = review.length
+      payload.review_reasons = review.map((r) => r.reason)
+    }
 
     try {
-      const response = await this.deps.postSync({
-        session_ref: this.sessionRef,
-        station_id: this.cfg.stationId,
-        items
-      })
+      const response = await this.deps.postSync(payload)
       this.lastSent = snapshot
+      if (review !== undefined) this.lastReviewSent = review.length
+      let floorGrew = false
+      for (const [className, entry] of review === undefined
+        ? snapshot
+        : new Map<string, CartEntry>()) {
+        const floor = this.cumulative.get(className)
+        if (!floor || entry.quantity > floor.quantity) floorGrew = true
+        this.cumulative.set(className, {
+          quantity: Math.max(floor?.quantity ?? 0, entry.quantity),
+          maxConfidence: Math.max(floor?.maxConfidence ?? 0, entry.maxConfidence)
+        })
+      }
+      // Persist the floor only when it grew: the heartbeat cadence must not cost a disk write
+      // every 15 s, and the file is only the restart seed, not the cart's record.
+      if (floorGrew) {
+        try {
+          await this.deps.floorStore?.save({
+            sessionRef: this.sessionRef,
+            items: [...this.cumulative].map(([className, entry]) => ({
+              className,
+              quantity: entry.quantity,
+              maxConfidence: entry.maxConfidence
+            }))
+          })
+        } catch {
+          // The webapp already holds the counts; the file is only how a restart learns them.
+        }
+      }
       this.lastSyncAtMs = Date.now()
       this.syncedItemCount =
         response.cart_totals?.item_count ?? items.reduce((sum, item) => sum + item.quantity, 0)
@@ -522,7 +692,9 @@ export class PosSessionOrchestrator {
       syncedItemCount: this.syncedItemCount,
       lastSyncAgeS: this.lastSyncAtMs ? (Date.now() - this.lastSyncAtMs) / 1000 : null,
       error: this.error,
-      retryAtMs: this.retryAtMs
+      retryAtMs: this.retryAtMs,
+      cartMode: this.cfg.cartMode,
+      basket: this.deps.basket?.readout() ?? null
     })
   }
 

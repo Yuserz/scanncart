@@ -14,6 +14,7 @@ export interface SidecarApi {
   getPosConfig: () => Promise<PosConfig>
   savePosConfig: (patch: Partial<PosConfig>) => Promise<PosConfig>
   testPosConnection: () => Promise<PosConnectionResult>
+  resolvePosReview: (id?: string) => Promise<void>
   onPosState: (cb: (state: PosState | null) => void) => () => void
 }
 

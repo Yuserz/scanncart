@@ -9,7 +9,9 @@ const STATE: PosState = {
   syncedItemCount: 2,
   lastSyncAgeS: 1,
   error: null,
-  retryAtMs: null
+  retryAtMs: null,
+  cartMode: 'counter',
+  basket: null
 }
 
 function stubBridge(opts: {

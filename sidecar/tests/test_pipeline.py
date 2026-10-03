@@ -216,6 +216,32 @@ def test_emit_preview_reuses_the_most_recent_detections():
     assert [d["track_id"] for d in msg["detections"]] == [1]
 
 
+def test_only_an_inference_frame_is_fresh_evidence():
+    """A gap frame repeats the last boxes, so a consumer counting sightings must be able to skip it.
+
+    The basket transfer machine requires two *fresh* observations per side; counting a gap frame
+    would let one inference satisfy the rule several times over.
+    """
+    pipe, _, _ = _preview_pipe()
+    inferred = pipe.process_once()
+    pipe._last_emit_ts = 0.0
+    gap = pipe.emit_preview()
+
+    assert inferred is not None and inferred["fresh"] is True
+    assert gap is not None and gap["fresh"] is False
+
+
+def test_a_frame_says_whether_its_boxes_were_mirrored():
+    """True geometry is recoverable only if the consumer knows the reflection was applied."""
+    for mirror in (True, False):
+        sent: list = []
+        pipe = Pipeline(
+            _StubSource(), _StubDetector(), Settings(preview_mirror=mirror), on_message=sent.append
+        )
+        msg = pipe.process_once()
+        assert msg is not None and msg["mirrored"] is mirror
+
+
 def test_emit_preview_is_rate_limited():
     pipe, _, _ = _preview_pipe(Settings(preview_max_fps=30))
 

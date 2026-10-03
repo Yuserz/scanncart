@@ -7,6 +7,22 @@
 import { promises as fs } from 'fs'
 import { join } from 'path'
 
+import {
+  CART_EDGES,
+  DEFAULT_ZONE_PRESET,
+  zonePresetProblems,
+  type CartEdge
+} from './transferGeometry'
+
+/**
+ * How the cart is derived. `counter` is the original rule (`cartState.ts`: what is visible,
+ * with the posted count as a floor). `basket` posts the transfer ledger (`basketLedger.ts`):
+ * a confirmed deposit adds, a confirmed removal subtracts, and hiding changes nothing. The
+ * ledger runs in both modes, so `counter` is also the basket's shadow mode.
+ */
+export type CartMode = 'counter' | 'basket'
+export const CART_MODES: readonly CartMode[] = ['counter', 'basket']
+
 export interface PosConfig {
   /** Whichever host serves pushcart-web (`http://192.168.1.20:3000` or an https cloud host). */
   posBaseUrl: string
@@ -26,6 +42,14 @@ export interface PosConfig {
   sessionPollMs: number
   /** `/api/logs` poll interval while bound (ms). */
   logsPollMs: number
+  /** Which derivation the cart follows; `counter` until the basket passes its rehearsal. */
+  cartMode: CartMode
+  /** The edge of the camera frame the cart is at; a deposit moves toward it. */
+  cartEdge: CartEdge
+  /** Share of the frame, from the cart edge, that is inside the cart (0–1). */
+  insideFraction: number
+  /** Share of the frame just past the inside band that is the opening (0–1). */
+  openingFraction: number
 }
 
 export const POS_CONFIG_FILENAME = 'pos.json'
@@ -42,7 +66,11 @@ export const DEFAULT_POS_CONFIG: PosConfig = {
   minCommitConf: 0.6,
   unboundPollMs: 1000,
   sessionPollMs: 5000,
-  logsPollMs: 1000
+  logsPollMs: 1000,
+  cartMode: 'counter',
+  cartEdge: DEFAULT_ZONE_PRESET.cartEdge,
+  insideFraction: DEFAULT_ZONE_PRESET.insideFraction,
+  openingFraction: DEFAULT_ZONE_PRESET.openingFraction
 }
 
 /** The feature is on only when all three connection fields are set. */
@@ -83,6 +111,8 @@ function sanitize(raw: unknown): PosConfig {
   if (typeof source.posBaseUrl === 'string') out.posBaseUrl = source.posBaseUrl
   if (typeof source.posSecret === 'string') out.posSecret = source.posSecret
   if (typeof source.stationId === 'string') out.stationId = source.stationId
+  if (CART_MODES.includes(source.cartMode as CartMode)) out.cartMode = source.cartMode as CartMode
+  if (CART_EDGES.includes(source.cartEdge as CartEdge)) out.cartEdge = source.cartEdge as CartEdge
 
   const numeric: Array<[keyof PosConfig, (n: number) => boolean]> = [
     ['commitDwellS', (n) => n > 0],
@@ -90,7 +120,9 @@ function sanitize(raw: unknown): PosConfig {
     ['minCommitConf', (n) => n >= 0 && n <= 1],
     ['unboundPollMs', (n) => n > 0],
     ['sessionPollMs', (n) => n > 0],
-    ['logsPollMs', (n) => n > 0]
+    ['logsPollMs', (n) => n > 0],
+    ['insideFraction', (n) => n > 0 && n < 1],
+    ['openingFraction', (n) => n > 0 && n < 1]
   ]
   for (const [key, valid] of numeric) {
     const value = source[key]
@@ -98,6 +130,10 @@ function sanitize(raw: unknown): PosConfig {
       // Each key is a number-valued field in the interface; the cast keeps the loop single.
       ;(out[key] as number) = value
     }
+  }
+  if (zonePresetProblems(out).length > 0) {
+    out.insideFraction = DEFAULT_ZONE_PRESET.insideFraction
+    out.openingFraction = DEFAULT_ZONE_PRESET.openingFraction
   }
 
   return out
@@ -137,6 +173,17 @@ export class PosConfigStore {
         `commitDwellS (${next.commitDwellS}s) must exceed the sidecar's track_expiry_s (${trackExpiryS}s).`
       )
     }
+
+    // Judged on the merge *before* sanitizing: `sanitize` quietly restores default bands for a
+    // stored file whose pair leaves no outside band, which is right for a read and wrong for a
+    // save — an operator who typed that pair has to be told, not overruled.
+    const asked = { ...current, ...patch }
+    const zoneProblems = zonePresetProblems({
+      cartEdge: next.cartEdge,
+      insideFraction: Number(asked.insideFraction),
+      openingFraction: Number(asked.openingFraction)
+    })
+    if (zoneProblems.length > 0) throw new PosConfigError(`Zones: ${zoneProblems.join('; ')}.`)
 
     await fs.mkdir(this.dir, { recursive: true })
     await fs.writeFile(this.path, `${JSON.stringify(next, null, 2)}\n`, 'utf8')

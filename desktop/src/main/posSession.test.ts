@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { ApplyResult } from './basketLedger'
 import { DEFAULT_POS_CONFIG, type PosConfig } from './posConfig'
 import {
   PosConflictError,
@@ -7,6 +8,7 @@ import {
   PosTransportError,
   RETRY_BACKOFF_CAP_MS,
   SYNC_HEARTBEAT_MS,
+  type PosFloor,
   type PosSessionDeps,
   type PosState,
   type PosSyncPayload,
@@ -81,6 +83,9 @@ interface Harness {
     syncError: Error | null
     /** When set, every session poll rejects with it — the unbound failure path. */
     sessionError: Error | null
+    /** The persisted floor the injected store serves, and how often it was cleared. */
+    savedFloor: PosFloor | null
+    floorClears: number
   }
   calls: { logs: number[]; syncs: PosSyncPayload[]; starts: number; states: (PosState | null)[] }
   deps: PosSessionDeps
@@ -95,7 +100,9 @@ function harness(): Harness {
     startCaptureResult: { ok: true, status: 200 },
     syncQueue: [] as Array<() => void>,
     syncError: null as Error | null,
-    sessionError: null as Error | null
+    sessionError: null as Error | null,
+    savedFloor: null as PosFloor | null,
+    floorClears: 0
   }
   const calls = {
     logs: [] as number[],
@@ -130,6 +137,19 @@ function harness(): Harness {
           item_count: payload.items.reduce((sum, item) => sum + item.quantity, 0),
           subtotal: 0
         }
+      }
+    },
+    floorStore: {
+      load: async () => state.savedFloor,
+      save: async (floor) => {
+        state.savedFloor = {
+          sessionRef: floor.sessionRef,
+          items: floor.items.map((item) => ({ ...item }))
+        }
+      },
+      clear: async () => {
+        state.savedFloor = null
+        state.floorClears += 1
       }
     },
     emit: (next) => {
@@ -373,9 +393,157 @@ describe('PosSessionOrchestrator', () => {
     expect(h.calls.states.at(-1)?.phase).toBe('warming_up')
     expect(h.calls.syncs.length).toBe(syncsBefore)
 
-    // Once the camera is warm and still sees nothing, the item is finally removed.
+    // Once the camera is warm and still sees nothing, the verified count holds anyway: D2's
+    // automatic removal is suspended until the removal-capable model ships, so the cart never
+    // follows the camera down to zero.
     await vi.advanceTimersByTimeAsync(20_000)
-    expect(h.calls.syncs.at(-1)?.items).toEqual([])
+    expect(h.calls.syncs.at(-1)?.items).toEqual([
+      { class_name: 'soda', quantity: 1, max_confidence: 0.9 }
+    ])
+    orch.stop()
+  })
+
+  it('never lowers a posted quantity when the track ends (D2 suspended)', async () => {
+    const h = harness()
+    h.state.logs.events = [event({ enteredAt: BASE_S + 1 })]
+    const orch = new PosSessionOrchestrator(h.deps)
+
+    await orch.start()
+    await vi.advanceTimersByTimeAsync(4_200)
+    expect(h.calls.syncs.at(-1)?.items).toEqual([
+      { class_name: 'soda', quantity: 1, max_confidence: 0.9 }
+    ])
+
+    // The item is taken away: the track ends and the settle window passes with nothing there.
+    h.state.logs.events = [event({ enteredAt: BASE_S + 1, leftAt: BASE_S + 5 })]
+    await vi.advanceTimersByTimeAsync(SYNC_HEARTBEAT_MS + 12_000)
+
+    // The posted count was verified, so it is a floor: the next heartbeat still carries it and
+    // `pos_reconcile` never sees the row leave the snapshot.
+    expect(h.calls.syncs.at(-1)?.items).toEqual([
+      { class_name: 'soda', quantity: 1, max_confidence: 0.9 }
+    ])
+    orch.stop()
+  })
+
+  it('adds a second unit to the floor, and holds it when the counter empties', async () => {
+    const h = harness()
+    h.state.logs.events = [event({ enteredAt: BASE_S + 1 })]
+    const orch = new PosSessionOrchestrator(h.deps)
+
+    await orch.start()
+    await vi.advanceTimersByTimeAsync(4_200)
+    expect(h.calls.syncs.at(-1)?.items).toEqual([
+      { class_name: 'soda', quantity: 1, max_confidence: 0.9 }
+    ])
+
+    // A second soda is placed and commits: the count goes up, and its confidence is the best seen.
+    h.state.logs.events = [
+      event({ enteredAt: BASE_S + 1 }),
+      event({ trackId: 2, enteredAt: BASE_S + 9, maxConf: 0.95 })
+    ]
+    await vi.advanceTimersByTimeAsync(9_000)
+    expect(h.calls.syncs.at(-1)?.items).toEqual([
+      { class_name: 'soda', quantity: 2, max_confidence: 0.95 }
+    ])
+
+    // Both are taken away: the settle window empties the counter, the floor holds the last
+    // verified count for the rest of the session.
+    h.state.logs.events = [
+      event({ enteredAt: BASE_S + 1, leftAt: BASE_S + 14 }),
+      event({ trackId: 2, enteredAt: BASE_S + 9, maxConf: 0.95, leftAt: BASE_S + 15 })
+    ]
+    await vi.advanceTimersByTimeAsync(SYNC_HEARTBEAT_MS + 12_000)
+    expect(h.calls.syncs.at(-1)?.items).toEqual([
+      { class_name: 'soda', quantity: 2, max_confidence: 0.95 }
+    ])
+    orch.stop()
+  })
+
+  it('starts a rebound session at zero, not at the previous cart', async () => {
+    const h = harness()
+    h.state.logs.events = [event({ enteredAt: BASE_S + 1 })]
+    const orch = new PosSessionOrchestrator(h.deps)
+
+    await orch.start()
+    await vi.advanceTimersByTimeAsync(4_200)
+    expect(h.calls.syncs.at(-1)?.items).toEqual([
+      { class_name: 'soda', quantity: 1, max_confidence: 0.9 }
+    ])
+
+    // The customer finishes; the desktop unbinds on the paid status…
+    h.state.remote = { ...SESSION, cartStatus: 'paid' }
+    await vi.advanceTimersByTimeAsync(6_000)
+    expect(h.calls.states.at(-1)?.phase).toBe('unbound')
+
+    // …and the next customer opens a session: the floor is gone, so nothing of the previous
+    // cart can leak into the new one even though the track events are still in the log.
+    h.state.remote = { ...SESSION, sessionRef: 'scanncart-counter-1-2' }
+    await vi.advanceTimersByTimeAsync(SYNC_HEARTBEAT_MS + 6_000)
+    const rebound = h.calls.syncs.filter((s) => s.session_ref === 'scanncart-counter-1-2')
+    expect(rebound.length).toBeGreaterThanOrEqual(1)
+    for (const sync of rebound) {
+      expect(sync.items).toEqual([])
+    }
+    orch.stop()
+  })
+
+  it('restores the persisted floor after an app restart mid-session', async () => {
+    const h = harness()
+    h.state.logs.events = [event({ enteredAt: BASE_S + 1 })]
+    const first = new PosSessionOrchestrator(h.deps)
+    await first.start()
+    await vi.advanceTimersByTimeAsync(4_200)
+    expect(h.calls.syncs.at(-1)?.items).toEqual([
+      { class_name: 'soda', quantity: 1, max_confidence: 0.9 }
+    ])
+    first.stop()
+
+    // The app restarts: a new orchestrator, the same session still open, and the camera blind to
+    // the item (the customer is holding it). The saved floor must come back, or the next empty
+    // snapshot would reconcile the verified row out of the cart.
+    h.state.logs = { sessionId: 1, events: [] }
+    const second = new PosSessionOrchestrator(h.deps)
+    await second.start()
+    await vi.advanceTimersByTimeAsync(4_200)
+    expect(h.calls.syncs.at(-1)?.items).toEqual([
+      { class_name: 'soda', quantity: 1, max_confidence: 0.9 }
+    ])
+    second.stop()
+  })
+
+  it('does not serve a floor saved for a different session', async () => {
+    const h = harness()
+    h.state.savedFloor = {
+      sessionRef: 'scanncart-counter-1-0',
+      items: [{ className: 'soda', quantity: 3, maxConfidence: 0.9 }]
+    }
+    const orch = new PosSessionOrchestrator(h.deps)
+
+    await orch.start()
+    await vi.advanceTimersByTimeAsync(SYNC_HEARTBEAT_MS + 4_000)
+
+    // The stale floor was dropped at bind, not counted into the new cart.
+    expect(h.state.floorClears).toBeGreaterThanOrEqual(1)
+    for (const sync of h.calls.syncs) {
+      expect(sync.items).toEqual([])
+    }
+    orch.stop()
+  })
+
+  it('clears the persisted floor when the session ends', async () => {
+    const h = harness()
+    h.state.logs.events = [event({ enteredAt: BASE_S + 1 })]
+    const orch = new PosSessionOrchestrator(h.deps)
+
+    await orch.start()
+    await vi.advanceTimersByTimeAsync(4_200)
+    expect(h.state.savedFloor).not.toBeNull()
+
+    h.state.remote = { ...SESSION, cartStatus: 'paid' }
+    await vi.advanceTimersByTimeAsync(6_000)
+    expect(h.calls.states.at(-1)?.phase).toBe('unbound')
+    expect(h.state.savedFloor).toBeNull()
     orch.stop()
   })
 
@@ -453,6 +621,118 @@ describe('PosSessionOrchestrator', () => {
 
     expect(h.calls.starts).toBe(1)
     expect(h.calls.states.at(-1)?.phase).toBe('error')
+    orch.stop()
+  })
+})
+
+describe('PosSessionOrchestrator — basket mode', () => {
+  /** A basket port backed by a plain ledger, driven by the test instead of a camera. */
+  // eslint-disable-next-line @typescript-eslint/explicit-function-return-type -- a test harness whose shape is its own return
+  async function withBasket(mode: 'counter' | 'basket') {
+    const { BasketLedger } = await import('./basketLedger')
+    const ledger = new BasketLedger()
+    const bound: string[] = []
+    let unbinds = 0
+    const h = harness()
+    h.state.cfg = { ...CFG, cartMode: mode }
+    h.deps.basket = {
+      bind: async (ref) => {
+        bound.push(ref)
+        await ledger.bind(ref, BASE_S)
+      },
+      unbind: () => {
+        unbinds += 1
+        ledger.unbind()
+      },
+      snapshot: () => ledger.snapshot(),
+      pendingReview: () => ledger.pendingReview(),
+      readout: () => ({
+        candidates: 0,
+        itemCount: [...ledger.snapshot().values()].reduce((n, e) => n + e.quantity, 0),
+        items: [],
+        review: ledger.pendingReview(),
+        blind: false
+      })
+    }
+    const deposit = (className: string, at: number, trackId = 1): ApplyResult =>
+      ledger.apply(
+        { kind: 'inbound', className, completedAt: at, trackId, completionConf: 0.9 },
+        'z'
+      )
+    const removal = (className: string, at: number, trackId = 1): ApplyResult =>
+      ledger.apply(
+        { kind: 'outbound', className, completedAt: at, trackId, completionConf: 0.9 },
+        'z'
+      )
+    return { h, ledger, bound, unbinds: () => unbinds, deposit, removal }
+  }
+
+  it('posts the ledger, and a confirmed removal lowers the cart', async () => {
+    const b = await withBasket('basket')
+    const orch = new PosSessionOrchestrator(b.h.deps)
+    await orch.start()
+    await vi.advanceTimersByTimeAsync(1_500)
+    expect(b.bound).toEqual([SESSION.sessionRef])
+
+    b.deposit('soda', BASE_S + 1)
+    b.deposit('soda', BASE_S + 2, 2)
+    await vi.advanceTimersByTimeAsync(1_500)
+    expect(b.h.calls.syncs.at(-1)?.items).toEqual([
+      { class_name: 'soda', quantity: 2, max_confidence: 0.9 }
+    ])
+
+    b.removal('soda', BASE_S + 3, 2)
+    await vi.advanceTimersByTimeAsync(1_500)
+    expect(b.h.calls.syncs.at(-1)?.items[0].quantity).toBe(1)
+    // Basket mode never reads the counter's logs.
+    expect(b.h.calls.logs).toEqual([])
+    orch.stop()
+  })
+
+  it('carries review in the payload, and a review change alone is posted', async () => {
+    const b = await withBasket('basket')
+    const orch = new PosSessionOrchestrator(b.h.deps)
+    await orch.start()
+    await vi.advanceTimersByTimeAsync(1_500)
+    expect(b.h.calls.syncs.at(-1)?.pending_review).toBe(0)
+
+    const before = b.h.calls.syncs.length
+    b.ledger.flag('soda', 'two items crossed the opening at once', BASE_S + 1)
+    await vi.advanceTimersByTimeAsync(1_500)
+    expect(b.h.calls.syncs.length).toBeGreaterThan(before)
+    expect(b.h.calls.syncs.at(-1)).toMatchObject({
+      pending_review: 1,
+      review_reasons: ['two items crossed the opening at once']
+    })
+    orch.stop()
+  })
+
+  it('counter mode keeps posting the counter, with the ledger as a shadow readout', async () => {
+    const b = await withBasket('counter')
+    b.h.state.logs.events = [event({ enteredAt: BASE_S + 1 })]
+    const orch = new PosSessionOrchestrator(b.h.deps)
+    await orch.start()
+    await vi.advanceTimersByTimeAsync(500)
+    b.deposit('tuna', BASE_S + 1)
+    orch.notifyBasketChanged()
+    await vi.advanceTimersByTimeAsync(3_700)
+
+    const last = b.h.calls.syncs.at(-1)
+    expect(last?.items.map((i) => i.class_name)).toEqual(['soda'])
+    expect(last).not.toHaveProperty('pending_review')
+    expect(b.h.calls.states.at(-1)?.basket?.itemCount).toBe(1)
+    expect(b.bound).toEqual([SESSION.sessionRef])
+    orch.stop()
+  })
+
+  it('unbinds the ledger when the session ends', async () => {
+    const b = await withBasket('basket')
+    const orch = new PosSessionOrchestrator(b.h.deps)
+    await orch.start()
+    await vi.advanceTimersByTimeAsync(1_500)
+    b.h.state.remote = { ...SESSION, cartStatus: 'paid' }
+    await vi.advanceTimersByTimeAsync(6_000)
+    expect(b.unbinds()).toBe(1)
     orch.stop()
   })
 })

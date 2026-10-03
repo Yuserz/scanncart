@@ -38,9 +38,13 @@ function useRetryCountdown(retryAtMs: number | null): number | null {
   return Math.ceil((retryAtMs - nowMs) / 1000)
 }
 
-// A read-only readout of the POS integration: whether the desktop is bound to a counter session,
-// which cart, how many items it has synced, and any error. Nothing here controls the coupling —
-// the tablet's Start is what binds it — so there is nothing to click.
+// A readout of the POS integration: whether the desktop is bound to a counter session, which cart,
+// how many items it has synced, and any error. Nothing here controls the coupling — the tablet's
+// Start is what binds it. The one control is for staff: the basket ledger's unresolved
+// interactions block Finish on the tablet until someone has looked at the basket and cleared them.
+//
+// The basket row is labelled `(shadow)` in counter mode: it is what the transfer ledger *would*
+// post, shown beside the posted count so the two can be compared before switching modes.
 export function PosPanel(): JSX.Element | null {
   const state = usePosState()
   const retryInS = useRetryCountdown(state?.retryAtMs ?? null)
@@ -70,6 +74,31 @@ export function PosPanel(): JSX.Element | null {
           <b data-testid="pos-age">{describeAge(state.lastSyncAgeS)}</b>
         </div>
       </div>
+      {state.basket && (
+        <div className="pos-row">
+          <small>{state.cartMode === 'basket' ? 'basket' : 'basket (shadow)'}</small>
+          <b data-testid="pos-basket">
+            {state.basket.itemCount}
+            {state.basket.blind ? ' · camera blind' : ''}
+          </b>
+        </div>
+      )}
+      {state.basket && state.basket.review.length > 0 && (
+        <div className="pos-review" data-testid="pos-review">
+          <p className="pos-error" title={state.basket.review.map((r) => r.reason).join('\n')}>
+            {state.basket.review.length === 1
+              ? `needs review: ${state.basket.review[0].reason}`
+              : `${state.basket.review.length} need review — latest: ${state.basket.review.at(-1)?.reason}`}
+          </p>
+          <button
+            type="button"
+            data-testid="pos-review-clear"
+            onClick={() => void window.api?.resolvePosReview?.()}
+          >
+            Basket checked
+          </button>
+        </div>
+      )}
       {state.error && (
         <p className="pos-error" data-testid="pos-error">
           {state.error}

@@ -10,6 +10,8 @@ import {
   probePosSession,
   type PosSessionProbe
 } from './posClient'
+import { BasketLedgerFileStore } from './basketLedger'
+import { PosFloorStore } from './posFloorStore'
 import {
   DEFAULT_TRACK_EXPIRY_S,
   insecureBaseUrlWarning,
@@ -27,14 +29,30 @@ import {
   type RemoteSession,
   type SidecarLogsResponse
 } from './posSession'
+import { DEFAULT_ZONE_PRESET } from './transferGeometry'
+import { BasketTracker } from './transferStream'
 
 export const POS_STATE_CHANNEL = 'pos:state'
 
 const SIDECAR_TIMEOUT_MS = 6000
+/** How often the basket tracker checks for a stream that went quiet (ms). */
+const BASKET_TICK_MS = 1000
+/**
+ * How often the scanner's `conf_threshold` is re-read (ms). It is hot-reloadable on the sidecar
+ * and nothing pushes a settings change, so the basket follows it by polling; a few seconds of lag
+ * only ever errs strict, because the sidecar itself drops detections under the new value at once.
+ */
+const CONF_POLL_MS = 5000
 
 export class PosController {
   private readonly store: PosConfigStore
+  private readonly floorStore: PosFloorStore
   private readonly orchestrator: PosSessionOrchestrator
+  private readonly basket: BasketTracker
+  private basketTimer: ReturnType<typeof setInterval> | null = null
+  private confTimer: ReturnType<typeof setInterval> | null = null
+  /** The last basket readout pushed, so a frame that changed nothing sends no IPC. */
+  private lastBasketKey = ''
   /** `null` until the orchestrator reports something: a disabled integration has no state to show. */
   private state: PosState | null = null
 
@@ -43,6 +61,16 @@ export class PosController {
     userDataDir: string
   ) {
     this.store = new PosConfigStore(userDataDir)
+    this.floorStore = new PosFloorStore(userDataDir)
+    this.basket = new BasketTracker(DEFAULT_ZONE_PRESET, {
+      store: new BasketLedgerFileStore(userDataDir),
+      onChange: (readout) => {
+        const key = JSON.stringify(readout)
+        if (key === this.lastBasketKey) return
+        this.lastBasketKey = key
+        this.orchestrator.notifyBasketChanged()
+      }
+    })
     this.orchestrator = new PosSessionOrchestrator(this.buildDeps())
   }
 
@@ -54,21 +82,51 @@ export class PosController {
       getLogs: (since) => this.getLogs(since),
       getRemoteSession: (stationId) => this.getRemoteSession(stationId),
       postSync: (payload) => this.postSync(payload),
+      floorStore: this.floorStore,
+      basket: this.basket,
       emit: (state) => this.setState(state)
     }
   }
 
   // ---- lifecycle ----
   async start(): Promise<void> {
+    await this.applyZones()
+    const port = this.getPort()
+    if (port !== null) {
+      this.basket.connect(port)
+      this.basketTimer = setInterval(() => this.basket.tick(), BASKET_TICK_MS)
+      void this.syncConfThreshold()
+      this.confTimer = setInterval(() => void this.syncConfThreshold(), CONF_POLL_MS)
+    }
     await this.orchestrator.start()
   }
 
   stop(): void {
     this.orchestrator.stop()
+    this.basket.close()
+    if (this.basketTimer !== null) clearInterval(this.basketTimer)
+    this.basketTimer = null
+    if (this.confTimer !== null) clearInterval(this.confTimer)
+    this.confTimer = null
   }
 
   async refreshConfig(): Promise<void> {
+    await this.applyZones()
     await this.orchestrator.refreshConfig()
+  }
+
+  /** Staff confirmed the basket: clear one review item, or all of them. */
+  resolveBasketReview(id?: string): void {
+    this.basket.resolveReview(id)
+  }
+
+  private async applyZones(): Promise<void> {
+    const c = await this.store.load()
+    this.basket.setZones({
+      cartEdge: c.cartEdge,
+      insideFraction: c.insideFraction,
+      openingFraction: c.openingFraction
+    })
   }
 
   // ---- IPC surface ----
@@ -83,7 +141,7 @@ export class PosController {
   async saveConfig(patch: Partial<PosConfig>): Promise<PosConfig> {
     const trackExpiryS = await this.readTrackExpiryS().catch(() => DEFAULT_TRACK_EXPIRY_S)
     const saved = await this.store.save(patch, trackExpiryS)
-    await this.orchestrator.refreshConfig()
+    await this.refreshConfig()
     return saved
   }
 
@@ -213,6 +271,16 @@ export class PosController {
         enteredAt: event.entered_at,
         leftAt: event.left_at
       }))
+    }
+  }
+
+  /** The basket infers at exactly the scanner's threshold: 0.9 there means nothing under 0.9 here. */
+  private async syncConfThreshold(): Promise<void> {
+    try {
+      const body = await this.sidecarJson<{ conf_threshold?: number }>('/api/settings')
+      if (typeof body.conf_threshold === 'number') this.basket.setConfThreshold(body.conf_threshold)
+    } catch {
+      // An unreachable sidecar sends no frames either; the last known threshold stands.
     }
   }
 

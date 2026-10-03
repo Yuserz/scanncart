@@ -67,6 +67,39 @@ describe('PosConfigStore', () => {
     expect(await store.load()).toEqual(DEFAULT_POS_CONFIG)
   })
 
+  it('defaults to counter mode with the cart at the bottom of the frame', async () => {
+    const loaded = await store.load()
+    expect(loaded.cartMode).toBe('counter')
+    expect(loaded.cartEdge).toBe('bottom')
+  })
+
+  it('saves basket mode and a different cart edge', async () => {
+    await store.save({ cartMode: 'basket', cartEdge: 'left', insideFraction: 0.3 })
+    const loaded = await store.load()
+    expect([loaded.cartMode, loaded.cartEdge, loaded.insideFraction]).toEqual([
+      'basket',
+      'left',
+      0.3
+    ])
+  })
+
+  it('refuses bands that leave no outside region, and writes nothing', async () => {
+    await expect(store.save({ insideFraction: 0.6, openingFraction: 0.4 })).rejects.toBeInstanceOf(
+      PosConfigError
+    )
+    expect(await store.load()).toEqual(DEFAULT_POS_CONFIG)
+  })
+
+  it('reads an unknown mode or edge as the default', async () => {
+    await fs.writeFile(
+      join(dir, 'pos.json'),
+      JSON.stringify({ cartMode: 'magic', cartEdge: 'up' }),
+      'utf8'
+    )
+    const loaded = await store.load()
+    expect([loaded.cartMode, loaded.cartEdge]).toEqual(['counter', 'bottom'])
+  })
+
   it('accepts a commitDwellS above the sidecar expiry', async () => {
     const saved = await store.save({ commitDwellS: 2 }, 1.5)
     expect(saved.commitDwellS).toBe(2)

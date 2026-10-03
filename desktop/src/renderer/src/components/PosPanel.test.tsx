@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { PosPanel } from './PosPanel'
 import type { PosState } from '../../../main/posSession'
 
@@ -9,7 +9,9 @@ const BOUND: PosState = {
   syncedItemCount: 3,
   lastSyncAgeS: 12,
   error: null,
-  retryAtMs: null
+  retryAtMs: null,
+  cartMode: 'counter',
+  basket: null
 }
 
 type Listener = (state: PosState) => void
@@ -139,6 +141,45 @@ describe('PosPanel', () => {
 
     await waitFor(() => expect(screen.getByTestId('pos-phase')).toHaveTextContent('syncing'))
     expect(screen.queryByTestId('pos-retry')).toBeNull()
+  })
+
+  it('labels the basket as a shadow in counter mode', async () => {
+    stubBridge({
+      ...BOUND,
+      basket: { candidates: 0, itemCount: 2, items: [], review: [], blind: false }
+    })
+    render(<PosPanel />)
+    await waitFor(() => expect(screen.getByTestId('pos-basket')).toHaveTextContent('2'))
+    expect(screen.getByText('basket (shadow)')).toBeInTheDocument()
+    expect(screen.queryByTestId('pos-review')).toBeNull()
+  })
+
+  it('shows what needs review and lets staff clear it', async () => {
+    const resolved: Array<string | undefined> = []
+    stubBridge({
+      ...BOUND,
+      cartMode: 'basket',
+      basket: {
+        candidates: 0,
+        itemCount: 1,
+        items: [],
+        review: [
+          { id: 'r1', className: 'soda', reason: 'two items crossed the opening at once', at: 1 }
+        ],
+        blind: true
+      }
+    })
+    ;(window.api as unknown as Record<string, unknown>).resolvePosReview = async (id?: string) => {
+      resolved.push(id)
+    }
+    render(<PosPanel />)
+    await waitFor(() =>
+      expect(screen.getByTestId('pos-review')).toHaveTextContent('two items crossed')
+    )
+    expect(screen.getByText('basket')).toBeInTheDocument()
+    expect(screen.getByTestId('pos-basket')).toHaveTextContent('camera blind')
+    fireEvent.click(screen.getByTestId('pos-review-clear'))
+    expect(resolved).toEqual([undefined])
   })
 
   it('renders nothing when the bridge has no POS methods', async () => {
