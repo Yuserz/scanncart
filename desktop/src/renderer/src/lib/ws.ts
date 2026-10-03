@@ -33,6 +33,12 @@ export interface FrameMessage {
   jpeg: string
   detections: Detection[]
   stats: FrameStats
+  // True only on an emit that carried a new inference; preview fill-ins reuse the last boxes.
+  // Optional because a sidecar that predates the field sends no key, which reads as fresh.
+  fresh?: boolean
+  // Whether `detections` were reflected to match a mirrored preview. Undo with
+  // `(1 - x2, y1, 1 - x1, y2)` to get true frame geometry.
+  mirrored?: boolean
 }
 
 export interface StatusMessage {

@@ -219,6 +219,7 @@ class Pipeline:
 
         msg = FrameMessage(
             type="frame", ts=t1, seq=seq, jpeg=jpeg, detections=shown, stats=stats,
+            fresh=True, mirrored=bool(self._settings.preview_mirror),
         ).model_dump()
         self._on_message(msg)
         return msg
@@ -257,6 +258,7 @@ class Pipeline:
             type="frame", ts=now, seq=seq, jpeg=jpeg, detections=shown,
             stats=stats
             or Stats(infer_fps=0.0, capture_fps=self._capture_fps(), latency_ms=0.0),
+            fresh=False, mirrored=bool(self._settings.preview_mirror),
         ).model_dump()
         self._on_message(msg)
         return msg

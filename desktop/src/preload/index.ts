@@ -1,6 +1,11 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 import type { SidecarHealth } from '../main/sidecarHealth'
+import type { PosConfig } from '../main/posConfig'
+import type { PosConnectionResult, PosState } from '../main/posSession'
+
+// The channel the main process pushes POS state on, mirroring `sidecar:health`.
+const POS_STATE_CHANNEL = 'pos:state'
 
 // Custom APIs for renderer. Hands the renderer the sidecar port (null until the
 // sidecar has reported it); the renderer then connects directly over WS/HTTP.
@@ -19,6 +24,26 @@ const api = {
     ipcRenderer.on('sidecar:health', listener)
     return () => {
       ipcRenderer.removeListener('sidecar:health', listener)
+    }
+  },
+  // The POS integration. Its config and its connection test go through the main process because
+  // the renderer cannot reach the pushcart-web host directly (CORS), and its state is pushed the
+  // same way sidecar health is — a read for a window that mounts late, a push for one already open.
+  getPosState: (): Promise<PosState | null> => ipcRenderer.invoke('pos:get-state'),
+  getPosConfig: (): Promise<PosConfig> => ipcRenderer.invoke('pos:get-config'),
+  savePosConfig: (patch: Partial<PosConfig>): Promise<PosConfig> =>
+    ipcRenderer.invoke('pos:save-config', patch),
+  testPosConnection: (): Promise<PosConnectionResult> => ipcRenderer.invoke('pos:test-connection'),
+  // Staff looked at the basket and confirmed it: clear one review item by id, or all of them.
+  resolvePosReview: (id?: string): Promise<void> => ipcRenderer.invoke('pos:resolve-review', id),
+  // `null` is a state this channel really carries - the feature being switched off, or nothing
+  // configured - rather than a value that only ever appears in a read, so it is part of the
+  // signature instead of something the renderer has to know to expect.
+  onPosState: (cb: (state: PosState | null) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, state: PosState | null): void => cb(state)
+    ipcRenderer.on(POS_STATE_CHANNEL, listener)
+    return () => {
+      ipcRenderer.removeListener(POS_STATE_CHANNEL, listener)
     }
   }
 }

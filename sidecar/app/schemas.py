@@ -60,6 +60,13 @@ class FrameMessage(BaseModel):
     jpeg: str
     detections: list[Detection]
     stats: Stats
+    # True only on the emit that carried a *new* inference. `emit_preview` fills the gaps between
+    # inferences with the last boxes, so a consumer counting observations (the basket transfer
+    # machine) must skip `fresh=False` frames or it counts one sighting several times.
+    fresh: bool = True
+    # Whether `detections` were reflected to match a mirrored preview (`preview_mirror`). A consumer
+    # that needs true frame geometry undoes it with the same rule: `(1 - x2, y1, 1 - x1, y2)`.
+    mirrored: bool = False
 
 
 class StatusMessage(BaseModel):

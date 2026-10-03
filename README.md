@@ -4,9 +4,11 @@ A capstone prototype for grocery stores: a Logitech StreamCam feeds a Python
 sidecar running YOLO11 (Ultralytics) object detection + tracking, and an
 Electron + React desktop app shows the live annotated feed, per-item stats,
 and a session item log. Everything runs locally on one PC — no server, no
-cloud, no network dependency. See [`docs/PRD.md`](docs/PRD.md) for the full
-product spec and [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for out-of-scope
-future work (edge hardware, cloud sync, etc).
+cloud, no network dependency, except for the optional self-checkout integration
+below, whose one hop is to a checkout you host yourself. See
+[`docs/PRD.md`](docs/PRD.md) for the full product spec and
+[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for out-of-scope future work (edge
+hardware, cloud sync, etc).
 
 ## Architecture
 
@@ -27,6 +29,14 @@ live frame stream, REST for start/stop/health/logs).
   capture, YOLO11 inference + tracking, SQLite detection logging.
 - **[`desktop/`](desktop/README.md)** — Electron + React + TypeScript UI:
   spawns/supervises the sidecar, renders the live view.
+
+The optional **self-checkout integration** adds one hop: a counter tablet runs a
+separate checkout (pushcart-web) that owns the cart, the order and the stock,
+and this app feeds it what the camera sees on the counter. It is off until an
+admin configures it. [`docs/POS_INTEGRATION.md`](docs/POS_INTEGRATION.md) is the
+setup, the operator-less flow and the troubleshooting table; the ordered run
+through both halves, to do before the shop goes live, is
+[`docs/POS_SMOKE_TEST.md`](docs/POS_SMOKE_TEST.md).
 
 ## Setup — clone to running app
 

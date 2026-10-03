@@ -7,6 +7,7 @@ import { boxToPercent } from '../lib/overlay'
 import { recordedConfirmation } from '../lib/resizeMode'
 import { Spinner } from '../components/Spinner'
 import { CameraTuning } from '../components/CameraTuning'
+import { PosPanel } from '../components/PosPanel'
 import './LiveView.css'
 
 export interface LiveViewProps {
@@ -648,6 +649,8 @@ export function LiveView({ port, deps }: LiveViewProps): JSX.Element {
               </div>
             ) : null}
           </div>
+
+          <PosPanel />
 
           <div className="card log-card">
             <h4>
