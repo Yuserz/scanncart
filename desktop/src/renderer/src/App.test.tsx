@@ -47,4 +47,18 @@ describe('App', () => {
       expect(screen.getByRole('button', { name: /start/i })).toBeInTheDocument()
     })
   })
+
+  it('tells a browser tab the truth instead of spinning forever', () => {
+    // The dev renderer URL opened outside Electron: no preload bridge, so port discovery can
+    // never resolve. The screen must say so rather than claim the sidecar is still loading.
+    const stubbed = window.api
+    delete (window as unknown as { api?: unknown }).api
+    try {
+      render(<App pollMs={10} />)
+      expect(screen.getByText(/Open the SCANnCART desktop app/i)).toBeInTheDocument()
+      expect(screen.queryByText(/Starting sidecar/i)).not.toBeInTheDocument()
+    } finally {
+      ;(window as unknown as { api?: unknown }).api = stubbed
+    }
+  })
 })
