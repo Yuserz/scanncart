@@ -33,6 +33,8 @@ export interface StandInRequest {
     session_ref: string
     station_id: string
     items: Array<{ class_name: string; quantity: number; max_confidence?: number }>
+    pending_review?: unknown
+    review_reasons?: unknown
   } | null
 }
 
@@ -74,6 +76,23 @@ function validate(payload: StandInRequest['payload']): string | null {
     }
     if (seen.has(item.class_name)) return `duplicate class_name: ${item.class_name}`
     seen.add(item.class_name)
+  }
+  // Basket mode's review state, refused in pushcart-web's words and order.
+  if (payload.pending_review !== undefined) {
+    const n = payload.pending_review
+    if (typeof n !== 'number' || !Number.isInteger(n) || n < 0) {
+      return 'pending_review must be an integer >= 0'
+    }
+  }
+  if (payload.review_reasons !== undefined) {
+    const r = payload.review_reasons
+    if (
+      !Array.isArray(r) ||
+      r.length > 50 ||
+      r.some((x) => typeof x !== 'string' || x.length > 300)
+    ) {
+      return 'review_reasons must be at most 50 strings'
+    }
   }
   return null
 }

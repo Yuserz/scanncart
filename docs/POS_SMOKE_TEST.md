@@ -40,7 +40,7 @@ One customer, in this order. The "expect" column is what makes the run a pass.
 | 2 | Watch the desktop | The panel flips `no session` → `syncing` within about a second, showing the cart code the tablet shows, `0` items |
 | 3 | Place one product and leave it | After ~3 s it is on the tablet, quantity 1, total = its price. **Record the add latency** (placed → in the cart); it should land near the dwell |
 | 4 | Place three different products, one at a time | Each appears with the right quantity, and the total is their sum |
-| 5 | Take one away | It leaves the tablet after ~10 s and the total drops. **Record the remove latency** (taken away → gone); it should land near the settle window. **Suspended 2026-10-03:** until the removal-capable model ships, the count **holds** here instead (the floor, see POS_INTEGRATION.md) and the tablet's Remove is the correction — record what you saw either way |
+| 5 | Take one away | It leaves the tablet after ~10 s and the total drops. **Record the remove latency** (taken away → gone); it should land near the settle window. In counter mode the count **holds** here instead (the floor, see POS_INTEGRATION.md) and staff's PIN removal is the correction; in basket mode lift it out through the opening and it leaves after the 1 s clearance — record what you saw either way |
 | 6 | Lift an item and set it back down (or pass a hand over it for 1–3 s) | Quantity stays 1 throughout — never 2, never 0. This is the track swap the settle window exists for |
 | 7 | Two identical products, apart; then touching | Apart: quantity 2 after the dwell. Touching or overlapping **may read as 1** — that under-count is known and parked (spec §7.1). Correct it on the tablet, and write down what you saw |
 | 8 | Tap **Finish** with items still on the counter | The order is created, stock is decremented, the cart is `paid` and the session `completed`; the tablet signs out and returns to the start screen; the desktop **unbinds on its own** (the panel reads `no session`) with capture **still running** — the preview keeps streaming |
@@ -64,10 +64,12 @@ These are the paths that decide whether a wrong count is *fixable* at the counte
 
 | Do | Expect |
 | --- | --- |
-| Remove a camera-detected item on the tablet, then leave the item on the counter | It stays removed. Later snapshots report it `overridden` and never re-add it, however long it sits there |
-| Change a quantity on the tablet, then place a second unit of that product | The camera does not add it; the customer increments the quantity on the tablet |
+| Look for a way to edit the cart as the customer | There is none: the tablet shows quantities only, and no *−*, *+* or *×* |
+| *Staff* → wrong PIN → *Remove 1* | *Wrong staff PIN*; nothing changes |
+| *Staff* → `POS_STAFF_PIN` → *Remove 1* on a camera-detected item, then leave the item on the counter | The quantity drops by one and stays there. Later snapshots report it `overridden` and never re-add it |
+| (basket mode) Make two items cross the opening together | The tablet shows *Staff check needed* and Finish is disabled; **Basket checked** on the desktop clears it within a sync |
 | Place an item whose class is not mapped to a product | The tablet shows *N items not recognized — please ask staff*; nothing enters the cart. Staff add it by hand as a manual row, and later snapshots leave that row alone |
-| Check the shrinkage trail | The admin screen's customer-edits list shows the removals from this run (`pos_sync_log` rows with `kind = customer_edit`) — the only record that a camera-detected item was taken out |
+| Check the shrinkage trail | `pos_sync_log` rows with `kind = staff_edit` are the staff removals from this run — the only record that a camera-detected item was taken off by hand |
 
 ## 3. The failure paths worth running at go-live
 
@@ -92,7 +94,7 @@ tablet, the database and a person — and this list does not replace it.
 
 | Break it like this | Expect |
 | --- | --- |
-| Stop pushcart-web (or point the desktop at a dead port) with items in the cart | The panel shows the sync error **and `retrying in Ns`**, counting down; the retry interval backs off instead of flooding. The tablet keeps showing the cart, editing and **Finish still works** — it reads the database, not the desktop |
+| Stop pushcart-web (or point the desktop at a dead port) with items in the cart | The panel shows the sync error **and `retrying in Ns`**, counting down; the retry interval backs off instead of flooding. The tablet keeps showing the cart and **Finish still works** — it reads the database, not the desktop |
 | Start pushcart-web again | The next snapshot converges the cart, no duplicate rows appear, and the countdown disappears |
 | Stop the camera mid-session (Admin Panel, or unplug it) | The desktop restarts capture once — an operator's *Stop capture* looks exactly like a crash from the desktop's side, which is why it comes back; that is expected here. While it is blind the panel reads `warming up` and the counts are **held** — nothing leaves the cart. The tablet can still finish. If the restart fails, the panel says capture is down and the cart stays at its last counts |
 | Set **Commit dwell** to 1 and save | Save is refused, naming `track_expiry_s` — one item can never read as two |

@@ -214,6 +214,33 @@ const PROTOCOL_CHECKS: ProtocolCheck[] = [
     }
   },
   {
+    name: 'refuses a negative review count as 400 (basket mode), before any session lookup',
+    run: async (target) => {
+      const refused = postCartSync(target.baseUrl, target.secret, {
+        session_ref: target.deadSessionRef,
+        station_id: target.knownStationId,
+        items: [],
+        pending_review: -1
+      })
+      await expect(refused).rejects.toBeInstanceOf(PosTransportError)
+      await expect(refused).rejects.toThrow(/400/)
+    }
+  },
+  {
+    name: 'reads a review sync for a session that is not open as a conflict',
+    run: async (target) => {
+      await expect(
+        postCartSync(target.baseUrl, target.secret, {
+          session_ref: target.deadSessionRef,
+          station_id: target.knownStationId,
+          items: [{ class_name: 'soda', quantity: 1, max_confidence: 0.9 }],
+          pending_review: 1,
+          review_reasons: ['two items crossed the opening at once']
+        })
+      ).rejects.toBeInstanceOf(PosConflictError)
+    }
+  },
+  {
     name: 'reads a wrong secret on the sync route as a transport failure too',
     run: async (target) => {
       await expect(

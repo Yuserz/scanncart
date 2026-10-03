@@ -8,6 +8,8 @@
     "default": "generalErrorResponse",
     "forbidden": "forbiddenResponse",
     "insufficient_stock": "conflictRequestResponse",
+    "invalid_quantity": "badRequestResponse",
+    "review_pending": "conflictRequestResponse",
     "session_closed": "conflictRequestResponse",
     "unknown_station": "notFoundResponse"
   },

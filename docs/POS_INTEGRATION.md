@@ -11,7 +11,7 @@ Two machines, one hop:
 
 | Where | What it does |
 | --- | --- |
-| Counter tablet (a browser) | Runs the customer-facing pages *inside pushcart-web*. Starts the session, shows the live cart and total, takes removals and quantity edits, and finishes. |
+| Counter tablet (a browser) | Runs the customer-facing pages *inside pushcart-web*. Starts the session, shows the live cart and total (read-only: the camera adds and removes items), shows the scanner's *staff check needed* notice, takes the staff-PIN removal, and finishes. |
 | SCANnCART desktop (Electron) | Keeps the camera running, binds to the tablet's session, derives the cart from what the tracker saw, and syncs it. Shows a read-only POS panel (Live view) and the integration's settings (Admin Panel). |
 | pushcart-web host | Holds the cart, the order and the stock. Reachable from the desktop over the LAN or the internet. |
 
@@ -37,8 +37,14 @@ the shop goes live, the ordered run is [POS_SMOKE_TEST.md](./POS_SMOKE_TEST.md).
 2. Put two variables in the environment pushcart-web runs with (its README documents both):
 
    ```json
-   { "POS_INGEST_SECRET": "<32+ hex>", "POS_IDLE_CANCEL_MINUTES": 5 }
+   { "POS_INGEST_SECRET": "<32+ hex>", "POS_IDLE_CANCEL_MINUTES": 5, "POS_STAFF_PIN": "<digits>" }
    ```
+
+   `POS_STAFF_PIN` turns on the one manual correction left: staff lowering a quantity on the
+   tablet (*Staff* → PIN → *Remove 1*). Empty means off. Customers cannot add, change or remove
+   items at all — the tablet has no buttons for it, the routes answer `403`, and the database's own
+   policies refuse a direct write to a cart in an open session (migration
+   `20261003120000_pos_basket_automation.sql`).
 
    `POS_INGEST_SECRET` is what the desktop sends as the `x-pos-token` header; `POS_IDLE_CANCEL_MINUTES`
    is how long an abandoned session blocks the counter before the next customer's *Start* cancels it
@@ -111,13 +117,17 @@ running rather than the default.
    **Suspended 2026-10-03:** the next model is not ready to tell a taken item from a lost track,
    so the desktop holds every verified count for the rest of the session (the camera can only add
    to it, and the count survives an app restart — the floor is kept beside `pos.json`, keyed to
-   the session; the tablet's Remove button, an override, is still the way out). This step
-   describes the behavior the removal model restores.
-6. **The customer disagrees.** Removing or changing a quantity on the tablet is recorded as an
-   override, and the camera stops managing that product for the rest of the session (it will not
-   re-add it, however long it sits there). If a second unit is then placed, the customer increments
-   the quantity on the tablet.
-7. **Finish.** The tablet creates the order in one transaction: stock is checked first (an order for
+   the session). In **basket mode** (§4a) a confirmed removal lowers the cart instead; in counter
+   mode staff's PIN removal is the way out.
+6. **The camera got it wrong.** Customers cannot edit the cart. Staff unlock *Staff* on the tablet
+   with `POS_STAFF_PIN` and tap *Remove 1* on the line; it can only lower a quantity, it is logged as
+   `pos_sync_log.kind = staff_edit`, and the camera stops managing that product for the rest of the
+   session (an override, so the next snapshot cannot put it back). Five wrong PINs lock it for a
+   minute.
+7. **Finish.** Refused while the scanner reports review (`review_pending`, `409`): the tablet shows
+   *Staff check needed* with the reasons, and Finish is disabled until staff press **Basket checked**
+   on the desktop and the next sync clears it. Then the tablet creates the order in one
+   transaction: stock is checked first (an order for
    more than is in stock is refused, naming the items, and staff resolve it), then the order, the VAT
    and the stock deduction that pushcart-web's trigger performs. The session becomes `completed`, the
    cart `paid`.
