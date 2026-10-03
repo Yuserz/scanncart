@@ -86,9 +86,45 @@ the same format from stdin, and combining it with `--trial` is refused.
 
 In the scorecard CSV, `endpoint_reached` for a **no-transfer** row means "the endpoint was correctly
 withheld" — a `0` there is a false commit, which is how the summary counts them. Deposits and removals
-use the column literally (endpoint observed = `1`). Each row also carries a `graded_at` UTC timestamp
-(written on every save, so a regrade's row carries its own moment and the scorecard reads as an ordered
-history — latest grade per trial wins); the `--summary` block prints the most recent grade's time.
+use the column literally (endpoint observed = `1`). Each row also carries a `graded_at` UTC timestamp,
+and the scorecard is an **append-only grade log**: a regrade adds a row rather than replacing one,
+`graded_at` orders the history, and every summary, resume, and import decision reads the *latest*
+grade per trial. The `--summary` block prints the most recent grade's time, and `--history` prints
+each trial's full timeline (regrades included, oldest first — `--trial <ID>` narrows it to one trial):
+
+```bash
+# Print each trial's grade timeline from the scorecard:
+sidecar/.venv/Scripts/python.exe sidecar/tools/gate_a_reviewer.py --out data/gate_a_footage --session s1 --reviewer R1 --history
+```
+
+`--history` cannot be combined with `--summary` or `--from-csv`; grades written before the timestamp
+column existed render as `(unstamped)` and sort oldest.
+
+Once a second reviewer has also graded the session, `--merge R2` compares the two scorecards trial
+by trial — the *latest* grade per trial on each side, so a regrade on either side is what the merge
+reads — and classifies every manifest trial as agreed or disputed. Each disputed trial is written
+to an adjudication worksheet carrying both reviewers' marks side by side plus blank adjudication
+columns, and the run exits nonzero so a scripted merge notices that adjudication is pending. The
+worksheet is deliberately never overwritten: marks already entered in it would be lost, so
+adjudicate it (or delete it) before re-merging.
+
+```bash
+# Compare R1's and R2's scorecards and write the disputed trials to the worksheet:
+sidecar/.venv/Scripts/python.exe sidecar/tools/gate_a_reviewer.py --out data/gate_a_footage --session s1 --reviewer R1 --merge R2
+
+# The adjudicator grades the disputed clips, fills the worksheet's five indicator columns,
+# and imports it back the same way a paper scorecard is imported:
+sidecar/.venv/Scripts/python.exe sidecar/tools/gate_a_reviewer.py --out data/gate_a_footage --session s1 --reviewer R2 --from-csv data/gate_a_footage/s1/adjudication_R1_R2.csv
+```
+
+The worksheet's tail is the import header from above, with both reviewers' verdicts and marks
+alongside it, so the adjudicator fills the same five indicator columns the §5 paper tables carry.
+Rows left unfilled are **rejected** at import — a mark nobody entered is never guessed at — and the
+imported grades land on the adjudicator's scorecard as the latest per trial. A merge never modifies
+a reviewer's scorecard: it reads both and writes only the worksheet, and a re-merge after
+adjudication still reports the two reviewers' (real) disagreement, because the disputed set is a
+worklist for the §4 adjudication rather than a verdict. `--merge` cannot be combined with
+`--summary`, `--history`, `--from-csv`, or `--trial`, and the two reviewer ids must differ.
 
 Every grading prompt names its indicator key — `[3y / 3n] > ` — and the expected answer is that key
 plus the verdict (`3n`), so an answer is always attached to the indicator it judges. A bare `y`/`n`
@@ -160,7 +196,8 @@ Removal:  [INSIDE]  ──▶ [OPENING] ──▶ [OUTSIDE] ──▶ [CLEAR RIM
 ## 4. Human review rubric & scoring formula
 
 Each recorded trial clip is evaluated independently by Reviewer 1 (R1). Any ambiguous or disputed clip
-is adjudicated by Reviewer 2 (R2).
+is adjudicated by Reviewer 2 (R2) — `--merge R2` in §2.1 is the tooling that flags exactly the
+disputed set and hands it to the adjudicator as a worksheet.
 
 ### 4.1 Clip evaluation checklist
 

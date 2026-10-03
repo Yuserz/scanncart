@@ -11,16 +11,20 @@ five binary indicators `docs/GATE_A_RUN_SHEET.md` §4.1 defines:
     4. Hold duration valid (>= 1.0 s)
     5. No visual ambiguity
 
-Verdict is PASS only when all five indicators are 1. Grades are written incrementally
-to a CSV scorecard, so an interrupted review session resumes where it left off, and a
-`--summary` pass re-computes the Gate A thresholds (>= 57/60 readable SKUs, >= 29/30
-deposits, >= 29/30 removals, 0/30 no-transfer false commits) from the CSV alone.
+Verdict is PASS only when all five indicators are 1. Grades are appended to a CSV
+scorecard — an append-only log, so an interrupted review session resumes where it left
+off, a regrade adds a row rather than replacing one, and `--history` prints each trial's
+timeline. A `--summary` pass re-computes the Gate A thresholds (>= 57/60 readable SKUs,
+>= 29/30 deposits, >= 29/30 removals, 0/30 no-transfer false commits) from the latest
+grade per trial.
 
 Usage (run from sidecar/):
     .venv/Scripts/python.exe tools/gate_a_reviewer.py --out data/gate_a_footage --session s1 --reviewer R1
     .venv/Scripts/python.exe tools/gate_a_reviewer.py --out data/gate_a_footage --session s1 --reviewer R1 --trial DEP-01
     .venv/Scripts/python.exe tools/gate_a_reviewer.py --out data/gate_a_footage --session s1 --summary
+    .venv/Scripts/python.exe tools/gate_a_reviewer.py --out data/gate_a_footage --session s1 --history
     .venv/Scripts/python.exe tools/gate_a_reviewer.py --out data/gate_a_footage --session s1 --from-csv paper.csv
+    .venv/Scripts/python.exe tools/gate_a_reviewer.py --out data/gate_a_footage --session s1 --reviewer R1 --merge R2
 
 Playback controls (in the OpenCV window): SPACE pause/resume, LEFT/RIGHT arrow seek
 1 s, S restart clip, Q or ESC advance to grading. When no window can be opened
@@ -77,9 +81,9 @@ VALID_KINDS = ("deposit", "removal", "no_transfer")
 class Grade:
     """One reviewer's verdict for one trial — the row a scorecard carries.
 
-    `graded_at` is the UTC moment the verdict was recorded, written on every save so
-    a regrade's row carries its own time and the scorecard reads as an ordered history
-    (latest grade per trial wins) rather than a set of indistinguishable overwrites.
+    `graded_at` is the UTC moment the verdict was recorded, written on every append:
+    the scorecard is an append-only log, so a regrade's row carries its own time and
+    the file reads as an ordered history — latest grade per trial wins.
     """
 
     trial_id: str
@@ -138,16 +142,25 @@ def load_manifest(session_dir: Path) -> dict[str, Any]:
 
 
 def load_grades(scorecard_path: Path) -> dict[str, dict[str, str]]:
-    """Existing grades keyed by trial_id (an empty file or absent file means none)."""
+    """Latest grade per trial_id (an absent file means none).
+
+    The scorecard is an append-only log — a regrade adds a row rather than replacing
+    one — so "latest" is decided by `graded_at`, with file order breaking ties and
+    carrying unstamped rows: a regrade supersedes the grade before it wherever a hand
+    edit put the rows.
+    """
+    latest: dict[str, dict[str, str]] = {}
     if not scorecard_path.exists():
-        return {}
-    grades: dict[str, dict[str, str]] = {}
+        return latest
     with open(scorecard_path, "r", encoding="utf-8", newline="") as f:
         for row in csv.DictReader(f):
             trial_id = (row.get("trial_id") or "").strip()
-            if trial_id:
-                grades[trial_id] = row
-    return grades
+            if not trial_id:
+                continue
+            current = latest.get(trial_id)
+            if current is None or (row.get("graded_at") or "") >= (current.get("graded_at") or ""):
+                latest[trial_id] = row
+    return latest
 
 
 def append_grade(scorecard_path: Path, grade: Grade) -> None:
@@ -161,18 +174,81 @@ def append_grade(scorecard_path: Path, grade: Grade) -> None:
         writer.writerow(grade.to_row())
 
 
-def overwrite_grades(scorecard_path: Path, grades: dict[str, dict[str, str]]) -> None:
-    """Rewrite the whole scorecard in run-sheet order (used when regrading).
+# ---------------------------------------------------------------------------
+# Grade history (--history)
+# ---------------------------------------------------------------------------
 
-    Ties — two rows sharing a trial_id can no longer happen (the dict is keyed by
-    trial_id), but a *replaced* row's `graded_at` is the regrade's own time, which is
-    what makes the file an ordered history.
+#: The indicator columns a history line renders, in question order.
+HISTORY_INDICATORS = (
+    "sku_legible",
+    "direction_correct",
+    "endpoint_reached",
+    "hold_valid",
+    "no_ambiguity",
+)
+
+
+def load_history(scorecard_path: Path) -> list[dict[str, str]]:
+    """Every grade row in the scorecard, in file order — superseded regrades included."""
+    if not scorecard_path.exists():
+        return []
+    with open(scorecard_path, "r", encoding="utf-8", newline="") as f:
+        return [row for row in csv.DictReader(f) if (row.get("trial_id") or "").strip()]
+
+
+def group_history(history: list[dict[str, str]]) -> dict[str, list[dict[str, str]]]:
+    """Trial_id -> that trial's grades, oldest first.
+
+    Order within a trial is by `graded_at` with the file position as tiebreak, so
+    unstamped rows sort before stamped ones and a hand-edited order cannot flip a
+    timeline the timestamps already settle.
     """
-    ordered = sorted(grades.values(), key=lambda row: row.get("trial_id", ""))
-    with open(scorecard_path, "w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=SCORECARD_FIELDS)
-        writer.writeheader()
-        writer.writerows(ordered)
+    grouped: dict[str, list[tuple[int, dict[str, str]]]] = {}
+    for index, row in enumerate(history):
+        grouped.setdefault(row["trial_id"], []).append((index, row))
+    ordered: dict[str, list[dict[str, str]]] = {}
+    for trial_id, rows in grouped.items():
+        rows.sort(key=lambda pair: (pair[1].get("graded_at") or "", pair[0]))
+        ordered[trial_id] = [row for _index, row in rows]
+    return ordered
+
+
+def format_grade_line(row: dict[str, str]) -> str:
+    """One grade as a single reviewable line: when, verdict, the five marks, notes."""
+    when = row.get("graded_at") or "(unstamped)"
+    marks = "/".join(row.get(k, "?") for k in HISTORY_INDICATORS)
+    line = f"{when}  {row.get('verdict', '?'):<4}  {marks}"
+    notes = row.get("notes", "")
+    if notes:
+        line += f"  {notes}"
+    return line
+
+
+def print_history(
+    history: list[dict[str, str]],
+    reviewer: str,
+    session: str,
+    scorecard_name: str,
+    print_func: Callable[[str], None] = print,
+) -> None:
+    """Render the per-trial grade timeline the scorecard log carries."""
+    grouped = group_history(history)
+    print_func("")
+    print_func(
+        f"Gate A grade history — session '{session}', reviewer {reviewer} "
+        f"({scorecard_name}, {len(history)} grade(s))"
+    )
+    print_func("-" * 72)
+    for trial_id in sorted(grouped):
+        rows = grouped[trial_id]
+        latest = rows[-1]
+        print_func(
+            f"  {trial_id}  {latest.get('kind', '?')} — {len(rows)} grade(s), latest {latest.get('verdict', '?')}"
+        )
+        for row in rows:
+            print_func(f"      {format_grade_line(row)}")
+    print_func("-" * 72)
+    print_func("")
 
 
 # ---------------------------------------------------------------------------
@@ -232,6 +308,84 @@ def play_clip(
     finally:
         cap.release()
         destroy_func()
+
+
+# ---------------------------------------------------------------------------
+# Two-reviewer merge (--merge)
+# ---------------------------------------------------------------------------
+
+#: The reviewer-suffixed columns an adjudication worksheet carries. Each reviewer's
+#: verdict and five marks are restated side by side — the evidence the adjudicator
+#: sees — while the *unsuffixed* indicator columns at the tail are the blank
+#: adjudication columns: they are the same header `--from-csv` reads, so the file the
+#: merge writes is the file the adjudicator fills in and imports back, and the
+#: imported grade lands on the adjudicator's own scorecard as the latest per trial.
+MERGE_REVIEWER_SUFFIXES = ("r1", "r2")
+
+
+def adjudication_header() -> list[str]:
+    """The worksheet header: trial facts, both reviewers' marks, then blank --from-csv columns."""
+    columns = ["trial_id", "kind", "sku"]
+    for suffix in MERGE_REVIEWER_SUFFIXES:
+        columns.append(f"verdict_{suffix}")
+        columns.extend(f"{c}_{suffix}" for c in IMPORT_INDICATOR_COLUMNS)
+    columns.extend(IMPORT_INDICATOR_COLUMNS)
+    columns.append("notes")
+    return columns
+
+
+def merge_reviewers(
+    grades_a: dict[str, dict[str, str]],
+    grades_b: dict[str, dict[str, str]],
+    manifest_trials: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Classify each manifest trial from the two reviewers' latest verdicts.
+
+    Each entry carries `status` — `agree` (both graded, same verdict), `disagree`
+    (both graded, different verdicts — the ones §4 sends to adjudication),
+    `missing_a`/`missing_b` (graded by one reviewer only), or `missing_both` — plus
+    the two rows themselves (None where absent). Trials outside the manifest are not
+    read at all: the merge is a statement about the session the manifest describes.
+    """
+    classified: list[dict[str, Any]] = []
+    for trial_id in manifest_trials:
+        row_a = grades_a.get(trial_id)
+        row_b = grades_b.get(trial_id)
+        if row_a is None and row_b is None:
+            status = "missing_both"
+        elif row_b is None:
+            status = "missing_b"
+        elif row_a is None:
+            status = "missing_a"
+        elif row_a.get("verdict") == row_b.get("verdict"):
+            status = "agree"
+        else:
+            status = "disagree"
+        classified.append({"trial_id": trial_id, "status": status, "a": row_a, "b": row_b})
+    return classified
+
+
+def write_adjudication_worksheet(
+    path: Path,
+    disagreements: list[dict[str, Any]],
+) -> int:
+    """One row per disputed trial, both reviewers' marks included; returns the row count.
+
+    The adjudication columns are written blank — a mark the adjudicator has not entered
+    is not a mark this file may invent. Rows are ordered by trial_id so a filled
+    worksheet reads in run-sheet order regardless of how the scorecards were built.
+    """
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(adjudication_header())
+        for item in sorted(disagreements, key=lambda d: d["trial_id"]):
+            row = [item["trial_id"], item["a"].get("kind", ""), item["a"].get("sku", "")]
+            for reviewer_row in (item["a"], item["b"]):
+                row.append(reviewer_row.get("verdict", ""))
+                row.extend(reviewer_row.get(c, "") for c in IMPORT_INDICATOR_COLUMNS)
+            row.extend([""] * (len(IMPORT_INDICATOR_COLUMNS) + 1))
+            writer.writerow(row)
+    return len(disagreements)
 
 
 # ---------------------------------------------------------------------------
@@ -605,10 +759,24 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Print the Gate A summary from the existing scorecard and exit (no playback).",
     )
     parser.add_argument(
+        "--history",
+        action="store_true",
+        help="Print each trial's grade timeline from the scorecard (regrades included) and exit.",
+    )
+    parser.add_argument(
         "--from-csv",
         help=(
             "Import grades from a transcribed CSV instead of interactive grading "
             "(header: trial_id + the five indicator columns, notes optional; '-' reads stdin)."
+        ),
+    )
+    parser.add_argument(
+        "--merge",
+        metavar="REVIEWER2",
+        help=(
+            "Merge with a second reviewer's scorecard: classify every manifest trial "
+            "as agree or disagree, and write the disputed trials to an adjudication "
+            "worksheet the adjudicator fills in and imports with --from-csv."
         ),
     )
     parser.add_argument(
@@ -627,6 +795,17 @@ def run(args: argparse.Namespace, input_func: Callable[[str], str] = input) -> i
         print("Error: --from-csv and --trial are mutually exclusive.")
         return 2
 
+    if args.history and (args.from_csv or args.summary):
+        print("Error: --history cannot be combined with --from-csv or --summary.")
+        return 2
+
+    if args.merge and (args.summary or args.history or args.from_csv or args.trial):
+        print("Error: --merge cannot be combined with --summary, --history, --from-csv, or --trial.")
+        return 2
+    if args.merge and args.merge == args.reviewer:
+        print("Error: --merge must name a reviewer other than --reviewer.")
+        return 2
+
     try:
         manifest = load_manifest(session_dir)
     except FileNotFoundError as exc:
@@ -634,6 +813,70 @@ def run(args: argparse.Namespace, input_func: Callable[[str], str] = input) -> i
         return 2
 
     manifest_trials = {t.get("trial_id"): t for t in manifest.get("trials", [])}
+
+    # --- two-reviewer merge mode ---
+    if args.merge:
+        secondary_path = session_dir / f"scorecard_{args.merge}.csv"
+        for label, path in ((args.reviewer, scorecard_path), (args.merge, secondary_path)):
+            if not path.exists():
+                print(
+                    f"Error: no scorecard for {label} at {path} — both reviewers must "
+                    "have graded the session before a merge."
+                )
+                return 2
+        classified = merge_reviewers(
+            load_grades(scorecard_path), load_grades(secondary_path), manifest_trials,
+        )
+        counts = {"agree": 0, "disagree": 0, "one_sided": 0, "ungraded": 0}
+        for item in classified:
+            if item["status"] in ("agree", "disagree"):
+                counts[item["status"]] += 1
+            elif item["status"] in ("missing_a", "missing_b"):
+                counts["one_sided"] += 1
+            else:
+                counts["ungraded"] += 1
+        print(f"Gate A reviewer merge: session '{args.session}', {args.reviewer} vs {args.merge}")
+        print(
+            f"  {len(classified)} manifest trial(s): {counts['agree']} agree, "
+            f"{counts['disagree']} disagree, {counts['one_sided']} graded by one reviewer "
+            f"only, {counts['ungraded']} ungraded"
+        )
+        disagreements = [item for item in classified if item["status"] == "disagree"]
+        for item in disagreements:
+            print(
+                f"  DISAGREE {item['trial_id']}: {args.reviewer}="
+                f"{item['a'].get('verdict', '?')} {args.merge}={item['b'].get('verdict', '?')}"
+            )
+        if not disagreements:
+            print("  No disputed trials — nothing to adjudicate.")
+            return 0
+        worksheet_path = session_dir / f"adjudication_{args.reviewer}_{args.merge}.csv"
+        if worksheet_path.exists():
+            print(
+                f"Error: {worksheet_path.name} already exists — adjudicate it (or delete it) "
+                "before re-merging; re-writing it would discard marks already entered."
+            )
+            return 2
+        written = write_adjudication_worksheet(worksheet_path, disagreements)
+        print(f"  {written} disputed trial(s) -> {worksheet_path.name}")
+        print("  Adjudicate by grading the disputed clips and filling the worksheet's five "
+              "indicator columns, then import it back (unfilled rows are rejected, never guessed):")
+        print(f"    --reviewer {args.merge} --from-csv {worksheet_path}")
+        # Nonzero so a scripted merge notices that adjudication is now pending, without
+        # reading as the exit-2 failure a missing scorecard or refused flag is.
+        return 1
+
+    # --- grade-history display mode ---
+    if args.history:
+        history = load_history(scorecard_path)
+        if args.trial:
+            wanted = args.trial.upper()
+            history = [row for row in history if row.get("trial_id") == wanted]
+            if not history:
+                print(f"No grades recorded for {wanted} in {scorecard_path.name}.")
+                return 0
+        print_history(history, reviewer=args.reviewer, session=args.session, scorecard_name=scorecard_path.name)
+        return 0
 
     # --- paper-scorecard import mode ---
     if args.from_csv:
@@ -651,11 +894,11 @@ def run(args: argparse.Namespace, input_func: Callable[[str], str] = input) -> i
             return 2
         grades = load_grades(scorecard_path)
         for trial_id, grade in imported.items():
+            append_grade(scorecard_path, grade)
             grades[trial_id] = grade.to_row()
             print(f"  {trial_id}: {grade.verdict} imported")
         for message in rejections:
             print(f"  REJECTED {message}")
-        overwrite_grades(scorecard_path, grades)
         print(f"  {len(imported)} imported, {len(rejections)} rejected -> {scorecard_path.name}")
         print_summary(summarize(grades))
         # A rejected row means the transcription was not fully taken: exit nonzero so a
@@ -720,10 +963,11 @@ def run(args: argparse.Namespace, input_func: Callable[[str], str] = input) -> i
             print("\n  Input ended — grades so far are saved to", scorecard_path.name)
             return 0
 
-        # A regrade (or a --trial run over an already-graded trial) must replace the
-        # previous row, not append a second one — the scorecard is keyed by trial_id.
+        # The scorecard is an append-only grade log: a regrade adds a row rather than
+        # replacing one, and load_grades picks the latest per trial — the history is
+        # the file, which is what --history reads.
+        append_grade(scorecard_path, grade)
         grades[grade.trial_id] = grade.to_row()
-        overwrite_grades(scorecard_path, grades)
         print(f"  -> {grade.verdict} recorded to {scorecard_path.name}")
 
     print()

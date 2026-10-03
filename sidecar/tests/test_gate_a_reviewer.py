@@ -19,17 +19,22 @@ import pytest
 from tools.gate_a_reviewer import (
     GATE_A_THRESHOLDS,
     Grade,
+    adjudication_header,
     append_grade,
+    format_grade_line,
     grade_trial,
+    group_history,
     load_grades,
+    load_history,
     load_manifest,
-    overwrite_grades,
+    merge_reviewers,
     parse_args,
     parse_import_csv,
     parse_yes_no,
     print_summary,
     run,
     summarize,
+    write_adjudication_worksheet,
 )
 
 
@@ -58,21 +63,15 @@ def _manifest(tmp_path: Path, trials) -> Path:
 def _grade(trial_id="DEP-01", kind="deposit", verdict="PASS", **kw):
     fields = dict(
         sku_legible=True, direction_correct=True, endpoint_reached=True,
-        hold_valid=True, no_ambiguity=True,
+        hold_valid=True, no_ambiguity=True, notes="",
     )
     fields.update(kw)
-    g = Grade(
-        trial_id=trial_id, kind=kind, sku=None, actor="A", light="L1",
-        reviewer="R1", notes="", **fields,
-    )
     if verdict == "FAIL":
-        g = Grade(
-            trial_id=g.trial_id, kind=kind, sku=None, actor="A", light="L1",
-            reviewer="R1", notes="", sku_legible=False,
-            direction_correct=g.direction_correct, endpoint_reached=g.endpoint_reached,
-            hold_valid=g.hold_valid, no_ambiguity=g.no_ambiguity,
-        )
-    return g
+        fields["sku_legible"] = False
+    return Grade(
+        trial_id=trial_id, kind=kind, sku=None, actor="A", light="L1",
+        reviewer="R1", **fields,
+    )
 
 
 # --- Grade verdict and CSV row -------------------------------------------------
@@ -111,16 +110,17 @@ def test_grade_trial_stamps_utc_iso_time():
 
 
 def test_regraded_row_carries_its_own_later_timestamp(tmp_path):
+    # The scorecard is an append-only log: both grades stay on disk, and "latest"
+    # is decided by graded_at, not file position.
     path = tmp_path / "scorecard_R1.csv"
     append_grade(path, _grade("DEP-01", verdict="FAIL", graded_at="2026-10-02T10:00:00+00:00"))
-    grades = load_grades(path)
-    grades["DEP-01"] = _grade("DEP-01", graded_at="2026-10-02T11:30:00+00:00").to_row()
-    overwrite_grades(path, grades)
+    append_grade(path, _grade("DEP-01", graded_at="2026-10-02T11:30:00+00:00"))
+    history = load_history(path)
+    assert len(history) == 2
+    assert history[0]["graded_at"] == "2026-10-02T10:00:00+00:00"
     rows = load_grades(path)
     assert rows["DEP-01"]["graded_at"] == "2026-10-02T11:30:00+00:00"
     assert rows["DEP-01"]["verdict"] == "PASS"
-    with open(path, newline="", encoding="utf-8") as f:
-        assert len(list(csv.DictReader(f))) == 1  # replaced, not appended
 
 
 def test_summarize_surfaces_latest_regrade_time():
@@ -264,16 +264,40 @@ def test_append_then_load_roundtrip(tmp_path):
     assert len(rows) == 2
 
 
-def test_overwrite_replaces_regraded_row(tmp_path):
+def test_load_grades_picks_latest_even_when_file_order_differs(tmp_path):
+    # A hand edit could reorder rows; graded_at, not file position, decides "latest".
     path = tmp_path / "scorecard_R1.csv"
-    append_grade(path, _grade("DEP-01", verdict="FAIL"))
+    append_grade(path, _grade("DEP-01", graded_at="2026-10-02T11:30:00+00:00"))
+    append_grade(path, _grade("DEP-01", verdict="FAIL", sku_legible=False, graded_at="2026-10-02T10:00:00+00:00"))
     grades = load_grades(path)
-    grades["DEP-01"] = _grade("DEP-01").to_row()
-    overwrite_grades(path, grades)
-    rows = load_grades(path)
-    assert rows["DEP-01"]["verdict"] == "PASS"
-    with open(path, newline="", encoding="utf-8") as f:
-        assert len(list(csv.DictReader(f))) == 1
+    assert grades["DEP-01"]["verdict"] == "PASS"  # 11:30 wins despite being first in file
+
+
+def test_group_history_orders_each_timeline_by_graded_at():
+    history = [
+        {"trial_id": "DEP-01", "graded_at": "2026-10-02T11:30:00+00:00", "verdict": "PASS"},
+        {"trial_id": "DEP-01", "graded_at": "2026-10-02T10:00:00+00:00", "verdict": "FAIL"},
+        {"trial_id": "DEP-02", "graded_at": "", "verdict": "PASS"},
+    ]
+    grouped = group_history(history)
+    assert [r["graded_at"] for r in grouped["DEP-01"]] == [
+        "2026-10-02T10:00:00+00:00", "2026-10-02T11:30:00+00:00"
+    ]
+    assert grouped["DEP-02"][0]["verdict"] == "PASS"
+
+
+def test_format_grade_line_renders_marks_notes_and_unstamped():
+    line = format_grade_line({
+        "graded_at": "2026-10-02T10:00:00+00:00", "verdict": "FAIL",
+        "sku_legible": "0", "direction_correct": "1", "endpoint_reached": "1",
+        "hold_valid": "1", "no_ambiguity": "1", "notes": "blurry label",
+    })
+    assert line == "2026-10-02T10:00:00+00:00  FAIL  0/1/1/1/1  blurry label"
+    unstamped = format_grade_line({"verdict": "PASS", "sku_legible": "1",
+                                   "direction_correct": "1", "endpoint_reached": "1",
+                                   "hold_valid": "1", "no_ambiguity": "1", "notes": ""})
+    assert unstamped.startswith("(unstamped)")
+    assert unstamped.endswith("1/1/1/1/1")  # no trailing separator for empty notes
 
 
 # --- Summary thresholds -----------------------------------------------------------
@@ -387,10 +411,10 @@ def test_run_grades_one_trial_with_no_playback(tmp_path, capsys):
     assert "PASS recorded" in out or "-> PASS" in out
 
 
-def test_run_regrade_replaces_previous_row(tmp_path, capsys):
+def test_run_regrade_appends_and_latest_wins(tmp_path, capsys):
     session = _manifest(tmp_path, [_trial()])
     path = session / "scorecard_R1.csv"
-    append_grade(path, _grade("DEP-01", verdict="FAIL", sku_legible=False))
+    append_grade(path, _grade("DEP-01", verdict="FAIL", sku_legible=False, graded_at="2026-10-02T10:00:00+00:00"))
     answers = iter(["y", "y", "y", "y", "y", "clean rewatch"])
     args = parse_args(
         ["--out", str(tmp_path), "--session", "s1", "--trial", "DEP-01",
@@ -401,7 +425,7 @@ def test_run_regrade_replaces_previous_row(tmp_path, capsys):
     assert rows["DEP-01"]["verdict"] == "PASS"
     assert rows["DEP-01"]["notes"] == "clean rewatch"
     with open(path, newline="", encoding="utf-8") as f:
-        assert len(list(csv.DictReader(f))) == 1
+        assert len(list(csv.DictReader(f))) == 2  # history retained, not replaced
 
 
 def test_run_unknown_trial_id_errors(tmp_path, capsys):
@@ -411,6 +435,82 @@ def test_run_unknown_trial_id_errors(tmp_path, capsys):
     )
     assert run(args) == 2
     assert "not in the manifest" in capsys.readouterr().out
+
+
+# --- --history: the grade timeline ------------------------------------------------
+
+
+def test_run_history_prints_timeline_oldest_first(tmp_path, capsys):
+    session = _manifest(tmp_path, [_trial()])
+    path = session / "scorecard_R1.csv"
+    append_grade(path, _grade("DEP-01", verdict="FAIL", sku_legible=False, graded_at="2026-10-02T10:00:00+00:00"))
+    append_grade(path, _grade("DEP-01", graded_at="2026-10-02T11:30:00+00:00"))
+    args = parse_args(["--out", str(tmp_path), "--session", "s1", "--reviewer", "R1", "--history"])
+    assert run(args) == 0
+    out = capsys.readouterr().out
+    assert "Gate A grade history" in out
+    assert "DEP-01" in out and "2 grade(s), latest PASS" in out
+    # Oldest grade first within the trial's timeline.
+    assert out.index("10:00:00") < out.index("11:30:00")
+    assert "blurry-label-free" not in out  # sanity: notes render verbatim
+    assert "0/1/1/1/1" in out and "1/1/1/1/1" in out
+
+
+def test_run_history_filters_by_trial(tmp_path, capsys):
+    session = _manifest(tmp_path, [_trial(), _trial("DEP-02")])
+    path = session / "scorecard_R1.csv"
+    append_grade(path, _grade("DEP-01", graded_at="2026-10-02T10:00:00+00:00"))
+    append_grade(path, _grade("DEP-02", verdict="FAIL", sku_legible=False, graded_at="2026-10-02T10:01:00+00:00"))
+    args = parse_args([
+        "--out", str(tmp_path), "--session", "s1", "--reviewer", "R1",
+        "--history", "--trial", "DEP-02",
+    ])
+    assert run(args) == 0
+    out = capsys.readouterr().out
+    assert "DEP-02" in out
+    assert "DEP-01" not in out
+
+
+def test_run_history_empty_scorecard_prints_header_and_zero(tmp_path, capsys):
+    _manifest(tmp_path, [_trial()])
+    args = parse_args(["--out", str(tmp_path), "--session", "s1", "--reviewer", "R1", "--history"])
+    assert run(args) == 0
+    out = capsys.readouterr().out
+    assert "Gate A grade history" in out and "0 grade(s)" in out
+
+
+def test_run_history_unknown_trial_reports_no_grades(tmp_path, capsys):
+    session = _manifest(tmp_path, [_trial()])
+    append_grade(session / "scorecard_R1.csv", _grade("DEP-01"))
+    args = parse_args([
+        "--out", str(tmp_path), "--session", "s1", "--reviewer", "R1",
+        "--history", "--trial", "REM-01",
+    ])
+    assert run(args) == 0
+    assert "No grades recorded for REM-01" in capsys.readouterr().out
+
+
+def test_run_history_conflicts_with_summary_and_from_csv(tmp_path, capsys):
+    _manifest(tmp_path, [_trial()])
+    base = ["--out", str(tmp_path), "--session", "s1", "--reviewer", "R1", "--history"]
+    args = parse_args([*base, "--summary"])
+    assert run(args) == 2
+    assert "cannot be combined" in capsys.readouterr().out
+    args = parse_args([*base, "--from-csv", "paper.csv"])
+    assert run(args) == 2
+    assert "cannot be combined" in capsys.readouterr().out
+
+
+def test_run_history_unstamped_rows_sort_first_and_say_so(tmp_path, capsys):
+    session = _manifest(tmp_path, [_trial()])
+    path = session / "scorecard_R1.csv"
+    append_grade(path, _grade("DEP-01", verdict="FAIL", sku_legible=False))  # legacy: unstamped
+    append_grade(path, _grade("DEP-01", graded_at="2026-10-02T11:00:00+00:00"))
+    args = parse_args(["--out", str(tmp_path), "--session", "s1", "--reviewer", "R1", "--history"])
+    assert run(args) == 0
+    out = capsys.readouterr().out
+    assert "(unstamped)" in out
+    assert out.index("(unstamped)") < out.index("11:00:00")
 
 
 def test_manifest_loader_reports_missing_file(tmp_path):
@@ -579,7 +679,7 @@ def test_run_from_csv_merges_with_existing_and_replaces(tmp_path, capsys):
     assert rows["DEP-01"]["verdict"] == "PASS"
     assert rows["DEP-01"]["notes"] == "rewatch"
     with open(path, newline="", encoding="utf-8") as f:
-        assert len(list(csv.DictReader(f))) == 1  # replaced, not appended
+        assert len(list(csv.DictReader(f))) == 2  # appended to the history; latest wins
 
 
 def test_run_from_csv_rejections_exit_nonzero_but_keep_valid_rows(tmp_path, capsys):
@@ -643,3 +743,208 @@ def test_run_from_csv_empty_file_errors(tmp_path, capsys):
     ])
     assert run(args) == 2
     assert "no grade rows" in capsys.readouterr().out
+
+
+# --- two-reviewer merge (--merge) -------------------------------------------------
+
+
+def _two_reviewers(tmp_path: Path, r1_rows, r2_rows):
+    """Write both scorecards from Grade doubles and return the session dir."""
+    session = _manifest(tmp_path, [_trial(), _trial("DEP-02"), _trial("DEP-03")])
+    for grade in r1_rows:
+        append_grade(session / "scorecard_R1.csv", grade)
+    for grade in r2_rows:
+        append_grade(session / "scorecard_R2.csv", grade)
+    return session
+
+
+def test_merge_reviewers_classifies_agree_disagree_and_missing():
+    manifest = {"DEP-01": _trial(), "DEP-02": _trial("DEP-02"), "DEP-03": _trial("DEP-03")}
+    a = {
+        "DEP-01": _grade("DEP-01", verdict="PASS").to_row(),
+        "DEP-02": _grade("DEP-02", verdict="PASS").to_row(),
+    }
+    b = {
+        "DEP-01": _grade("DEP-01", verdict="PASS").to_row(),
+        "DEP-02": _grade("DEP-02", verdict="FAIL").to_row(),
+        "DEP-03": _grade("DEP-03", verdict="PASS").to_row(),
+    }
+    classified = {item["trial_id"]: item for item in merge_reviewers(a, b, manifest)}
+    assert classified["DEP-01"]["status"] == "agree"
+    assert classified["DEP-02"]["status"] == "disagree"
+    assert classified["DEP-03"]["status"] == "missing_a"
+    assert classified["DEP-03"]["b"]["verdict"] == "PASS"
+
+
+def test_merge_reviewers_reports_ungraded_trials():
+    manifest = {"DEP-01": _trial()}
+    classified = merge_reviewers({}, {}, manifest)
+    assert classified[0]["status"] == "missing_both"
+
+
+def test_merge_ignores_trial_ids_outside_the_manifest():
+    # A stale scorecard row for a retired trial is not this session's business.
+    manifest = {"DEP-01": _trial()}
+    a = {"DEP-01": _grade("DEP-01").to_row(), "DEP-99": _grade("DEP-99").to_row()}
+    b = {"DEP-01": _grade("DEP-01", verdict="FAIL").to_row()}
+    classified = merge_reviewers(a, b, manifest)
+    assert [item["trial_id"] for item in classified] == ["DEP-01"]
+    assert classified[0]["status"] == "disagree"
+
+
+def test_run_merge_writes_worksheet_and_exits_nonzero(tmp_path, capsys):
+    session = _two_reviewers(
+        tmp_path,
+        [_grade("DEP-01", verdict="PASS", graded_at="2026-10-02T10:00:00+00:00"),
+         _grade("DEP-02", verdict="FAIL", sku_legible=False)],
+        [_grade("DEP-01", verdict="PASS", graded_at="2026-10-02T10:05:00+00:00"),
+         _grade("DEP-02", verdict="PASS")],
+    )
+    args = parse_args(["--out", str(tmp_path), "--session", "s1", "--reviewer", "R1", "--merge", "R2"])
+    assert run(args) == 1
+    out = capsys.readouterr().out
+    assert "DEP-02" in out and "DISAGREE" in out
+    worksheet = session / "adjudication_R1_R2.csv"
+    assert worksheet.exists()
+    with open(worksheet, newline="", encoding="utf-8") as f:
+        rows = list(csv.reader(f))
+    assert rows[0] == adjudication_header()
+    assert len(rows) == 2  # header + the one disputed trial
+    dispute = dict(zip(rows[0], rows[1]))
+    assert dispute["trial_id"] == "DEP-02"
+    assert dispute["verdict_r1"] == "FAIL" and dispute["verdict_r2"] == "PASS"
+    assert dispute["sku_legible_r1"] == "0" and dispute["sku_legible_r2"] == "1"
+    # The adjudication columns are blank: a mark nobody entered is not invented.
+    for column in ("sku_legible", "direction_correct", "endpoint_reached", "hold_valid", "no_ambiguity", "notes"):
+        assert dispute[column] == ""
+    # Neither scorecard was touched — the merge reads them, it never writes them.
+    assert load_grades(session / "scorecard_R1.csv")["DEP-02"]["verdict"] == "FAIL"
+    assert len(load_history(session / "scorecard_R1.csv")) == 2
+
+
+def test_run_merge_full_agreement_exits_zero_without_a_worksheet(tmp_path, capsys):
+    session = _two_reviewers(
+        tmp_path,
+        [_grade("DEP-01"), _grade("DEP-02")],
+        [_grade("DEP-01"), _grade("DEP-02")],
+    )
+    args = parse_args(["--out", str(tmp_path), "--session", "s1", "--reviewer", "R1", "--merge", "R2"])
+    assert run(args) == 0
+    out = capsys.readouterr().out
+    assert "No disputed trials" in out
+    assert not (session / "adjudication_R1_R2.csv").exists()
+
+
+def test_run_merge_reads_latest_grade_per_trial_on_both_sides(tmp_path, capsys):
+    # R1 regraded DEP-01 from FAIL to PASS; the merge must read the regrade, not the
+    # superseded row, or a resolved trial would keep coming back as disputed.
+    session = _two_reviewers(
+        tmp_path,
+        [_grade("DEP-01", verdict="FAIL", sku_legible=False, graded_at="2026-10-02T10:00:00+00:00"),
+         _grade("DEP-01", graded_at="2026-10-02T12:00:00+00:00")],
+        [_grade("DEP-01", graded_at="2026-10-02T10:05:00+00:00")],
+    )
+    args = parse_args(["--out", str(tmp_path), "--session", "s1", "--reviewer", "R1", "--merge", "R2"])
+    assert run(args) == 0
+    assert "No disputed trials" in capsys.readouterr().out
+    assert not (session / "adjudication_R1_R2.csv").exists()
+
+
+def test_run_merge_refuses_to_overwrite_an_existing_worksheet(tmp_path, capsys):
+    session = _two_reviewers(
+        tmp_path,
+        [_grade("DEP-01"), _grade("DEP-02", verdict="FAIL", sku_legible=False)],
+        [_grade("DEP-01"), _grade("DEP-02")],
+    )
+    worksheet = session / "adjudication_R1_R2.csv"
+    worksheet.write_text("adjudicator marks in progress\n", encoding="utf-8")
+    args = parse_args(["--out", str(tmp_path), "--session", "s1", "--reviewer", "R1", "--merge", "R2"])
+    assert run(args) == 2
+    assert "already exists" in capsys.readouterr().out
+    assert worksheet.read_text(encoding="utf-8") == "adjudicator marks in progress\n"
+
+
+def test_run_merge_missing_secondary_scorecard_errors(tmp_path, capsys):
+    _two_reviewers(tmp_path, [_grade("DEP-01")], [])
+    args = parse_args(["--out", str(tmp_path), "--session", "s1", "--reviewer", "R1", "--merge", "R2"])
+    assert run(args) == 2
+    assert "no scorecard for R2" in capsys.readouterr().out
+
+
+def test_run_merge_missing_primary_scorecard_errors(tmp_path, capsys):
+    _two_reviewers(tmp_path, [], [_grade("DEP-01")])
+    args = parse_args(["--out", str(tmp_path), "--session", "s1", "--reviewer", "R1", "--merge", "R2"])
+    assert run(args) == 2
+    assert "no scorecard for R1" in capsys.readouterr().out
+
+
+def test_run_merge_conflicts_with_other_modes(tmp_path, capsys):
+    _two_reviewers(tmp_path, [_grade("DEP-01")], [_grade("DEP-01")])
+    base = ["--out", str(tmp_path), "--session", "s1", "--reviewer", "R1", "--merge", "R2"]
+    for extra in (["--summary"], ["--history"], ["--from-csv", "paper.csv"], ["--trial", "DEP-01"]):
+        args = parse_args([*base, *extra])
+        assert run(args) == 2, extra
+        assert "cannot be combined" in capsys.readouterr().out
+
+
+def test_run_merge_rejects_the_same_reviewer_twice(tmp_path, capsys):
+    _manifest(tmp_path, [_trial()])
+    args = parse_args(["--out", str(tmp_path), "--session", "s1", "--reviewer", "R1", "--merge", "R1"])
+    assert run(args) == 2
+    assert "other than --reviewer" in capsys.readouterr().out
+
+
+def test_merge_worksheet_feeds_the_from_csv_adjudication_loop(tmp_path, capsys):
+    """The §4 loop: merge writes the worksheet, the adjudicator fills and imports it,
+    and the adjudicated grade lands on the adjudicator's scorecard as the latest."""
+    session = _two_reviewers(
+        tmp_path,
+        [_grade("DEP-01"), _grade("DEP-02", verdict="FAIL", sku_legible=False)],
+        [_grade("DEP-01"), _grade("DEP-02")],
+    )
+    worksheet = session / "adjudication_R1_R2.csv"
+    merge_args = ["--out", str(tmp_path), "--session", "s1", "--reviewer", "R1", "--merge", "R2"]
+    assert run(parse_args(merge_args)) == 1
+
+    # The adjudicator (R2 per the run sheet) regrades the disputed clip and fills the
+    # blank indicator columns in place — the header, not column position, decides.
+    with open(worksheet, newline="", encoding="utf-8") as f:
+        rows = list(csv.reader(f))
+    header = rows[0]
+    for name, mark in (
+        ("sku_legible", "1"), ("direction_correct", "1"), ("endpoint_reached", "1"),
+        ("hold_valid", "1"), ("no_ambiguity", "1"), ("notes", "regraded: label clear"),
+    ):
+        rows[1][header.index(name)] = mark
+    with open(worksheet, "w", newline="", encoding="utf-8") as f:
+        csv.writer(f).writerows(rows)
+
+    import_args = [
+        "--out", str(tmp_path), "--session", "s1", "--reviewer", "R2",
+        "--from-csv", str(worksheet),
+    ]
+    assert run(parse_args(import_args)) == 0
+    adjudicated = load_grades(session / "scorecard_R2.csv")
+    assert adjudicated["DEP-02"]["verdict"] == "PASS"
+    assert adjudicated["DEP-02"]["notes"] == "regraded: label clear"
+    assert adjudicated["DEP-02"]["graded_at"]  # stamped at import; latest wins
+
+    # A re-merge still reports the reviewers' (real) disagreement — the adjudicated
+    # verdict lives on R2's scorecard, and the merge reads scorecards, so the disputed
+    # set is a worklist, not a verdict — but it refuses to rewrite the now-filled
+    # worksheet rather than discarding the adjudication marks.
+    assert run(parse_args(merge_args)) == 2
+    assert "already exists" in capsys.readouterr().out
+    with open(worksheet, newline="", encoding="utf-8") as f:
+        assert "regraded: label clear" in f.read()
+
+
+def test_adjudication_header_carries_both_reviewers_and_the_import_columns():
+    header = adjudication_header()
+    assert header[:3] == ["trial_id", "kind", "sku"]
+    for suffix in ("r1", "r2"):
+        assert f"verdict_{suffix}" in header
+        for column in ("sku_legible", "direction_correct", "endpoint_reached", "hold_valid", "no_ambiguity"):
+            assert f"{column}_{suffix}" in header
+    # The tail is the import header exactly: what --from-csv reads back.
+    assert header[-6:] == ["sku_legible", "direction_correct", "endpoint_reached", "hold_valid", "no_ambiguity", "notes"]
