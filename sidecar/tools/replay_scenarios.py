@@ -76,9 +76,22 @@ VIDEO_SUFFIXES = (".mp4", ".mov", ".mkv", ".avi", ".m4v")
 #: The keys a script may carry. Unknown ones are an error rather than ignored: `checkpoint:` for
 #: `checkpoints:` would otherwise mean "this script asserts nothing", which is a corpus that passes
 #: by being empty.
-SCRIPT_KEYS = frozenset({"name", "description", "bind_at_s", "asserted_with", "checkpoints"})
-CHECKPOINT_KEYS = frozenset({"t_s", "cart"})
+SCRIPT_KEYS = frozenset(
+    {"name", "description", "bind_at_s", "asserted_with", "checkpoints", "basket", "initial_cart"}
+)
+CHECKPOINT_KEYS = frozenset({"t_s", "cart", "review"})
 ASSERTED_KEYS = frozenset({"commit_dwell_s", "remove_settle_s", "min_commit_conf"})
+BASKET_KEYS = frozenset({"cart_edge", "inside_fraction", "opening_fraction"})
+
+#: The frame edges a basket's cart band can sit on — `CartEdge` in
+#: `desktop/src/main/transferGeometry.ts`, the type the scorer hands these to. A copy because this
+#: tool cannot import TypeScript; `tests/test_replay_scenarios.py` reads that file and pins the two.
+CART_EDGES = ("bottom", "top", "left", "right")
+
+#: Digits kept on a recorded box coordinate or confidence. Boxes are 0-1 relative, so four digits
+#: is a tenth of a pixel on a 1080p frame — far finer than any region boundary the scorer tests,
+#: and it keeps a 30 s recording's stream to tens of kilobytes instead of hundreds.
+STREAM_DIGITS = 4
 
 
 class ScriptError(ValueError):
@@ -91,6 +104,24 @@ class Checkpoint:
 
     t_s: float
     cart: dict[str, int]
+    #: Basket scenarios only: how many review items the ledger should hold at `t_s`. None means the
+    #: checkpoint does not assert it. A right cart with a spurious review is still a failed
+    #: checkout — the tablet refuses Finish while one stands — so a basket script usually says 0.
+    review: int | None = None
+
+
+@dataclass(frozen=True)
+class BasketZones:
+    """The zone preset a basket scenario was shot with (`ZonePreset` on the desktop).
+
+    Part of the script rather than read from the app's config, because it is a fact about where the
+    camera was pointed when the video was recorded: replaying it under whatever preset the app holds
+    today would score a different geometry than the one the customer's hand moved through.
+    """
+
+    cart_edge: str
+    inside_fraction: float
+    opening_fraction: float
 
 
 @dataclass(frozen=True)
@@ -102,12 +133,55 @@ class ScenarioScript:
     bind_at_s: float
     checkpoints: tuple[Checkpoint, ...]
     asserted_with: dict[str, float]
+    #: Present only on a basket scenario: the replay then also records the frame stream, and the
+    #: desktop scores the checkpoints through the transfer machine and ledger instead of `cartState`.
+    basket: BasketZones | None = None
+    #: Basket only: what the basket already holds when the clip starts — a session that began
+    #: before the recording, whose earlier deposits the ledger already counted. A removal clip needs
+    #: it: scored against an empty ledger, taking an item out is "removal of something not held".
+    initial_cart: dict[str, int] | None = None
 
 
 def _number(value: object, where: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ScriptError(f"{where}: expected a number, got {value!r}")
     return float(value)
+
+
+def _load_cart(value: object, where: str) -> dict[str, int]:
+    """A class -> quantity object, every quantity a whole number >= 1."""
+    if not isinstance(value, dict):
+        raise ScriptError(f"{where}: expected an object of class -> quantity")
+    counted: dict[str, int] = {}
+    for class_name, quantity in value.items():
+        if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity < 1:
+            raise ScriptError(
+                f"{where}[{class_name!r}]: expected a whole number >= 1; an absent class "
+                "is expressed by leaving it out"
+            )
+        counted[str(class_name)] = quantity
+    return counted
+
+
+def _load_basket(value: object, where: str) -> BasketZones:
+    if not isinstance(value, dict):
+        raise ScriptError(f"{where}: expected an object")
+    extra = sorted(set(value) - BASKET_KEYS)
+    if extra:
+        raise ScriptError(f"{where}: unknown key(s) {extra}; allowed: {sorted(BASKET_KEYS)}")
+    edge = value.get("cart_edge")
+    if edge not in CART_EDGES:
+        raise ScriptError(f"{where}.cart_edge: expected one of {list(CART_EDGES)}, got {edge!r}")
+    inside = _number(value.get("inside_fraction"), f"{where}.inside_fraction")
+    opening = _number(value.get("opening_fraction"), f"{where}.opening_fraction")
+    # A band of nothing, or two bands that leave no outside, describe no path for an item to take,
+    # so every checkpoint would score the empty cart.
+    if not (0 < inside < 1 and 0 < opening < 1 and inside + opening < 1):
+        raise ScriptError(
+            f"{where}: inside_fraction and opening_fraction must each be in (0, 1) and sum to less "
+            f"than 1, got {inside} and {opening}"
+        )
+    return BasketZones(cart_edge=edge, inside_fraction=inside, opening_fraction=opening)
 
 
 def load_script(path: Path) -> ScenarioScript:
@@ -130,6 +204,15 @@ def load_script(path: Path) -> ScenarioScript:
         raise ScriptError(f"{path.name}: unknown key(s) {unknown}; allowed: {sorted(SCRIPT_KEYS)}")
 
     bind_at = _number(raw.get("bind_at_s"), f"{path.name}: bind_at_s")
+    basket = _load_basket(raw["basket"], f"{path.name}: basket") if "basket" in raw else None
+    initial_cart = None
+    if "initial_cart" in raw:
+        if basket is None:
+            raise ScriptError(
+                f"{path.name}: initial_cart: only a basket scenario starts with a held inventory; "
+                "counter mode counts what it sees after bind and nothing before"
+            )
+        initial_cart = _load_cart(raw["initial_cart"], f"{path.name}: initial_cart")
 
     checkpoints_raw = raw.get("checkpoints")
     if not isinstance(checkpoints_raw, list) or not checkpoints_raw:
@@ -151,18 +234,17 @@ def load_script(path: Path) -> ScenarioScript:
         if t_s in seen:
             raise ScriptError(f"{where}.t_s: {t_s} answers for a moment another checkpoint already does")
         seen.add(t_s)
-        cart = entry.get("cart")
-        if not isinstance(cart, dict):
-            raise ScriptError(f"{where}.cart: expected an object of class -> quantity")
-        counted: dict[str, int] = {}
-        for class_name, quantity in cart.items():
-            if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity < 1:
+        counted = _load_cart(entry.get("cart"), f"{where}.cart")
+        review = entry.get("review")
+        if review is not None:
+            if basket is None:
                 raise ScriptError(
-                    f"{where}.cart[{class_name!r}]: expected a whole number >= 1; an absent class "
-                    "is expressed by leaving it out"
+                    f"{where}.review: only a basket scenario has a review queue; counter mode "
+                    "would score nothing against it"
                 )
-            counted[str(class_name)] = quantity
-        checkpoints.append(Checkpoint(t_s=t_s, cart=counted))
+            if isinstance(review, bool) or not isinstance(review, int) or review < 0:
+                raise ScriptError(f"{where}.review: expected a whole number >= 0, got {review!r}")
+        checkpoints.append(Checkpoint(t_s=t_s, cart=counted, review=review))
 
     asserted_raw = raw.get("asserted_with", {})
     if not isinstance(asserted_raw, dict):
@@ -190,6 +272,8 @@ def load_script(path: Path) -> ScenarioScript:
         bind_at_s=bind_at,
         checkpoints=tuple(sorted(checkpoints, key=lambda c: c.t_s)),
         asserted_with=asserted,
+        basket=basket,
+        initial_cart=initial_cart,
     )
 
 
@@ -224,6 +308,32 @@ def event_document(event, session_id: int) -> dict:
     }
 
 
+def stream_frame(message: dict, t: float) -> dict | None:
+    """One fresh frame message as the basket scorer reads it, or None for a preview fill-in.
+
+    `t` replaces the message's own `ts`: the app stamps a frame with the wall clock, which in a
+    replay is the machine's time rather than the video's, so a recorded `ts` would put every frame
+    on a timeline the checkpoints were not written against. The video's timestamp is the one the
+    script's author watched. `fresh: false` frames are dropped here for the reason `BasketTracker`
+    drops them — a repeated box is not a second sighting — and so they cost the fixture nothing.
+    """
+    if message.get("fresh") is False:
+        return None
+    return {
+        "ts": round(t, STREAM_DIGITS),
+        "seq": message["seq"],
+        "detections": [
+            {
+                "track_id": d["track_id"],
+                "cls": d["cls"],
+                "conf": round(d["conf"], STREAM_DIGITS),
+                "box": [round(v, STREAM_DIGITS) for v in d["box"]],
+            }
+            for d in message["detections"]
+        ],
+    }
+
+
 def fixture_document(
     script: ScenarioScript,
     events: list[dict],
@@ -234,6 +344,7 @@ def fixture_document(
     pipeline_settings: dict,
     frames: int,
     duration_s: float,
+    stream: list[dict] | None = None,
 ) -> dict:
     """The fixture for one scenario: the script's ground truth and the replayed track log.
 
@@ -252,17 +363,34 @@ def fixture_document(
         "frames": frames,
         "duration_s": duration_s,
         "pipeline": pipeline_settings,
-        "checkpoints": [
-            {"t_s": checkpoint.t_s, "cart": checkpoint.cart} for checkpoint in script.checkpoints
-        ],
+        "checkpoints": [_checkpoint_document(checkpoint) for checkpoint in script.checkpoints],
         "events": events,
     }
+    if script.basket is not None:
+        if stream is None:
+            raise ValueError(f"{script.name}: a basket scenario needs its recorded frame stream")
+        # The desktop's own vocabulary, like `events`: these go straight into `ZonePreset`.
+        document["basket"] = {
+            "cartEdge": script.basket.cart_edge,
+            "insideFraction": script.basket.inside_fraction,
+            "openingFraction": script.basket.opening_fraction,
+        }
+        document["stream"] = stream
+        if script.initial_cart is not None:
+            document["initial_cart"] = script.initial_cart
     if script.asserted_with:
         # Provenance, not an input: the test derives under the app's *current* settings (that is what
         # makes tuning them a test run), and this is what the person who wrote the checkpoints
         # assumed. A failing checkpoint names it, so a mismatch between the two is readable rather
         # than mysterious.
         document["asserted_with"] = script.asserted_with
+    return document
+
+
+def _checkpoint_document(checkpoint: Checkpoint) -> dict:
+    document: dict = {"t_s": checkpoint.t_s, "cart": checkpoint.cart}
+    if checkpoint.review is not None:
+        document["review"] = checkpoint.review
     return document
 
 
@@ -337,7 +465,8 @@ def replay(
 ):
     """Walk one video through the app's Pipeline at the video's own timestamps.
 
-    Returns `(events, frames, duration_s)`. Called directly rather than through `Pipeline.start()`,
+    Returns `(events, frames, duration_s, stream)`, where `stream` is the fresh frame messages on
+    the video's timeline for a basket scenario and None otherwise. Called directly rather than through `Pipeline.start()`,
     because the thread would sleep and race the clock; `process_once` is the same code the app runs,
     one frame at a time.
     """
@@ -349,11 +478,21 @@ def replay(
     clock = ReplayClock()
     source = VideoSource(fps)
     session_id = store.start_session(script.name, device)
+    stream: list[dict] | None = [] if script.basket is not None else None
+
+    def on_message(message: dict) -> None:
+        if stream is None:
+            return
+        # `clock.now` is the frame being processed: the replay sets it just before `process_once`.
+        frame = stream_frame(message, clock.now)
+        if frame is not None:
+            stream.append(frame)
+
     pipeline = Pipeline(
         source,
         detector,
         settings,
-        on_message=lambda _msg: None,
+        on_message=on_message,
         logging_store=store,
         session_id=session_id,
         clock=clock,
@@ -381,7 +520,7 @@ def replay(
 
     rows = store.query_events(session_id)
     events = [event_document(row, session_id) for row in rows]
-    return events, frames, duration_s
+    return events, frames, duration_s, stream
 
 
 def pipeline_provenance(settings, resize_mode: str) -> dict:
@@ -494,7 +633,7 @@ def main(argv: list[str] | None = None) -> int:
                 resize_mode=resize_mode,
             )
             try:
-                events, frames, duration_s = replay(
+                events, frames, duration_s, stream = replay(
                     video, script, settings, store,
                     cv2=cv2, Pipeline=Pipeline, detector=detector, device=device,
                 )
@@ -502,19 +641,21 @@ def main(argv: list[str] | None = None) -> int:
                 detector.close()
             fixture = fixture_document(
                 script, events, video=video, weights=weights, device=device,
-                pipeline_settings=provenance, frames=frames, duration_s=duration_s,
+                pipeline_settings=provenance, frames=frames, duration_s=duration_s, stream=stream,
             )
             written = write_fixture(out_dir, fixture)
+            mode = f"basket, {len(stream or [])} fresh frames" if script.basket else "counter"
             print(
-                f"{script.name}: {frames} frames over {duration_s:.1f}s, {len(events)} tracks, "
-                f"{len(script.checkpoints)} checkpoint(s) -> {written}"
+                f"{script.name} ({mode}): {frames} frames over {duration_s:.1f}s, {len(events)} "
+                f"tracks, {len(script.checkpoints)} checkpoint(s) -> {written}"
             )
     finally:
         store.close()
 
     print()
     print("scored by: desktop/src/main/cartState.scenarios.test.ts (npx vitest run from desktop/)")
-    print("The rule itself, and its one implementation: desktop/src/main/cartState.ts")
+    print("The rules, one implementation each: desktop/src/main/cartState.ts (counter) and")
+    print("desktop/src/main/transferStream.ts -> transferState.ts -> basketLedger.ts (basket)")
     return 0
 
 

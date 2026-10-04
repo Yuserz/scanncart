@@ -121,10 +121,90 @@ absent rather than skipping.
 
 ## Scoring
 
-`cartState.scenarios.test.ts` loads every fixture here, runs `deriveCartState` at each checkpoint
+`cartState.scenarios.test.ts` loads every fixture here. A counter fixture is scored by running `deriveCartState` at each checkpoint
 time under the app's current `commitDwellS`/`removeSettleS`/`minCommitConf`, and asserts the cart.
 That runs in `npm test` with no camera or GPU, which is what makes tuning those three settings a
 test run instead of a trip to the counter.
+
+## Basket scenarios (deposit and removal)
+
+A counter scenario is scored from the track log, which says when a product was seen and nothing
+about *where*. A basket deposit is a path — outside, through the opening, held inside the cart band —
+so a basket scenario is scored from the frames themselves. A script becomes one by declaring the zone
+preset the camera was set up with when the video was shot:
+
+```json
+{
+  "name": "21_deposit_then_remove",
+  "description": "One tuna carried in through the opening, then lifted back out.",
+  "bind_at_s": 1.0,
+  "basket": { "cart_edge": "bottom", "inside_fraction": 0.35, "opening_fraction": 0.2 },
+  "checkpoints": [
+    { "t_s": 9.0, "cart": { "century_tuna": 1 }, "review": 0 },
+    { "t_s": 18.0, "cart": {}, "review": 0 }
+  ]
+}
+```
+
+`basket` is the zone preset the scene was shot with — the same three values as the Admin Panel's
+cart zones — and not the app's current one, because it is a fact about where the camera pointed.
+`review` (basket only, optional) is how many review items the ledger should hold at that moment: a
+right cart with a spurious review is still a failed checkout, since the tablet refuses Finish while
+one stands, so most basket checkpoints should say `0`. A checkpoint without it does not assert it.
+
+A **removal clip** starts with the item already in the basket, so it says what the basket holds when
+the clip begins:
+
+```json
+{
+  "name": "REM-04",
+  "bind_at_s": 0.0,
+  "basket": { "cart_edge": "bottom", "inside_fraction": 0.35, "opening_fraction": 0.2 },
+  "initial_cart": { "century_tuna": 1 },
+  "checkpoints": [
+    { "t_s": 2.5, "cart": { "century_tuna": 1 }, "review": 0 },
+    { "t_s": 9.0, "cart": {}, "review": 0 }
+  ]
+}
+```
+
+`initial_cart` (basket only) is a session that began before the recording: the scorer binds before the
+clip's first frame — long enough before that the empty-basket window is over — and puts those items
+in through the ledger's own `apply` as confirmed deposits. Without it the ledger starts empty, and
+lifting an item out scores as review ("removal of … which is not in the basket"). A removal clip
+needs `initial_cart`, a deposit clip with an empty basket does not, and a deposit into a partly
+filled basket lists what was already there.
+
+The replay then also writes the fixture's `basket` (camel-cased, as `ZonePreset`) and `stream`: every
+fresh frame message, stamped with the **video's** timestamp instead of the app's wall clock, with
+boxes and confidences rounded to four digits (and `initial_cart`, copied as written). Preview fill-ins (`fresh: false`) are not recorded, for
+the reason `BasketTracker` ignores them. The scorer feeds that stream through a real `BasketTracker` —
+the transfer machine and the ledger the app runs — binding at `bind_at_s`, and reads the ledger and
+its review list at each checkpoint. The scanner's `conf_threshold` is the one the replay ran at; the
+transfer machine's other thresholds are the app's current defaults, so tuning them is a test run.
+
+Two limits worth knowing before trusting a green run:
+
+- **The replay infers every frame.** Live, the machine sees the inference cadence the PC sustains,
+  which is fewer fresh observations per crossing. A path that passes here with frames to spare can
+  still miss at the counter; `docs/CART_TRANSFER_SPEC.md` asks for fresh-observation counts under real
+  load for this reason.
+- **The empty-basket check covers the first 3 s after bind.** It flags any product seen in the cart
+  band during that window, including one the customer just deposited through the opening, so a
+  scenario that deposits within 3 s of `bind_at_s` expects `review: 1`. Leave a few seconds after
+  Start unless that case is the point of the scenario.
+
+A minimum basket shot list, alongside the counter list in spec §7.1:
+
+1. One item deposited through the opening and released inside.
+2. Three different products deposited one at a time.
+3. Deposit, then the same item lifted back out through the opening (removal).
+4. Remove, then put back (one track, both directions).
+5. An item moved toward the opening and withdrawn without entering (nothing may change).
+6. A hand hovering in the opening with nothing in it (nothing may change).
+7. An item already in the basket at Start (expects `review: 1`, the baseline).
+8. A product changed mid-path, or two items crossing the opening together (expects review, never a
+   guessed count).
 
 A real fixture captures the tracker's actual habits — track swaps, short flickers, two touching
 items — which hand-written events miss. **There are no fixtures yet.** The directory holds no

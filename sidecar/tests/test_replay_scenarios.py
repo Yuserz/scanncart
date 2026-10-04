@@ -184,6 +184,134 @@ def test_a_script_without_its_recording_is_reported(tmp_path: Path) -> None:
     assert not (tmp_path / "out").exists()
 
 
+BASKET = {
+    "bind_at_s": 1.0,
+    "basket": {"cart_edge": "bottom", "inside_fraction": 0.35, "opening_fraction": 0.2},
+    "checkpoints": [
+        {"t_s": 8.0, "cart": {"century_tuna": 1}, "review": 0},
+        {"t_s": 16.0, "cart": {}},
+    ],
+}
+
+
+def test_a_basket_script_carries_its_zones_and_review_counts(tmp_path: Path) -> None:
+    script = replay_scenarios.load_script(_write(tmp_path, "11_deposit_one", BASKET))
+
+    assert script.basket == replay_scenarios.BasketZones("bottom", 0.35, 0.2)
+    assert script.checkpoints[0].review == 0
+    # Unasserted is not zero: a checkpoint that says nothing about review checks nothing about it.
+    assert script.checkpoints[1].review is None
+    assert script.initial_cart is None
+
+
+def test_a_removal_script_starts_from_its_initial_cart(tmp_path: Path) -> None:
+    """A removal clip begins with the item already in the basket: without the seed the scorer's
+    ledger is empty, and taking an item out is a review rather than a removal."""
+    payload = dict(BASKET, initial_cart={"century_tuna": 1})
+    script = replay_scenarios.load_script(_write(tmp_path, "12_remove_one", payload))
+    assert script.initial_cart == {"century_tuna": 1}
+    document = replay_scenarios.fixture_document(
+        script, [], video=tmp_path / "12_remove_one.mp4", weights="w.pt", device="cpu",
+        pipeline_settings={}, frames=0, duration_s=0.0, stream=[],
+    )
+    assert document["initial_cart"] == {"century_tuna": 1}
+
+
+@pytest.mark.parametrize(
+    "payload, expected",
+    [
+        (dict(VALID, initial_cart={"century_tuna": 1}), "only a basket scenario"),
+        (dict(BASKET, initial_cart={"century_tuna": 0}), "whole number >= 1"),
+        (dict(BASKET, initial_cart=["century_tuna"]), "expected an object"),
+    ],
+)
+def test_an_initial_cart_that_cannot_be_trusted_is_rejected(
+    tmp_path: Path, payload: dict, expected: str
+) -> None:
+    with pytest.raises(ScriptError) as excinfo:
+        replay_scenarios.load_script(_write(tmp_path, "bad", payload))
+    assert expected in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    "payload, expected",
+    [
+        # A review count on a counter scenario would be scored against nothing.
+        (dict(VALID, checkpoints=[{"t_s": 6.0, "cart": {}, "review": 0}]), "only a basket scenario"),
+        (dict(BASKET, checkpoints=[{"t_s": 6.0, "cart": {}, "review": -1}]), "whole number >= 0"),
+        (dict(BASKET, checkpoints=[{"t_s": 6.0, "cart": {}, "review": True}]), "whole number >= 0"),
+        (dict(BASKET, basket={"cart_edge": "front", "inside_fraction": 0.3, "opening_fraction": 0.2}), "cart_edge"),
+        (dict(BASKET, basket={"cart_edge": "top", "inside_fraction": 0.6, "opening_fraction": 0.4}), "sum to less than 1"),
+        (dict(BASKET, basket={"cart_edge": "top", "inside_fraction": 0, "opening_fraction": 0.2}), "in (0, 1)"),
+        (dict(BASKET, basket={"cart_edge": "top", "inside": 0.3, "opening_fraction": 0.2}), "unknown key"),
+    ],
+)
+def test_a_basket_script_that_cannot_be_trusted_is_rejected(
+    tmp_path: Path, payload: dict, expected: str
+) -> None:
+    with pytest.raises(ScriptError) as excinfo:
+        replay_scenarios.load_script(_write(tmp_path, "bad", payload))
+    assert expected in str(excinfo.value)
+
+
+def test_the_cart_edges_are_the_desktops() -> None:
+    """The scorer hands `cart_edge` straight to `presetRegions`, which throws on an edge it does not
+    know — read the TypeScript list rather than trusting a copy to stay in step."""
+    import re
+
+    source = (replay_scenarios.REPO_ROOT / "desktop" / "src" / "main" / "transferGeometry.ts").read_text(
+        encoding="utf-8"
+    )
+    match = re.search(r"export const CART_EDGES[^=]*=\s*\[([^\]]*)\]", source)
+    assert match, "CART_EDGES is no longer a literal array in transferGeometry.ts"
+    assert tuple(re.findall(r"'(\w+)'", match.group(1))) == replay_scenarios.CART_EDGES
+
+
+def test_a_stream_frame_is_on_the_videos_clock_and_drops_fill_ins() -> None:
+    message = {
+        "type": "frame", "ts": 1_759_000_000.0, "seq": 12, "fresh": True, "mirrored": False,
+        "detections": [
+            {"track_id": 3, "cls": "century_tuna", "conf": 0.912345, "box": (0.1, 0.212345, 0.3, 0.4)},
+        ],
+    }
+    frame = replay_scenarios.stream_frame(message, 4.56789)
+    # The wall-clock `ts` is replaced by the video's: the checkpoints were written on that timeline.
+    assert frame == {
+        "ts": 4.5679, "seq": 12,
+        "detections": [{"track_id": 3, "cls": "century_tuna", "conf": 0.9123, "box": [0.1, 0.2123, 0.3, 0.4]}],
+    }
+    # A preview fill-in repeats the last boxes; recording it would count one sighting twice.
+    assert replay_scenarios.stream_frame(dict(message, fresh=False), 4.6) is None
+
+
+def test_a_basket_fixture_carries_the_zones_and_the_stream(tmp_path: Path) -> None:
+    script = replay_scenarios.load_script(_write(tmp_path, "11_deposit_one", BASKET))
+    stream = [{"ts": 2.0, "seq": 1, "detections": []}]
+    document = replay_scenarios.fixture_document(
+        script, [], video=tmp_path / "11_deposit_one.mp4", weights="w.pt", device="cpu",
+        pipeline_settings={"conf_threshold": 0.5}, frames=1, duration_s=2.0, stream=stream,
+    )
+    assert document["basket"] == {"cartEdge": "bottom", "insideFraction": 0.35, "openingFraction": 0.2}
+    assert document["stream"] == stream
+    assert document["checkpoints"][0] == {"t_s": 8.0, "cart": {"century_tuna": 1}, "review": 0}
+    assert "review" not in document["checkpoints"][1]
+    # A basket scenario with no stream would score every checkpoint against an empty ledger.
+    with pytest.raises(ValueError):
+        replay_scenarios.fixture_document(
+            script, [], video=tmp_path / "x.mp4", weights="w.pt", device="cpu",
+            pipeline_settings={}, frames=0, duration_s=0.0,
+        )
+
+
+def test_a_counter_fixture_has_no_stream(tmp_path: Path) -> None:
+    script = replay_scenarios.load_script(_write(tmp_path, "01_one_item", VALID))
+    document = replay_scenarios.fixture_document(
+        script, [], video=tmp_path / "01_one_item.mp4", weights="w.pt", device="cpu",
+        pipeline_settings={}, frames=0, duration_s=0.0,
+    )
+    assert "basket" not in document and "stream" not in document
+
+
 def test_the_flags_the_docs_use_are_the_flags_this_tool_declares() -> None:
     """A guard against the docs and the parser drifting apart — `test_docs_options.py` reads the
     parser, and this pins the names the README and the Makefile pass."""

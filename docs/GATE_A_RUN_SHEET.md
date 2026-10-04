@@ -34,8 +34,13 @@ line-of-sight occlusion, adjust camera elevation, angle, or basket opening tape 
 - **Camera:** Logitech StreamCam mounted on an overhead/side rigid arm (45°–60° oblique angle).
 - **Resolution and FPS:** 1080p (1920×1080) at 30 or 60 fps (unmirrored native feed).
 - **Recording method:** Standard MP4/MKV video recording. You can use the dedicated helper script
-  `sidecar/tools/gate_a_recorder.py` to prompt each trial, overlay timestamp watermarks, and save clips
-  directly with a JSON manifest. *Do not use preview overlay screenshots or lossy downscaled streams.*
+  `sidecar/tools/gate_a_recorder.py` to prompt each trial and save clips directly with a JSON
+  manifest. *Do not use preview overlay screenshots or lossy downscaled streams.* Clips are saved
+  **clean** (no watermark) because they double as the replay corpus (`replay_scenarios.py`); pass
+  `--stamp` only for a watermarked audit copy. A clip whose camera delivered a different rate than
+  `--fps` is re-timed to the delivered rate so it plays back at real speed. Keep the default 10 s:
+  hold still for about 3 s before the interaction, since the basket flags anything seen inside during
+  its first 3 s.
 
 ```bash
 # Preview planned trials without opening camera:
@@ -45,7 +50,7 @@ sidecar/.venv/Scripts/python.exe sidecar/tools/gate_a_recorder.py --dry-run
 sidecar/.venv/Scripts/python.exe sidecar/tools/gate_a_recorder.py --session s1 --actor A --light L1
 
 # Record a single specific trial:
-sidecar/.venv/Scripts/python.exe sidecar/tools/gate_a_recorder.py --trial DEP-01 --duration 6.0
+sidecar/.venv/Scripts/python.exe sidecar/tools/gate_a_recorder.py --trial DEP-01 --duration 10.0
 ```
 
 Reviewers grade the recorded clips with the companion tool `sidecar/tools/gate_a_reviewer.py`, which

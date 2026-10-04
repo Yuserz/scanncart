@@ -1,8 +1,10 @@
 """CLI tool to guide and record the 90 Gate A physical trials directly from the camera.
 
-Presents trials in run-sheet order (DEP-01..30, REM-01..30, NOT-01..30), draws timestamp
-and trial info watermarks on recorded frames, and writes video clips alongside a session
-manifest JSON for audit and playback.
+Presents trials in run-sheet order (DEP-01..30, REM-01..30, NOT-01..30) and writes each clip,
+frames exactly as the camera delivered them, beside a session manifest JSON for audit and
+playback. The clips double as the replay corpus (`replay_scenarios.py`), so nothing is drawn on
+them unless `--stamp` asks for a watermarked audit copy, and a clip whose camera delivered a
+different rate than the target is re-timed so it plays back at real speed.
 
 Usage:
     .venv/Scripts/python.exe tools/gate_a_recorder.py --help
@@ -232,6 +234,39 @@ def stamp_frame(
     return annotated
 
 
+#: How far the delivered frame rate may stray from the container's before the clip is re-timed.
+#: The container's rate *is* the clip's clock for every reader — `replay_scenarios.py` stamps each
+#: frame with `CAP_PROP_POS_MSEC`, which is frame index / container fps — so a camera delivering
+#: 15 fps into a 30 fps container plays every interaction back at double speed, and the transfer
+#: machine's 1 s endpoint hold is judged on half a second of real time.
+FPS_TOLERANCE = 0.02
+
+
+def retime_clip(path: Path, fps: float) -> None:
+    """Rewrite `path` with `fps` as its container rate, frames unchanged, via a temp file."""
+    src = cv2.VideoCapture(str(path))
+    tmp = path.with_name(f".{path.stem}.retime{path.suffix}")
+    writer = None
+    try:
+        while True:
+            ok, frame = src.read()
+            if not ok or frame is None:
+                break
+            if writer is None:
+                h, w = frame.shape[:2]
+                writer = cv2.VideoWriter(str(tmp), cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
+            writer.write(frame)
+    finally:
+        src.release()
+        if writer is not None:
+            writer.release()
+    if writer is None:
+        # Nothing decodable: leave the original in place rather than replace it with nothing.
+        tmp.unlink(missing_ok=True)
+        return
+    os.replace(tmp, path)
+
+
 def record_clip(
     cap: Any,
     out_path: Path,
@@ -240,8 +275,16 @@ def record_clip(
     target_fps: float = 30.0,
     time_func: Callable[[], float] = time.time,
     sleep_func: Callable[[float], None] = time.sleep,
+    stamp: bool = False,
 ) -> dict[str, Any]:
-    """Record a single video clip for the given trial definition."""
+    """Record a single video clip for the given trial definition.
+
+    Frames are written exactly as the camera delivered them unless `stamp` is set. The clips are
+    also the replay corpus (`replay_scenarios.py` runs them through the app's own `Pipeline`), and a
+    banner burned across the top of the frame is pixels the live camera never shows the model — over
+    the outside band, where products are presented. The trial id lives in the file name and the
+    manifest; `stamp` is for an audit copy a human watches without the manifest beside it.
+    """
     ret, first_frame = cap.read()
     if not ret or first_frame is None:
         raise RuntimeError("Failed to read frame from camera")
@@ -256,10 +299,13 @@ def record_clip(
     frame_count = 0
     t0_iso = datetime.now(timezone.utc).isoformat()
 
+    def write(frame: np.ndarray, iso: str, elapsed_s: float) -> None:
+        if stamp:
+            frame = stamp_frame(frame, trial.trial_id, iso, frame_count, target_fps, elapsed_s)
+        writer.write(frame)
+
     try:
-        # Stamp and write first frame
-        stamped = stamp_frame(first_frame, trial.trial_id, t0_iso, frame_count, target_fps, 0.0)
-        writer.write(stamped)
+        write(first_frame, t0_iso, 0.0)
         frame_count += 1
 
         interval = 1.0 / target_fps
@@ -275,9 +321,7 @@ def record_clip(
             if not ret or frame is None:
                 break
 
-            stamp_iso = datetime.now(timezone.utc).isoformat()
-            stamped = stamp_frame(frame, trial.trial_id, stamp_iso, frame_count, target_fps, elapsed)
-            writer.write(stamped)
+            write(frame, datetime.now(timezone.utc).isoformat(), elapsed)
             frame_count += 1
 
             # Sleep to match target FPS
@@ -293,6 +337,14 @@ def record_clip(
     total_time = max(0.001, time_func() - start_time)
     actual_fps = frame_count / total_time
 
+    # The camera, not the target, decides the rate: a dim scene drops the StreamCam's exposure-bound
+    # rate well under 30. Re-timing the container to what was delivered keeps a clip's playback at
+    # real speed, which is what every timed rule downstream is measured against.
+    container_fps = target_fps
+    if frame_count > 1 and abs(actual_fps - target_fps) / target_fps > FPS_TOLERANCE:
+        container_fps = round(actual_fps, 3)
+        retime_clip(out_path, container_fps)
+
     return {
         "trial_id": trial.trial_id,
         "kind": trial.kind,
@@ -305,6 +357,9 @@ def record_clip(
         "frame_count": frame_count,
         "duration_s": round(total_time, 3),
         "fps": round(actual_fps, 2),
+        # The rate the file declares, which is the clip's clock for playback and replay.
+        "container_fps": container_fps,
+        "stamped": stamp,
         "resolution": [w, h],
         "recorded_at": t0_iso,
     }
@@ -336,8 +391,20 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--duration",
         type=float,
-        default=6.0,
-        help="Target duration per clip in seconds (default: 6.0).",
+        default=10.0,
+        help=(
+            "Target duration per clip in seconds (default: 10.0 - about 3 s still, the "
+            "interaction, then 2-3 s after; the basket flags anything seen inside during its first "
+            "3 s, so an interaction in the opening seconds is scored as review)."
+        ),
+    )
+    parser.add_argument(
+        "--stamp",
+        action="store_true",
+        help=(
+            "Burn the trial id and timestamp banner into the frames (an audit copy). Off by default: "
+            "the clips are also the replay corpus, and the banner is pixels the live camera never shows."
+        ),
     )
     parser.add_argument(
         "--fps",
@@ -434,8 +501,17 @@ def run(args: argparse.Namespace, cap: Any = None) -> int:
                 trial=trial,
                 duration_s=args.duration,
                 target_fps=args.fps,
+                stamp=args.stamp,
             )
-            print(f"✔ Saved: {clip_path.name} ({clip_record['frame_count']} frames, {clip_record['fps']} fps)")
+            retimed = (
+                f", re-timed to {clip_record['container_fps']} fps"
+                if clip_record["container_fps"] != args.fps
+                else ""
+            )
+            print(
+                f"✔ Saved: {clip_path.name} ({clip_record['frame_count']} frames, "
+                f"{clip_record['fps']} fps delivered{retimed})"
+            )
 
             # Update manifest
             if trial.trial_id in existing_trial_ids:
