@@ -1,6 +1,11 @@
 // @vitest-environment node
 import { describe, it, expect } from 'vitest'
-import { deriveCartState, type CartStateConfig, type TrackEvent } from './cartState'
+import {
+  deriveCartState,
+  deriveLiveCounts,
+  type CartStateConfig,
+  type TrackEvent
+} from './cartState'
 
 const cfg: CartStateConfig = { commitDwellS: 3, removeSettleS: 10, minCommitConf: 0.6 }
 const BIND = 0
@@ -106,5 +111,77 @@ describe('deriveCartState', () => {
 
   it('returns an empty map when nothing is on the counter', () => {
     expect(deriveCartState([], 100, BIND, cfg).size).toBe(0)
+  })
+})
+
+const live = (events: TrackEvent[], now: number, bindAt = BIND): number =>
+  deriveLiveCounts(events, now, bindAt, cfg).get('soda') ?? 0
+
+describe('deriveLiveCounts', () => {
+  it('counts an open track immediately, with no commit dwell', () => {
+    const events = [ev({ className: 'soda', enteredAt: 100 })]
+    // The committed view still waits until 103; the raw view is the camera's eyes, which see the
+    // item the moment the track exists.
+    expect(qty(events, 101)).toBe(0)
+    expect(live(events, 100)).toBe(1)
+    expect(live(events, 101)).toBe(1)
+  })
+
+  it('stops counting a track `commitDwellS` after it ends', () => {
+    const events = [ev({ className: 'soda', enteredAt: 100, leftAt: 120 })]
+    // Within the dwell the track still counts as seen (smoothing)…
+    expect(live(events, 122.9)).toBe(1)
+    // …and exactly dwell seconds after left_at the camera has lost it.
+    expect(live(events, 123)).toBe(0)
+    expect(live(events, 125)).toBe(0)
+  })
+
+  it('never drops to 0 across a track swap shorter than the dwell', () => {
+    const events = [
+      ev({ className: 'soda', enteredAt: 100, leftAt: 130 }),
+      ev({ className: 'soda', enteredAt: 131 })
+    ]
+    // A 1 s gap between tracks must not flash the lost state — that is what the dwell buys.
+    for (const now of [130.5, 131, 132, 133.4]) {
+      expect(live(events, now)).toBe(1)
+    }
+  })
+
+  it('reads 0 in a gap longer than the dwell, then recovers', () => {
+    const events = [
+      ev({ className: 'soda', enteredAt: 100, leftAt: 130 }),
+      ev({ className: 'soda', enteredAt: 133.5 })
+    ]
+    expect(live(events, 133.2)).toBe(0)
+    expect(live(events, 133.6)).toBe(1)
+  })
+
+  it('never counts a zero-length flicker', () => {
+    const events = [ev({ className: 'soda', enteredAt: 100, leftAt: 100 })]
+    expect(live(events, 100)).toBe(0)
+  })
+
+  it('applies the same bind and confidence filters as the committed view', () => {
+    const leftover = ev({ className: 'soda', enteredAt: 100 })
+    expect(live([leftover], 210, 200)).toBe(0)
+    const low = ev({ className: 'soda', enteredAt: 205, maxConf: 0.59 })
+    expect(live([leftover, low], 210, 200)).toBe(0)
+    const fresh = ev({ className: 'soda', enteredAt: 205, maxConf: 0.6 })
+    expect(live([leftover, fresh], 210, 200)).toBe(1)
+  })
+
+  it('peaks across the window, so a just-ended track still vouches for its class', () => {
+    const events = [
+      ev({ className: 'soda', enteredAt: 100 }),
+      ev({ className: 'soda', enteredAt: 101, leftAt: 111 })
+    ]
+    // Both open at 110 → 2; one closes at 111, and the window still remembers 2 until 114.
+    expect(live(events, 110)).toBe(2)
+    expect(live(events, 112)).toBe(2)
+    expect(live(events, 114.1)).toBe(1)
+  })
+
+  it('returns an empty map when the camera sees nothing', () => {
+    expect(deriveLiveCounts([], 100, BIND, cfg).size).toBe(0)
   })
 })

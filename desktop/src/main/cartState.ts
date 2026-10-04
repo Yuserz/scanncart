@@ -27,6 +27,12 @@ export interface CartStateConfig {
 export interface CartEntry {
   quantity: number
   maxConfidence: number
+  /**
+   * Set on a floor-held entry the camera's *current* open-track count can no longer account for
+   * (posSession merges it under the posted quantity). Not serialized into the sync — the desktop
+   * turns it into `lost: true` on the wire (spec §3.2).
+   */
+  lost?: boolean
 }
 
 interface Interval {
@@ -68,12 +74,12 @@ function committedIntervals(
 }
 
 /**
- * The largest committed count over `[now - removeSettleS, now]`. The step function only changes at
- * an interval's start or end, so the maximum is attained at the window start, just after a start,
- * or just before an end.
+ * The largest interval count over `[now - windowS, now]`. The step function only changes at an
+ * interval's start or end, so the maximum is attained at the window start, just after a start, or
+ * just before an end.
  */
-function settledQuantity(intervals: Interval[], now: number, removeSettleS: number): number {
-  const windowStart = now - removeSettleS
+function peakCount(intervals: Interval[], now: number, windowS: number): number {
+  const windowStart = now - windowS
   let best = countAt(intervals, windowStart)
   best = Math.max(best, countAt(intervals, now))
 
@@ -114,7 +120,7 @@ export function deriveCartState(
     const intervals = committedIntervals(classEvents, bindAt, cfg)
     if (intervals.length === 0) continue
 
-    const quantity = settledQuantity(intervals, now, cfg.removeSettleS)
+    const quantity = peakCount(intervals, now, cfg.removeSettleS)
     if (quantity <= 0) continue
 
     // The confidence of what still counts: the highest max_conf among intervals overlapping the
@@ -130,5 +136,52 @@ export function deriveCartState(
     out.set(className, { quantity, maxConfidence })
   }
 
+  return out
+}
+
+/**
+ * The raw view the camera has *right now*: a track counts over `[entered_at, left_at ?? ∞)`, with
+ * the session's bind and confidence filters but no commit dwell and no settle. This is the
+ * "is the camera currently holding eyes on it" signal, deliberately eager — the mirror of the
+ * committed view, which is deliberately reluctant.
+ */
+function rawIntervals(events: TrackEvent[], bindAt: number, cfg: CartStateConfig): Interval[] {
+  const intervals: Interval[] = []
+  for (const event of events) {
+    if (event.enteredAt < bindAt) continue
+    if (event.maxConf < cfg.minCommitConf) continue
+    intervals.push({
+      start: event.enteredAt,
+      end: event.leftAt ?? Infinity,
+      maxConf: event.maxConf
+    })
+  }
+  return intervals
+}
+
+/**
+ * `deriveLiveCounts(events, now, bindAt, cfg)` — class -> peak raw track count over the last
+ * `commitDwellS`. The dwell smooths the signal with the one knob the commit already owns: a track
+ * that ends commits for `removeSettleS` more seconds but stops counting as *seen* after only
+ * `commitDwellS`, so a track swap or a sub-dwell detection dropout never flashes the lost state.
+ */
+export function deriveLiveCounts(
+  events: TrackEvent[],
+  now: number,
+  bindAt: number,
+  cfg: CartStateConfig
+): Map<string, number> {
+  const byClass = new Map<string, TrackEvent[]>()
+  for (const event of events) {
+    const list = byClass.get(event.className)
+    if (list) list.push(event)
+    else byClass.set(event.className, [event])
+  }
+
+  const out = new Map<string, number>()
+  for (const [className, classEvents] of byClass) {
+    const peak = peakCount(rawIntervals(classEvents, bindAt, cfg), now, cfg.commitDwellS)
+    if (peak > 0) out.set(className, peak)
+  }
   return out
 }

@@ -32,7 +32,7 @@ export interface StandInRequest {
   payload: {
     session_ref: string
     station_id: string
-    items: Array<{ class_name: string; quantity: number; max_confidence?: number }>
+    items: Array<{ class_name: string; quantity: number; max_confidence?: number; lost?: boolean }>
     pending_review?: unknown
     review_reasons?: unknown
   } | null
@@ -74,6 +74,7 @@ function validate(payload: StandInRequest['payload']): string | null {
     if (!Number.isInteger(item.quantity) || item.quantity < 1) {
       return 'quantity must be an integer >= 1'
     }
+    if (item.lost !== undefined && typeof item.lost !== 'boolean') return 'lost must be a boolean'
     if (seen.has(item.class_name)) return `duplicate class_name: ${item.class_name}`
     seen.add(item.class_name)
   }

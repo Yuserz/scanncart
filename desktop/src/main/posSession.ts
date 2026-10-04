@@ -8,7 +8,13 @@
 // cart. Every dependency is injected so the whole loop runs against fakes with fake timers.
 
 import type { ReviewItem } from './basketLedger'
-import { deriveCartState, type CartEntry, type CartStateConfig, type TrackEvent } from './cartState'
+import {
+  deriveCartState,
+  deriveLiveCounts,
+  type CartEntry,
+  type CartStateConfig,
+  type TrackEvent
+} from './cartState'
 import { isPosEnabled, type CartMode, type PosConfig } from './posConfig'
 import type { BasketReadout } from './transferStream'
 
@@ -75,6 +81,14 @@ export interface PosSyncItem {
   class_name: string
   quantity: number
   max_confidence: number
+  /**
+   * "The camera has lost sight of this item" (spec §3.2). Sent only when true — with the floor
+   * holding every posted quantity, the numbers alone cannot say "still on the counter" from
+   * "taken, and the floor keeps it": this flag is what turns the server's silent hold into a
+   * tablet badge instead of a row that reads as silently deleted. Cleared by sending no field
+   * once the camera sees the item again; the server stamps the transition, not every repeat.
+   */
+  lost?: boolean
 }
 
 /** One class's cumulative floor entry, as persisted for a restart. */
@@ -166,7 +180,9 @@ function sameSnapshot(a: Map<string, CartEntry>, b: Map<string, CartEntry>): boo
   if (a.size !== b.size) return false
   for (const [key, value] of a) {
     const other = b.get(key)
-    if (!other || other.quantity !== value.quantity) return false
+    // `lost` is part of the snapshot: losing sight of an item is a change worth posting even
+    // though the floor keeps the quantity identical.
+    if (!other || other.quantity !== value.quantity || other.lost !== value.lost) return false
   }
   return true
 }
@@ -564,7 +580,11 @@ export class PosSessionOrchestrator {
     }
 
     const now = nowSeconds()
-    const derived = deriveCartState([...this.cache.values()], now, this.bindAt, this.cartCfg())
+    const cached = [...this.cache.values()]
+    const derived = deriveCartState(cached, now, this.bindAt, this.cartCfg())
+    // What the camera's raw track log can still account for, uncommitted — the mirror of
+    // `derived`'s reluctant view. Below the quantity we are posting, the camera has lost the item.
+    const live = deriveLiveCounts(cached, now, this.bindAt, this.cartCfg())
     const warmingUp = this.isWarmingUp(now)
 
     const snapshot = new Map<string, CartEntry>()
@@ -599,6 +619,28 @@ export class PosSessionOrchestrator {
       }
     }
 
+    // The lost flag rides on the *final* quantities, floor-merged included: the camera's raw
+    // count is compared against what will actually be posted. Warm-up is the exception — the
+    // camera is blind by construction there, so no new flag is raised, and one already standing
+    // is carried rather than dropped, so the badge cannot flap across a capture restart.
+    //
+    // A capture whose one restart has failed is not warming up, it is dead: warm-up would never
+    // end, and the sync heartbeat keeps the tablet from showing *camera offline*, so without this
+    // an unstaffed counter would show a healthy cart the camera can no longer see. Every held item
+    // is lost until capture comes back.
+    const captureDead = !this.captureRunning && this.restartTried
+    if (captureDead) {
+      for (const entry of snapshot.values()) entry.lost = true
+    } else if (warmingUp) {
+      for (const [className, entry] of snapshot) {
+        if (this.lastSent.get(className)?.lost) entry.lost = true
+      }
+    } else {
+      for (const [className, entry] of snapshot) {
+        if ((live.get(className) ?? 0) < entry.quantity) entry.lost = true
+      }
+    }
+
     const changed = !sameSnapshot(snapshot, this.lastSent)
     const due = Date.now() - this.lastSyncAtMs >= SYNC_HEARTBEAT_MS
     if (!changed && !due) return
@@ -608,11 +650,16 @@ export class PosSessionOrchestrator {
 
   private async postSync(snapshot: Map<string, CartEntry>, review?: ReviewItem[]): Promise<void> {
     if (!this.cfg || !this.sessionRef) return
-    const items: PosSyncItem[] = [...snapshot].map(([className, entry]) => ({
-      class_name: className,
-      quantity: entry.quantity,
-      max_confidence: entry.maxConfidence
-    }))
+    const items: PosSyncItem[] = [...snapshot].map(([className, entry]) => {
+      const item: PosSyncItem = {
+        class_name: className,
+        quantity: entry.quantity,
+        max_confidence: entry.maxConfidence
+      }
+      // Absent when false, so the wire shape of a healthy item is unchanged.
+      if (entry.lost) item.lost = true
+      return item
+    })
     const payload: PosSyncPayload = {
       session_ref: this.sessionRef,
       station_id: this.cfg.stationId,

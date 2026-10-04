@@ -395,10 +395,36 @@ describe('PosSessionOrchestrator', () => {
 
     // Once the camera is warm and still sees nothing, the verified count holds anyway: D2's
     // automatic removal is suspended until the removal-capable model ships, so the cart never
-    // follows the camera down to zero.
+    // follows the camera down to zero. The camera cannot account for the item either, so the
+    // snapshot says so: `lost: true` is what the tablet renders as "camera lost this item".
     await vi.advanceTimersByTimeAsync(20_000)
     expect(h.calls.syncs.at(-1)?.items).toEqual([
+      { class_name: 'soda', quantity: 1, max_confidence: 0.9, lost: true }
+    ])
+    orch.stop()
+  })
+
+  it('flags every held item lost once the one restart has failed', async () => {
+    const h = harness()
+    h.state.logs.events = [event({ enteredAt: BASE_S + 1 })]
+    const orch = new PosSessionOrchestrator(h.deps)
+
+    await orch.start()
+    await vi.advanceTimersByTimeAsync(4_200)
+    expect(h.calls.syncs.at(-1)?.items).toEqual([
       { class_name: 'soda', quantity: 1, max_confidence: 0.9 }
+    ])
+
+    // The camera dies and the restart fails: capture never warms up again, and the sync heartbeat
+    // keeps the tablet from showing *camera offline*. The held row has to say so itself.
+    h.state.health = 'idle'
+    h.state.startCaptureResult = { ok: false, status: 500 }
+    await vi.advanceTimersByTimeAsync(3_000)
+
+    expect(h.calls.starts).toBe(1)
+    expect(h.calls.states.at(-1)?.phase).toBe('error')
+    expect(h.calls.syncs.at(-1)?.items).toEqual([
+      { class_name: 'soda', quantity: 1, max_confidence: 0.9, lost: true }
     ])
     orch.stop()
   })
@@ -419,7 +445,64 @@ describe('PosSessionOrchestrator', () => {
     await vi.advanceTimersByTimeAsync(SYNC_HEARTBEAT_MS + 12_000)
 
     // The posted count was verified, so it is a floor: the next heartbeat still carries it and
-    // `pos_reconcile` never sees the row leave the snapshot.
+    // `pos_reconcile` never sees the row leave the snapshot. The camera has lost the item, and
+    // the floor makes that invisible in the numbers — the flag is what says it out loud.
+    expect(h.calls.syncs.at(-1)?.items).toEqual([
+      { class_name: 'soda', quantity: 1, max_confidence: 0.9, lost: true }
+    ])
+    orch.stop()
+  })
+
+  it('flags a floor-held item once the camera loses sight, inside the settle window', async () => {
+    const h = harness()
+    h.state.logs.events = [event({ enteredAt: BASE_S + 1 })]
+    const orch = new PosSessionOrchestrator(h.deps)
+
+    await orch.start()
+    await vi.advanceTimersByTimeAsync(4_200)
+    expect(h.calls.syncs.at(-1)?.items).toEqual([
+      { class_name: 'soda', quantity: 1, max_confidence: 0.9 }
+    ])
+
+    // The item is taken away at t≈5 s. Within the commit dwell the camera still counts as
+    // seeing it, so nothing new is posted — a momentary dropout must not flash the badge.
+    h.state.logs.events = [event({ enteredAt: BASE_S + 1, leftAt: BASE_S + 5 })]
+    const before = h.calls.syncs.length
+    await vi.advanceTimersByTimeAsync(2_500)
+    expect(h.calls.syncs.length).toBe(before)
+
+    // One dwell later the raw count has been 0 for a full dwell — while the removal settle
+    // window is still open. The badge fires while the row is still held, so the vanish reads
+    // as "camera lost this item" instead of a silent deletion.
+    await vi.advanceTimersByTimeAsync(1_500)
+    expect(h.calls.syncs.at(-1)?.items).toEqual([
+      { class_name: 'soda', quantity: 1, max_confidence: 0.9, lost: true }
+    ])
+    orch.stop()
+  })
+
+  it('clears the flag when the camera sees the item again, and keeps the floor quantity', async () => {
+    const h = harness()
+    h.state.logs.events = [event({ enteredAt: BASE_S + 1 })]
+    const orch = new PosSessionOrchestrator(h.deps)
+
+    await orch.start()
+    await vi.advanceTimersByTimeAsync(4_200)
+
+    h.state.logs.events = [event({ enteredAt: BASE_S + 1, leftAt: BASE_S + 5 })]
+    await vi.advanceTimersByTimeAsync(4_500)
+    expect(h.calls.syncs.at(-1)?.items).toEqual([
+      { class_name: 'soda', quantity: 1, max_confidence: 0.9, lost: true }
+    ])
+
+    // The same item is set back down: a fresh track sees it, so the badge clears while the
+    // posted count stays at the floor's 1 — the new track has not committed yet, and the
+    // quantity never followed the dip in the first place.
+    h.state.logs.events = [
+      event({ enteredAt: BASE_S + 1, leftAt: BASE_S + 5 }),
+      event({ trackId: 2, enteredAt: BASE_S + 10 })
+    ]
+    await vi.advanceTimersByTimeAsync(1_500)
     expect(h.calls.syncs.at(-1)?.items).toEqual([
       { class_name: 'soda', quantity: 1, max_confidence: 0.9 }
     ])
@@ -448,14 +531,15 @@ describe('PosSessionOrchestrator', () => {
     ])
 
     // Both are taken away: the settle window empties the counter, the floor holds the last
-    // verified count for the rest of the session.
+    // verified count for the rest of the session — and with the camera seeing neither item,
+    // both carry the lost flag.
     h.state.logs.events = [
       event({ enteredAt: BASE_S + 1, leftAt: BASE_S + 14 }),
       event({ trackId: 2, enteredAt: BASE_S + 9, maxConf: 0.95, leftAt: BASE_S + 15 })
     ]
     await vi.advanceTimersByTimeAsync(SYNC_HEARTBEAT_MS + 12_000)
     expect(h.calls.syncs.at(-1)?.items).toEqual([
-      { class_name: 'soda', quantity: 2, max_confidence: 0.95 }
+      { class_name: 'soda', quantity: 2, max_confidence: 0.95, lost: true }
     ])
     orch.stop()
   })
@@ -506,8 +590,9 @@ describe('PosSessionOrchestrator', () => {
     const second = new PosSessionOrchestrator(h.deps)
     await second.start()
     await vi.advanceTimersByTimeAsync(4_200)
+    // The camera is blind (no events), so the restored floor posts with the lost flag.
     expect(h.calls.syncs.at(-1)?.items).toEqual([
-      { class_name: 'soda', quantity: 1, max_confidence: 0.9 }
+      { class_name: 'soda', quantity: 1, max_confidence: 0.9, lost: true }
     ])
     second.stop()
   })

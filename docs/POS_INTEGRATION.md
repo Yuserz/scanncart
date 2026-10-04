@@ -188,6 +188,7 @@ the panel is **Basket checked**: the tablet's *Start* is what binds the desktop.
 | The tablet says *camera offline* | The desktop has not synced recently. | The customer finishes manually and asks staff to add what the camera missed. |
 | An item is in the cart that the customer never put there | A detection counted (`minCommitConf`, `commitDwellS`). | Remove it on the tablet — that is permanent for this session. |
 | An item on the counter is missing from the cart | The camera missed it, or the item is stacked/touching another. | Staff add it as a manual row; the camera never touches manual rows. |
+| The tablet says *camera lost this item* on a row | The desktop's count floor is holding the item and the camera no longer sees it — taken away, or blind. | Nothing. The row stays until the camera sees the item again or the session ends; staff can remove it with their PIN. |
 | *Test connection* warns about `http://` | The secret would travel in clear text. | Use `https://` unless this is localhost. |
 
 Two things the counting cannot do, both by design: **stacked or overlapping items under-count** (one
@@ -213,6 +214,11 @@ inside one transaction:
 { "session_ref": "scanncart-…", "station_id": "counter-1",
   "items": [ { "class_name": "safeguard_pure_white_60g", "quantity": 2, "max_confidence": 0.91 } ] }
 ```
+
+An item the camera can no longer account for carries `"lost": true` — the desktop's posted quantity
+is a floor for the session, so the flag, not a falling number, is how a taken item reads. pushcart-web
+stamps the row's `camera_lost_at`, which the tablet renders as *"Camera lost this item — still in your
+cart"*; the item going back to being seen posts without the flag and clears it.
 
 Each item's `status` comes back as `added`, `updated`, `removed`, `unmapped`, `overridden` or
 `warned` (`warned` = in the cart, but more than pushcart-web's stock says it has; Finish is where

@@ -227,6 +227,27 @@ const PROTOCOL_CHECKS: ProtocolCheck[] = [
     }
   },
   {
+    name: 'refuses a lost flag that is not a boolean as 400, not as a reconcile 500',
+    run: async (target) => {
+      // pos_reconcile casts `lost` with ::boolean, which throws on a value Postgres cannot read
+      // as one; the route has to refuse it before the RPC sees it.
+      const refused = postCartSync(target.baseUrl, target.secret, {
+        session_ref: target.deadSessionRef,
+        station_id: target.knownStationId,
+        items: [
+          {
+            class_name: 'soda',
+            quantity: 1,
+            max_confidence: 0.9,
+            lost: 'abc' as unknown as boolean
+          }
+        ]
+      })
+      await expect(refused).rejects.toBeInstanceOf(PosTransportError)
+      await expect(refused).rejects.toThrow(/400/)
+    }
+  },
+  {
     name: 'reads a review sync for a session that is not open as a conflict',
     run: async (target) => {
       await expect(
