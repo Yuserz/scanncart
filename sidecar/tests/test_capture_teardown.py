@@ -34,8 +34,11 @@ class TrackingSource(FakeFrameSource):
     def release(self) -> None:
         self.released = True
 
+    _seq = 0
+
     def latest(self):
-        return (0, np.zeros((4, 4, 3), dtype=np.uint8))
+        self._seq += 1  # a new frame per call, as a live camera delivers; the pipeline analyses each frame once
+        return (self._seq, np.zeros((4, 4, 3), dtype=np.uint8))
 
 
 class ExplodingDetector:
