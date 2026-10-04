@@ -2019,14 +2019,19 @@ if (mode === 'basket') {
         return { x: r.left, y: r.top, w: r.width, h: r.height };
       });
       const at = (fx, fy) => page.mouse.click(box.x + fx * box.w, box.y + fy * box.h);
-      // Clear first, so outlines left by an earlier run cannot add points to this one.
+      // Delete first, so outlines left by an earlier run cannot add points to this one.
       for (const which of ['inside', 'opening']) {
-        const clear = page.locator(`[data-testid="bt-draw-${which}"] ~ button:has-text("Clear")`);
-        if (await clear.isEnabled().catch(() => false)) await clear.click();
+        const del = page.locator(`[data-testid="bt-delete-${which}"]`);
+        if (await del.isEnabled().catch(() => false)) await del.click();
       }
       await clickTestId('bt-draw-inside');
       check('Draw puts the preview in drawing mode', await visible('[data-testid="bt-drawing"]'));
-      for (const [fx, fy] of [[0.3, 0.55], [0.7, 0.55], [0.7, 0.9], [0.3, 0.9]]) await at(fx, fy);
+      await at(0.3, 0.55);
+      // One point draws no outline; the numbered marker is what shows the click landed.
+      check('the first click shows a numbered marker where it landed',
+        (await visible('[data-testid="bt-handle-inside-0"]')) &&
+          (await readText('[data-testid="bt-handle-inside-0"]')) === '1');
+      for (const [fx, fy] of [[0.7, 0.55], [0.7, 0.9], [0.3, 0.9]]) await at(fx, fy);
       await clickTestId('bt-draw-opening');
       for (const [fx, fy] of [[0.2, 0.4], [0.8, 0.4], [0.8, 0.98], [0.2, 0.98]]) await at(fx, fy);
       await clickTestId('bt-draw-opening'); // Done
@@ -2036,7 +2041,33 @@ if (mode === 'basket') {
       }));
       check('four clicks per outline draw four-point outlines', pts.inside === 4 && pts.opening === 4, JSON.stringify(pts));
       check('the edit is marked unsaved', (await page.textContent('#bt-zones-h')).includes('unsaved'));
+      const markers = await page.$$eval('.bt-handle', (els) => els.length);
+      check('every drawn point has a marker', markers === 8, `markers=${markers}`);
       await shot(page, 'basket-06-drawn');
+
+      // Drag inside point 1 with the real mouse, away and back via Undo/Redo.
+      const handleAt = () =>
+        page.evaluate(() => {
+          const r = document.querySelector('[data-testid="bt-handle-inside-0"]').getBoundingClientRect();
+          return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+        });
+      const h0 = await handleAt();
+      await page.mouse.move(h0.x, h0.y);
+      await page.mouse.down();
+      await page.mouse.move(h0.x + 0.05 * box.w, h0.y - 0.05 * box.h, { steps: 6 });
+      await page.mouse.up();
+      const h1 = await handleAt();
+      check('dragging a marker moves the point', Math.abs(h1.x - h0.x - 0.05 * box.w) < 3 && Math.abs(h0.y - h1.y - 0.05 * box.h) < 3,
+        JSON.stringify({ from: h0, to: h1 }));
+      check('and the drag added no extra point', (await page.$$eval('.bt-handle', (els) => els.length)) === 8);
+      await shot(page, 'basket-06b-dragged');
+      await clickTestId('bt-undo');
+      const h2 = await handleAt();
+      check('Undo puts the dragged point back', Math.abs(h2.x - h0.x) < 2 && Math.abs(h2.y - h0.y) < 2, JSON.stringify(h2));
+      await clickTestId('bt-redo');
+      const h3 = await handleAt();
+      check('Redo moves it again', Math.abs(h3.x - h1.x) < 2 && Math.abs(h3.y - h1.y) < 2, JSON.stringify(h3));
+      await clickTestId('bt-undo');
 
       await clickTestId('bt-save-zones');
       await page.waitForFunction(() => document.querySelector('.bt-note')?.textContent?.includes('saved'), null, { timeout: 10_000 }).catch(() => {});
@@ -2051,8 +2082,8 @@ if (mode === 'basket') {
       check('the basket now judges under the drawn layout', layout?.mode === 'drawn', JSON.stringify(layout?.mode));
 
       // Validation: an outline with too few points is refused before it reaches the config.
-      const clearInside = page.locator('[data-testid="bt-draw-inside"] ~ button:has-text("Clear")');
-      await clearInside.click();
+      await clickTestId('bt-delete-inside');
+      check('Delete removes the outline and its markers', !(await page.$('[data-testid="bt-handle-inside-0"]')));
       check('an empty outline is named as a problem', await visible('[data-testid="bt-problems"]'),
         JSON.stringify(await readText('[data-testid="bt-problems"]')));
       check('and Save is disabled while it stands', await page.isDisabled('[data-testid="bt-save-zones"]'));

@@ -44,7 +44,7 @@ node .claude/skills/run-desktop/driver.mjs v1         # the v1 acceptance run: w
   picture, a practice basket bound with no tablet (and the main process agreeing), a 20 s window
   in which a real deposit can be made and is reported (never asserted — nothing here moves a
   product), **capture still streaming with no error after that window**, Empty and restart, End,
-  then the zone editor: B with four clicks per outline, Save read back through the POS config
+  then the zone editor: B with four clicks per outline (a numbered marker from the first click, every point dragged with the real mouse and the drag undone and redone), Save read back through the POS config
   (points in true orientation), an empty outline refused with Save disabled, Revert, and back to
   A. It ends on the Live view checking that no Camera tuning row draws a control over its own
   label. The original zone fields are restored in a `finally`. The "still streaming" check exists

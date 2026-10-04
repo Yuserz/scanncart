@@ -72,6 +72,50 @@ export function svgPoints(points: readonly Point[], mirrored: boolean): string {
     .join(' ')
 }
 
+/** Which drawn outline an edit is about. */
+export type OutlineName = 'inside' | 'opening'
+
+const clamp01 = (v: number): number => Math.min(1, Math.max(0, v))
+
+/** The outline with one corner moved to `p` (clamped to the picture). */
+export function moveCorner(points: readonly Point[], index: number, p: Point): Point[] {
+  return points.map((q, i) => (i === index ? { x: clamp01(p.x), y: clamp01(p.y) } : q))
+}
+
+/**
+ * Undo/redo over whole states: `past` is what Undo returns to (newest last), `future` what Redo
+ * returns to (next first). Pure, so the editor's history is tested without a screen.
+ */
+export interface History<T> {
+  past: T[]
+  present: T
+  future: T[]
+}
+
+export function historyOf<T>(present: T): History<T> {
+  return { past: [], present, future: [] }
+}
+
+/** A new state the operator made: the old one becomes undoable, and Redo is forgotten. */
+export function commit<T>(h: History<T>, next: T, from: T = h.present): History<T> {
+  if (JSON.stringify(next) === JSON.stringify(from)) return { ...h, present: next }
+  return { past: [...h.past, from], present: next, future: [] }
+}
+
+export function undo<T>(h: History<T>): History<T> {
+  if (h.past.length === 0) return h
+  return {
+    past: h.past.slice(0, -1),
+    present: h.past[h.past.length - 1],
+    future: [h.present, ...h.future]
+  }
+}
+
+export function redo<T>(h: History<T>): History<T> {
+  if (h.future.length === 0) return h
+  return { past: [...h.past, h.present], present: h.future[0], future: h.future.slice(1) }
+}
+
 /**
  * Where a click landed on an element, normalized 0–1 and clamped to it, from the click's client
  * coordinates and the element's bounding box. Clamped because a click on the very edge can round

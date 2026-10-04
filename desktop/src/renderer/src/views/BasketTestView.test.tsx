@@ -230,4 +230,73 @@ describe('BasketTestView', () => {
     fireEvent.click(screen.getByText('Dismiss'))
     expect(screen.queryByTestId('bt-error')).not.toBeInTheDocument()
   })
+
+  it('marks a point from the first click, lets it be dragged, and undoes the drag', async () => {
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      left: 0,
+      top: 0,
+      width: 100,
+      height: 100,
+      right: 100,
+      bottom: 100,
+      x: 0,
+      y: 0,
+      toJSON: () => ({})
+    })
+    const h = harness()
+    const state = basketState()
+    const bridge = bridgeWith(state)
+    render(
+      <BasketTestView
+        port={8765}
+        streamDeps={h.streamDeps}
+        basketDeps={{ read: async () => state, subscribe: () => () => {} }}
+        bridge={bridge}
+      />
+    )
+    h.frame()
+    await waitFor(() => expect(screen.getByLabelText(/B · Drawn outlines/)).toBeInTheDocument())
+    fireEvent.click(screen.getByLabelText(/B · Drawn outlines/))
+    fireEvent.click(screen.getByTestId('bt-draw-inside'))
+    const preview = screen.getByTestId('bt-preview')
+
+    // One click draws no outline, so the marker is the only sign the click landed.
+    fireEvent.click(preview, { clientX: 20, clientY: 60 })
+    const first = screen.getByTestId('bt-handle-inside-0')
+    expect(first).toHaveTextContent('1')
+    expect(first.style.left).toBe('20%')
+    expect(first.style.top).toBe('60%')
+
+    // Clicking a marker selects it for dragging; it must not add a second point beneath it.
+    fireEvent.click(first, { clientX: 20, clientY: 60 })
+    expect(screen.queryByTestId('bt-handle-inside-1')).not.toBeInTheDocument()
+
+    fireEvent.click(preview, { clientX: 80, clientY: 60 })
+    fireEvent.click(preview, { clientX: 80, clientY: 90 })
+    expect(screen.getByTestId('bt-handle-inside-2')).toBeInTheDocument()
+
+    // Drag point 1 from (20, 60) to (30, 50): it follows the pointer, and the drag is one step.
+    fireEvent.pointerDown(first, { clientX: 20, clientY: 60, pointerId: 1 })
+    fireEvent.pointerMove(first, { clientX: 25, clientY: 55, pointerId: 1 })
+    fireEvent.pointerMove(first, { clientX: 30, clientY: 50, pointerId: 1 })
+    fireEvent.pointerUp(first, { clientX: 30, clientY: 50, pointerId: 1 })
+    expect(screen.getByTestId('bt-handle-inside-0').style.left).toBe('30%')
+    expect(screen.getByTestId('bt-handle-inside-0').style.top).toBe('50%')
+
+    fireEvent.click(screen.getByTestId('bt-undo'))
+    expect(screen.getByTestId('bt-handle-inside-0').style.left).toBe('20%')
+    fireEvent.click(screen.getByTestId('bt-redo'))
+    expect(screen.getByTestId('bt-handle-inside-0').style.left).toBe('30%')
+    // Ctrl+Z is the same step.
+    fireEvent.keyDown(window, { key: 'z', ctrlKey: true })
+    expect(screen.getByTestId('bt-handle-inside-0').style.left).toBe('20%')
+    fireEvent.keyDown(window, { key: 'y', ctrlKey: true })
+    expect(screen.getByTestId('bt-handle-inside-0').style.left).toBe('30%')
+
+    // Delete takes the whole outline away, and Undo brings it back.
+    fireEvent.click(screen.getByTestId('bt-delete-inside'))
+    expect(screen.queryByTestId('bt-handle-inside-0')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('bt-undo'))
+    expect(screen.getByTestId('bt-handle-inside-2')).toBeInTheDocument()
+  })
 })

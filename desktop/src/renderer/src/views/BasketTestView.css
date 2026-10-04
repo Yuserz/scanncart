@@ -114,6 +114,57 @@
   vector-effect: non-scaling-stroke;
 }
 
+/* The drawn points: a layer the size of the picture that lets clicks through to it, with each
+   point a numbered dot that can be grabbed. Positioned in percent of the picture, so they stay on
+   their spot whatever size the preview is drawn at. */
+.bt-handles {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.bt-handle {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  margin: -9px 0 0 -9px;
+  border-radius: 50%;
+  border: 2px solid var(--bg);
+  box-sizing: border-box;
+  font: 600 10px/14px var(--font-mono);
+  text-align: center;
+  color: var(--accent-ink);
+  pointer-events: auto;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+
+.bt-handle.inside {
+  background: var(--zone-inside-line);
+}
+
+.bt-handle.opening {
+  background: var(--zone-opening-line);
+}
+
+/* The outline currently being drawn: larger, so where the next click joins is obvious. */
+.bt-handle.active {
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  line-height: 18px;
+}
+
+.bt-handle:active {
+  cursor: grabbing;
+}
+
+.bt-spacer {
+  flex: 1;
+}
+
 .bt-placeholder {
   line-height: 1.5;
   padding: 80px 24px;

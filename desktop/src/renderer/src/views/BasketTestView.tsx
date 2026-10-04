@@ -8,14 +8,38 @@
 // - **See the zones.** The zones are drawn over the live preview, mirrored the way the preview is,
 //   so "is my basket in the inside band" is answered by looking rather than by arithmetic.
 // - **Choose and draw them.** Bands (spot A: the camera under the handle, looking across the
-//   basket - the default) or drawn outlines (spot B: a camera looking down into it). Edits show on
-//   the preview before they are saved, and Save goes through the same POS config the Admin Panel
-//   writes, so the basket judges under exactly what is on screen.
+//   basket - the default) or drawn outlines (spot B: a camera looking down into it). A drawn
+//   outline is placed by clicking its corners on the picture; every point shows as a marker the
+//   moment it is placed and can be dragged afterwards, with Undo/Redo over every zone edit. Edits
+//   show on the preview before they are saved, and Save goes through the same POS config the
+//   Admin Panel writes, so the basket judges under exactly what is on screen.
 
-import { useEffect, useMemo, useRef, useState, type JSX, type MouseEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type JSX,
+  type MouseEvent,
+  type PointerEvent as ReactPointerEvent
+} from 'react'
 import { useSidecarStream, type StreamDeps } from '../hooks/useSidecarStream'
 import { basketBridge, useBasketState, type BasketStateDeps } from '../hooks/useBasketState'
-import { clickPoint, fromScreen, layoutOutlines, svgPoints } from '../lib/zones'
+import {
+  clickPoint,
+  commit,
+  fromScreen,
+  historyOf,
+  layoutOutlines,
+  moveCorner,
+  redo,
+  svgPoints,
+  toScreen,
+  undo,
+  type History,
+  type OutlineName
+} from '../lib/zones'
 import {
   CART_EDGES,
   drawnZoneProblems,
@@ -76,6 +100,28 @@ function layoutOfDraft(d: ZoneDraft): ZoneLayout {
       }
 }
 
+const OUTLINE_KEY: Record<OutlineName, 'drawnInside' | 'drawnOpening'> = {
+  inside: 'drawnInside',
+  opening: 'drawnOpening'
+}
+
+const OUTLINE_LABEL: Record<OutlineName, string> = {
+  inside: 'Inside of the basket',
+  opening: 'Opening (rim)'
+}
+
+/** A point being dragged, and the draft as it was when the drag began (one undo step). */
+interface Drag {
+  which: OutlineName
+  index: number
+  start: ZoneDraft
+}
+
+function isTyping(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null
+  return !!el && (el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA')
+}
+
 function draftProblems(d: ZoneDraft): string[] {
   return d.zoneMode === 'drawn'
     ? drawnZoneProblems({ inside: d.drawnInside, opening: d.drawnOpening })
@@ -94,8 +140,36 @@ export function BasketTestView({
     ZoneConfigBridge
 
   const [saved, setSaved] = useState<ZoneDraft | null>(null)
-  const [draft, setDraft] = useState<ZoneDraft | null>(null)
-  const [drawing, setDrawing] = useState<'inside' | 'opening' | null>(null)
+  // The zone draft with its undo/redo history. Every discrete edit goes through `change`; a point
+  // drag updates the draft live and becomes one history step when it ends.
+  const [hist, setHist] = useState<History<ZoneDraft> | null>(null)
+  const draft = hist?.present ?? null
+  const [drawing, setDrawing] = useState<OutlineName | null>(null)
+  const dragRef = useRef<Drag | null>(null)
+
+  const change = useCallback((next: ZoneDraft): void => {
+    setHist((h) => (h ? commit(h, next) : historyOf(next)))
+  }, [])
+  const doUndo = useCallback((): void => setHist((h) => (h ? undo(h) : h)), [])
+  const doRedo = useCallback((): void => setHist((h) => (h ? redo(h) : h)), [])
+
+  // Ctrl+Z / Ctrl+Y (and Ctrl+Shift+Z), except while typing in a field, where the browser's own
+  // undo for that text is what the operator means.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent): void {
+      if (!(e.ctrlKey || e.metaKey) || isTyping(e.target)) return
+      const key = e.key.toLowerCase()
+      if (key === 'z' && !e.shiftKey) {
+        e.preventDefault()
+        doUndo()
+      } else if (key === 'y' || (key === 'z' && e.shiftKey)) {
+        e.preventDefault()
+        doRedo()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [doUndo, doRedo])
   const [zoneNote, setZoneNote] = useState<string | null>(null)
   const [practiceNote, setPracticeNote] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -108,7 +182,7 @@ export function BasketTestView({
       .then((config) => {
         if (!active || !config) return
         setSaved(draftOf(config))
-        setDraft(draftOf(config))
+        setHist(historyOf(draftOf(config)))
       })
       .catch(() => setZoneNote('The zone settings could not be read.'))
     return () => {
@@ -131,25 +205,51 @@ export function BasketTestView({
 
   const capturing = stream.statusState === 'running'
 
+  /** A pointer position on the picture, in true (unmirrored) orientation. */
+  function pointerPoint(e: { clientX: number; clientY: number }): Point | null {
+    if (!imgRef.current) return null
+    const p = clickPoint(e.clientX, e.clientY, imgRef.current.getBoundingClientRect())
+    return p ? fromScreen(p, mirrored) : null
+  }
+
   function onPreviewClick(event: MouseEvent<HTMLDivElement>): void {
-    if (!drawing || !draft || !imgRef.current) return
-    const p = clickPoint(event.clientX, event.clientY, imgRef.current.getBoundingClientRect())
+    if (!drawing || !draft) return
+    const point = pointerPoint(event)
+    if (!point) return
+    const key = OUTLINE_KEY[drawing]
+    change({ ...draft, [key]: [...draft[key], point] })
+  }
+
+  function beginDrag(e: ReactPointerEvent<HTMLElement>, which: OutlineName, index: number): void {
+    if (!draft) return
+    e.preventDefault()
+    e.stopPropagation()
+    e.currentTarget.setPointerCapture?.(e.pointerId)
+    dragRef.current = { which, index, start: draft }
+  }
+
+  function dragTo(e: ReactPointerEvent<HTMLElement>): void {
+    const drag = dragRef.current
+    if (!drag) return
+    const p = pointerPoint(e)
     if (!p) return
-    const point: Point = fromScreen(p, mirrored)
-    const key = drawing === 'inside' ? 'drawnInside' : 'drawnOpening'
-    setDraft({ ...draft, [key]: [...draft[key], point] })
+    const key = OUTLINE_KEY[drag.which]
+    const moved = moveCorner(drag.start[key], drag.index, p)
+    // Live, without a history step per pixel: the whole drag is one step when it ends.
+    setHist((h) => (h ? { ...h, present: { ...h.present, [key]: moved } } : h))
   }
 
-  function undoPoint(which: 'inside' | 'opening'): void {
-    if (!draft) return
-    const key = which === 'inside' ? 'drawnInside' : 'drawnOpening'
-    setDraft({ ...draft, [key]: draft[key].slice(0, -1) })
+  function endDrag(): void {
+    const drag = dragRef.current
+    if (!drag) return
+    dragRef.current = null
+    setHist((h) => (h ? commit(h, h.present, drag.start) : h))
   }
 
-  function clearOutline(which: 'inside' | 'opening'): void {
+  function deleteOutline(which: OutlineName): void {
     if (!draft) return
-    const key = which === 'inside' ? 'drawnInside' : 'drawnOpening'
-    setDraft({ ...draft, [key]: [] })
+    if (drawing === which) setDrawing(null)
+    change({ ...draft, [OUTLINE_KEY[which]]: [] })
   }
 
   async function saveZones(): Promise<void> {
@@ -159,7 +259,8 @@ export function BasketTestView({
     try {
       const next = await bridge.savePosConfig(draft)
       setSaved(draftOf(next))
-      setDraft(draftOf(next))
+      // Saving is not an edit: what is on screen stays, and so does the way back through it.
+      setHist((h) => (h ? { ...h, present: draftOf(next) } : historyOf(draftOf(next))))
       setDrawing(null)
       setZoneNote('Zones saved. The basket now judges under them.')
     } catch (error) {
@@ -200,8 +301,9 @@ export function BasketTestView({
           )}
           {drawing && (
             <span className="bt-drawing" data-testid="bt-drawing">
-              Click around the {drawing === 'inside' ? 'inside of the basket' : 'opening (rim)'} on
-              the picture
+              Click the corners of the{' '}
+              {drawing === 'inside' ? 'inside of the basket' : 'opening (rim)'} on the picture; drag
+              a point to move it
             </span>
           )}
         </div>
@@ -220,6 +322,9 @@ export function BasketTestView({
           className={`bt-preview ${drawing ? 'drawing' : ''}`}
           data-testid="bt-preview"
           onClick={onPreviewClick}
+          onPointerMove={dragTo}
+          onPointerUp={endDrag}
+          onPointerCancel={endDrag}
         >
           {stream.frame ? (
             <img
@@ -268,6 +373,35 @@ export function BasketTestView({
                 />
               ))}
             </svg>
+          )}
+          {/* Every drawn point as a marker, numbered in the order it was placed, from the first
+              click - a single point draws no outline, so without these a click looked like it did
+              nothing. Draggable whenever the drawn layout is chosen, so a misplaced point is
+              moved rather than redrawn. */}
+          {stream.frame && draft?.zoneMode === 'drawn' && (
+            <div className="bt-handles">
+              {(['opening', 'inside'] as const).flatMap((which) =>
+                draft[OUTLINE_KEY[which]].map((p, i) => {
+                  const s = toScreen(p, mirrored)
+                  return (
+                    <span
+                      key={`${which}-${i}`}
+                      role="slider"
+                      aria-label={`${OUTLINE_LABEL[which]} point ${i + 1}`}
+                      aria-valuetext={`${Math.round(p.x * 100)}%, ${Math.round(p.y * 100)}%`}
+                      className={`bt-handle ${which}${drawing === which ? ' active' : ''}`}
+                      data-testid={`bt-handle-${which}-${i}`}
+                      style={{ left: `${s.x * 100}%`, top: `${s.y * 100}%` }}
+                      onPointerDown={(e) => beginDrag(e, which, i)}
+                      // A click on a point must not also add a point under it.
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {i + 1}
+                    </span>
+                  )
+                })
+              )}
+            </div>
           )}
         </div>
         <p className="bt-legend">
@@ -376,7 +510,7 @@ export function BasketTestView({
                       value={mode}
                       checked={draft.zoneMode === mode}
                       onChange={() => {
-                        setDraft({ ...draft, zoneMode: mode })
+                        change({ ...draft, zoneMode: mode })
                         setDrawing(null)
                       }}
                     />
@@ -399,7 +533,7 @@ export function BasketTestView({
                     <select
                       id="zone-edge"
                       value={draft.cartEdge}
-                      onChange={(e) => setDraft({ ...draft, cartEdge: e.target.value as CartEdge })}
+                      onChange={(e) => change({ ...draft, cartEdge: e.target.value as CartEdge })}
                     >
                       {CART_EDGES.map((edge) => (
                         <option key={edge} value={edge}>
@@ -418,7 +552,7 @@ export function BasketTestView({
                       step={1}
                       value={Math.round(draft.insideFraction * 100)}
                       onChange={(e) =>
-                        setDraft({ ...draft, insideFraction: Number(e.target.value) / 100 })
+                        change({ ...draft, insideFraction: Number(e.target.value) / 100 })
                       }
                     />
                   </label>
@@ -432,7 +566,7 @@ export function BasketTestView({
                       step={1}
                       value={Math.round(draft.openingFraction * 100)}
                       onChange={(e) =>
-                        setDraft({ ...draft, openingFraction: Number(e.target.value) / 100 })
+                        change({ ...draft, openingFraction: Number(e.target.value) / 100 })
                       }
                     />
                   </label>
@@ -459,18 +593,21 @@ export function BasketTestView({
                         >
                           {drawing === which ? 'Done' : 'Draw'}
                         </button>
-                        <button disabled={pts.length === 0} onClick={() => undoPoint(which)}>
-                          Undo
-                        </button>
-                        <button disabled={pts.length === 0} onClick={() => clearOutline(which)}>
-                          Clear
+                        <button
+                          data-testid={`bt-delete-${which}`}
+                          disabled={pts.length === 0}
+                          onClick={() => deleteOutline(which)}
+                        >
+                          Delete
                         </button>
                       </div>
                     )
                   })}
                   <p className="dim">
-                    Draw the opening as a ring that goes around the inside outline, or as the strip
-                    along the rim. Anything outside both outlines counts as outside.
+                    Press Draw, then click the corners on the picture. Each point shows as a
+                    numbered marker; drag one to move it. Draw the opening as a ring around the
+                    inside outline, or as the strip along the rim. Anything outside both outlines
+                    counts as outside.
                   </p>
                 </div>
               )}
@@ -494,11 +631,28 @@ export function BasketTestView({
                 <button
                   disabled={!dirty || busy}
                   onClick={() => {
-                    setDraft(saved)
+                    if (saved) change(saved)
                     setDrawing(null)
                   }}
                 >
                   Revert
+                </button>
+                <span className="bt-spacer" />
+                <button
+                  data-testid="bt-undo"
+                  disabled={!hist || hist.past.length === 0}
+                  onClick={doUndo}
+                  title="Undo (Ctrl+Z)"
+                >
+                  Undo
+                </button>
+                <button
+                  data-testid="bt-redo"
+                  disabled={!hist || hist.future.length === 0}
+                  onClick={doRedo}
+                  title="Redo (Ctrl+Y)"
+                >
+                  Redo
                 </button>
               </div>
               {zoneNote && <p className="bt-note">{zoneNote}</p>}
