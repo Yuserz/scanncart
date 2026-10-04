@@ -189,10 +189,11 @@ Two limits worth knowing before trusting a green run:
   which is fewer fresh observations per crossing. A path that passes here with frames to spare can
   still miss at the counter; `docs/CART_TRANSFER_SPEC.md` asks for fresh-observation counts under real
   load for this reason.
-- **The empty-basket check covers the first 3 s after bind.** It flags any product seen in the cart
-  band during that window, including one the customer just deposited through the opening, so a
-  scenario that deposits within 3 s of `bind_at_s` expects `review: 1`. Leave a few seconds after
-  Start unless that case is the point of the scenario.
+- **The empty-basket check covers the first 3 s after bind.** It flags a product whose track was
+  *first seen* inside the cart band during that window — a leftover — and not one carried in through
+  the opening, so a quick first deposit scores as a deposit. A deposited item whose track the
+  tracker swaps while it sits inside, inside those 3 s, does start a new track inside and is
+  flagged; that is the residual case, and a few seconds of stillness after Start avoids it.
 
 A minimum basket shot list, alongside the counter list in spec §7.1:
 

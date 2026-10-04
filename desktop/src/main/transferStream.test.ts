@@ -124,6 +124,39 @@ describe('basket tracker', () => {
     expect(h.tracker.pendingReview()[0].reason).toContain('not empty at Start')
   })
 
+  it('#16 a deposit made right after Start is a deposit, not a leftover', async () => {
+    // The customer taps Start and puts something in straight away: the track was first seen
+    // outside, so it is not "already inside", and Finish must not be blocked by it.
+    const h = harness()
+    await h.tracker.bind('s1')
+    h.deposit()
+    expect(h.qty()).toEqual({ soda: 1 })
+    expect(h.tracker.pendingReview()).toEqual([])
+  })
+
+  it('#16 a leftover whose track began before Start is still flagged', async () => {
+    // The previous customer's item: tracked inside the cart band before this session bound.
+    const h = harness()
+    h.run(IN, 3)
+    await h.tracker.bind('s1')
+    h.run(IN, 2)
+    expect(h.tracker.pendingReview()[0].reason).toContain('not empty at Start')
+  })
+
+  it('#16 forgets track history when capture stops, since track ids start over', async () => {
+    // Track 7 was a deposit (first seen outside). Capture restarts and the sidecar's tracker
+    // hands 7 to a different item that is sitting inside: that one is a leftover.
+    const h = harness()
+    await h.tracker.bind('s1')
+    h.deposit()
+    h.tracker.unbind()
+    h.tracker.onStatus('idle')
+    h.tracker.onStatus('running')
+    await h.tracker.bind('s2')
+    h.run(IN, 2, { cls: 'tuna' })
+    expect(h.tracker.pendingReview()[0].reason).toContain('not empty at Start')
+  })
+
   it('#15 capture stopping keeps the basket and asks for review when it comes back', async () => {
     const h = harness()
     await h.tracker.bind('s1')

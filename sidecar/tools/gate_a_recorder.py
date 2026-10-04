@@ -394,8 +394,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=10.0,
         help=(
             "Target duration per clip in seconds (default: 10.0 - about 3 s still, the "
-            "interaction, then 2-3 s after; the basket flags anything seen inside during its first "
-            "3 s, so an interaction in the opening seconds is scored as review)."
+            "interaction, then 2-3 s after: the spec asks for seconds either side of each "
+            "interaction, and the lead-in keeps it clear of the basket's 3 s empty-basket check)."
         ),
     )
     parser.add_argument(

@@ -39,8 +39,9 @@ line-of-sight occlusion, adjust camera elevation, angle, or basket opening tape 
   **clean** (no watermark) because they double as the replay corpus (`replay_scenarios.py`); pass
   `--stamp` only for a watermarked audit copy. A clip whose camera delivered a different rate than
   `--fps` is re-timed to the delivered rate so it plays back at real speed. Keep the default 10 s:
-  hold still for about 3 s before the interaction, since the basket flags anything seen inside during
-  its first 3 s.
+  hold still for about 3 s before the interaction, which gives the scorer a clean lead-in and keeps a
+  deposit clear of the basket's 3 s empty-basket check (that check flags only a product first seen
+  inside, but a track swap inside the window can still trip it).
 
 ```bash
 # Preview planned trials without opening camera:

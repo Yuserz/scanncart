@@ -14,7 +14,9 @@
 // blind (no fresh frame for `blindAfterS`, or capture leaving `running`), which the ledger turns
 // into review when it lasts, and the empty-basket baseline at bind (#16) — a product already
 // sitting in the cart band when a session starts is flagged, because the ledger begins at zero
-// and that item would otherwise never be billed.
+// and that item would otherwise never be billed. "Already sitting" means its track was *first
+// seen* inside the cart band: a product the customer carries in through the opening during those
+// first seconds was first seen outside, is a deposit, and must not block Finish as a leftover.
 
 import { BasketLedger, type LedgerStore, type ReviewItem } from './basketLedger'
 import type { CartEntry } from './cartState'
@@ -24,8 +26,17 @@ import {
   TransferStateMachine,
   regionOf,
   type Candidate,
+  type Region,
   type TransferStateConfig
 } from './transferState'
+
+/**
+ * How many tracks' first regions are remembered before stale ones are pruned, and how long a
+ * track may go unseen before it counts as stale. The map only answers "where did this track
+ * start", which nothing asks once a track has been gone for this long.
+ */
+const FIRST_REGION_LIMIT = 256
+const FIRST_REGION_STALE_S = 30
 
 /** The subset of a sidecar frame message this reads. */
 export interface StreamFrame {
@@ -87,6 +98,13 @@ export class BasketTracker {
   private captureRunning = true
   private baselineUntil: number | null = null
   private baselineFlagged = false
+  /**
+   * Where each track was first seen, and when it was last seen. Kept across a bind on purpose: a
+   * leftover's track usually began before the customer tapped Start, and "first seen inside" is
+   * exactly what makes it a leftover. Cleared when capture stops, because the sidecar's tracker
+   * starts its ids over and a reused id would inherit another item's history.
+   */
+  private firstRegion = new Map<number, { region: Region; lastT: number }>()
   private ws: WSLike | null = null
   private closed = true
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -185,12 +203,10 @@ export class BasketTracker {
     for (const d of msg.detections) {
       if (d.track_id === null) continue
       const box = frameBox(d.box, msg.mirrored === true)
+      const first = this.noteRegion(d.track_id, regionOf(this.machine.getRegions(), box), t)
 
       if (this.baselineUntil !== null && t <= this.baselineUntil && !this.baselineFlagged) {
-        if (
-          regionOf(this.machine.getRegions(), box) === 'inside' &&
-          d.conf >= this.machine.getConfThreshold()
-        ) {
+        if (first === 'inside' && d.conf >= this.machine.getConfThreshold()) {
           this.ledger.flag(d.cls, `the basket was not empty at Start (${d.cls} already inside)`, t)
           this.baselineFlagged = true
           dirty = true
@@ -232,6 +248,7 @@ export class BasketTracker {
     this.captureRunning = running
     if (!running) {
       this.machine.reset()
+      this.firstRegion.clear()
       this.ledger.markBlind(this.lastFreshT ?? this.now())
       this.changed()
     }
@@ -303,6 +320,22 @@ export class BasketTracker {
     this.reconnectTimer = null
     this.ws?.close()
     this.ws = null
+  }
+
+  /** Record a sighting and return the region this track was first seen in. */
+  private noteRegion(trackId: number, region: Region, t: number): Region {
+    const known = this.firstRegion.get(trackId)
+    if (known) {
+      known.lastT = t
+      return known.region
+    }
+    if (this.firstRegion.size >= FIRST_REGION_LIMIT) {
+      for (const [id, entry] of this.firstRegion) {
+        if (t - entry.lastT > FIRST_REGION_STALE_S) this.firstRegion.delete(id)
+      }
+    }
+    this.firstRegion.set(trackId, { region, lastT: t })
+    return region
   }
 
   private changed(): void {

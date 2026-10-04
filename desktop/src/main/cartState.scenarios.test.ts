@@ -474,15 +474,12 @@ describe('scenario scoring (spec §7.1)', () => {
     expect(() => loadFixtures(dir)).toThrow(/whole number/)
   })
 
-  it('reports a deposit made inside the empty-basket window as review (current behaviour)', async () => {
-    // The baseline check flags any product seen in the cart band during the first 3 s after bind,
-    // including one that just arrived through the opening on a tracked path. Pinned here so a quick
-    // first deposit's review is a known, visible behaviour rather than a surprise in a recording —
-    // and so the test changes, on purpose, if the baseline learns to skip a tracked arrival.
+  it('scores a deposit made inside the empty-basket window as a deposit, not a leftover', async () => {
+    // The baseline check flags only a track first seen inside the cart band. This one arrives
+    // through the opening 1 s after bind, well inside the 3 s window, and is a plain deposit.
     const results = await basketCheckpoints(depositFixture(2, 1))
     expect(results[1].cart).toEqual({ century_tuna: 1 })
-    expect(results[1].review).toBe(1)
-    expect(results[1].reasons[0]).toMatch(/not empty at Start/)
+    expect(results[1].review).toBe(0)
   })
 
   it('refuses a basket fixture without a readable stream', () => {
