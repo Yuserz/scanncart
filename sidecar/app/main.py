@@ -1101,8 +1101,21 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
             reported_size=reported_size,
         )
 
+    # One start at a time. Health reads `idle` for the whole of a start that is still opening the
+    # camera (seconds on a StreamCam), and the desktop's POS loop - which keeps capture running -
+    # calls start whenever it sees `idle`. Without this a second start passed the `!= "running"`
+    # check, acquired a second camera handle, detector and pipeline beside the first, and when one
+    # of them failed its error teardown closed the *other* pipeline's detector mid-inference
+    # ("'NoneType' object has no attribute 'names'"). Under the lock the second caller waits for
+    # the first and then sees `running`, so it acquires nothing.
+    start_lock = asyncio.Lock()
+
     @app.post("/api/capture/start")
     async def start():
+        async with start_lock:
+            return await _start_capture()
+
+    async def _start_capture():
         if state.calibrating:
             # Calibration holds the device exclusively for ~80s (camera_caps.
             # calibrate). Starting capture underneath it would open the same

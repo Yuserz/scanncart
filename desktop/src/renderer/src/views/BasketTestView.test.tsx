@@ -11,6 +11,7 @@ import { DEFAULT_ZONE_PRESET } from '../../../main/transferGeometry'
 function harness(mirrored = false): {
   streamDeps: StreamDeps
   frame: () => void
+  status: (state: string, detail: string) => void
 } {
   let captured: StreamClientOptions | null = null
   // Every API member the stream hook might call answers with an empty object; this screen only
@@ -38,6 +39,11 @@ function harness(mirrored = false): {
       act(() => {
         captured!.onOpen?.()
         captured!.onFrame?.(msg)
+      })
+    },
+    status: (state, detail) => {
+      act(() => {
+        captured!.onStatus?.({ type: 'status', state, detail } as never)
       })
     }
   }
@@ -205,5 +211,23 @@ describe('BasketTestView', () => {
     )
     await waitFor(() => expect(screen.getByTestId('bt-customer')).toBeInTheDocument())
     expect(screen.queryByTestId('bt-practice-start')).not.toBeInTheDocument()
+  })
+
+  it('shows why a capture stopped instead of only "error"', async () => {
+    const h = harness()
+    const state = basketState()
+    render(
+      <BasketTestView
+        port={8765}
+        streamDeps={h.streamDeps}
+        basketDeps={{ read: async () => state, subscribe: () => () => {} }}
+        bridge={bridgeWith(state)}
+      />
+    )
+    h.frame()
+    h.status('error', "Capture stopped: 'NoneType' object has no attribute 'names'")
+    expect(screen.getByTestId('bt-error')).toHaveTextContent("Capture stopped: 'NoneType'")
+    fireEvent.click(screen.getByText('Dismiss'))
+    expect(screen.queryByTestId('bt-error')).not.toBeInTheDocument()
   })
 })

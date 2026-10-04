@@ -40,6 +40,19 @@ node .claude/skills/run-desktop/driver.mjs probe      # Test Connection geometry
 node .claude/skills/run-desktop/driver.mjs v1         # the v1 acceptance run: weights record -> Live strip -> item log
 ```
 
+- `basket` drives the **Basket test** tab end to end: Start camera, both zones painted over the
+  picture, a practice basket bound with no tablet (and the main process agreeing), a 20 s window
+  in which a real deposit can be made and is reported (never asserted — nothing here moves a
+  product), **capture still streaming with no error after that window**, Empty and restart, End,
+  then the zone editor: B with four clicks per outline, Save read back through the POS config
+  (points in true orientation), an empty outline refused with Save disabled, Revert, and back to
+  A. It ends on the Live view checking that no Camera tuning row draws a control over its own
+  label. The original zone fields are restored in a `finally`. The "still streaming" check exists
+  because of a real failure (Oct 2026): with POS configured, its loop called `/api/capture/start`
+  while the renderer's start was still opening the camera, the sidecar acquired a second capture
+  beside the first, and one's error teardown closed the other's detector a few seconds in —
+  `'NoneType' object has no attribute 'names'` — after "frames reached the preview" had already
+  passed. Starts are serialized now (`start_lock` in `app/main.py`).
 - `smoke` verifies launch + sidecar REST (hardware info printed).
 - `probe` is the remote-backend wiring check, and the only one that needs a fake *outside* the
   app: `local_api` points at a self-hosted workflow endpoint, and this machine has neither an API

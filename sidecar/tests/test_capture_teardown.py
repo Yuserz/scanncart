@@ -366,3 +366,53 @@ def test_start_does_not_block_the_event_loop_on_a_slow_camera():
         t.join(timeout=15)
         assert started and started[0].status_code == 200
         client.post("/api/capture/stop")
+
+
+def test_a_second_start_while_the_first_is_opening_does_not_acquire_twice():
+    """Two starts racing must open the camera once and build one detector.
+
+    The desktop's POS loop keeps capture running and calls start whenever health
+    says `idle` - which health does for the whole of a start that is still opening
+    the camera. A second start then acquired a second camera handle, detector and
+    pipeline beside the first; when one failed, its error teardown closed the
+    *other* pipeline's detector mid-inference ("'NoneType' object has no attribute
+    'names'"). The second start must wait for the first and report its result.
+    """
+    opening = threading.Event()
+    release_open = threading.Event()
+    sources: list = []
+    detectors: list = []
+
+    class SlowSource(TrackingSource):
+        def open(self) -> None:
+            self.opened = True
+            opening.set()
+            release_open.wait(timeout=10)
+
+    def make_source(_settings):
+        sources.append(SlowSource())
+        return sources[-1]
+
+    def make_detector(_settings, _device):
+        detectors.append(OkDetector())
+        return detectors[-1]
+
+    st = AppState(source_factory=make_source, detector_factory=make_detector, db_path=":memory:")
+    with TestClient(build_app(lambda: st)) as client:
+        results: list = []
+        first = threading.Thread(target=lambda: results.append(client.post("/api/capture/start")))
+        first.start()
+        assert opening.wait(timeout=5), "start never reached source.open()"
+        second = threading.Thread(target=lambda: results.append(client.post("/api/capture/start")))
+        second.start()
+        time.sleep(0.3)  # let the second request reach the route while the first is still opening
+
+        release_open.set()
+        first.join(timeout=15)
+        second.join(timeout=15)
+
+        assert [r.status_code for r in results] == [200, 200]
+        assert [r.json()["state"] for r in results] == ["running", "running"]
+        assert len(sources) == 1, f"the camera was opened {len(sources)} times"
+        assert len(detectors) == 1, f"{len(detectors)} detectors were built"
+        client.post("/api/capture/stop")

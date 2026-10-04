@@ -206,6 +206,16 @@ export function BasketTestView({
           )}
         </div>
 
+        {/* The sidecar's own sentence for a capture that died, as the Live view shows it. Without
+            it this screen showed only "error" over a frozen last frame, which reads as a camera
+            that is struggling to connect rather than one that stopped for a stated reason. */}
+        {stream.error && (
+          <div className="bt-banner" role="alert" data-testid="bt-error">
+            <span>{stream.error}</span>
+            <button onClick={stream.clearError}>Dismiss</button>
+          </div>
+        )}
+
         <div
           className={`bt-preview ${drawing ? 'drawing' : ''}`}
           data-testid="bt-preview"
