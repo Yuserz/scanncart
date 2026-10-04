@@ -212,6 +212,14 @@ if (!app.requestSingleInstanceLock()) {
     ipcMain.handle('pos:resolve-review', (_event, id) => {
       posController?.resolveBasketReview(typeof id === 'string' ? id : undefined)
     })
+    // The basket test screen: its own state (the POS state is null with the integration off, and
+    // a desk test has no pushcart-web) and a local practice session that needs no tablet.
+    ipcMain.handle('basket:get-state', () => posController?.getBasketState() ?? null)
+    ipcMain.handle('basket:practice-start', () => {
+      if (!posController) throw new Error('POS controller is not ready')
+      return posController.startBasketPractice()
+    })
+    ipcMain.handle('basket:practice-stop', () => posController?.stopBasketPractice() ?? null)
 
     startSidecar()
     createWindow()

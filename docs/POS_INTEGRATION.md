@@ -79,6 +79,7 @@ Admin Panel → **Self-checkout (POS integration)**:
 | Cart mode | `Counter` (default): the cart is what the camera sees, with the posted count as a floor. `Basket`: the cart is the transfer ledger — a confirmed deposit adds, a confirmed removal subtracts, hiding changes nothing. See §4a. |
 | Cart is at | Which edge of the camera frame the cart is at (the camera's own edge, not the mirrored preview's). A deposit moves toward it. Default bottom. |
 | Cart band / Opening band | The share of the frame, from that edge, that is inside the cart (default 0.35) and the opening just past it (default 0.2). The rest is outside. Save refuses a pair that leaves no outside band. |
+| Zone layout | `Bands` (default) uses the three rows above. `Drawn outlines` uses two outlines drawn on the preview instead. Set and drawn on the **Basket test** screen (§4b). |
 
 **An empty URL, secret or station id turns the feature off** — a state, not an error: the Live view
 then shows no POS panel at all, and capture behaves exactly as it did before. The configuration is
@@ -151,6 +152,25 @@ Basket mode replaces "what is visible" with **confirmed transfers**, which is wh
 - **Needs review (cart unchanged):** the class changes mid-path, two items cross the opening at once, an item stops mid-path, an item appears in the opening with no origin, a removal of something the ledger does not hold, a product already in the cart band at Start (its track first seen inside the band in the 3 s after Start — an item carried in through the opening in those seconds is a deposit), an app restart mid-session, or the camera seeing nothing for more than a few seconds. Review is sent to pushcart-web as `pending_review`; staff clear it with **Basket checked** on the Live view.
 
 The ledger runs in counter mode too, as a shadow, so it can be compared with the real basket before switching. Keep `Counter` until a rehearsal (`CART_TRANSFER_SPEC.md` Gate C) shows the shadow matching. The ledger is kept beside `pos.json` as `basket-ledger.json`, keyed to the session.
+
+## 4b. Zones and the Basket test screen
+
+Where the camera sits decides how the zones are laid out:
+
+- **A. Bands (default).** The camera under the cart handle, looking forward *across* the basket. In
+  its picture the basket fills the bottom, the rim runs across the middle and the aisle is the top,
+  so three bands from one edge describe it (`Cart is at`, `Cart band`, `Opening band` above).
+- **B. Drawn outlines.** A camera above the back of the basket, looking *down* into it. The rim then
+  shows as a ring, so bands cannot describe it: draw one outline around the inside of the basket and
+  one around the opening (a ring around the inside outline, or the strip along the rim). Anything
+  outside both counts as outside. Outlines are stored in the camera's own orientation, so a mirrored
+  preview does not reflect them.
+
+The **Basket test** tab (next to Live and Admin) shows the zones over the live preview, edits and
+saves them, and runs a **practice** basket: it binds the ledger locally, so deposits and removals
+count at a desk with any webcam and no pushcart-web or tablet. Practice is refused while a customer
+session is bound, and a customer session binding later replaces it. A practice run is the way to try
+a mount, or a zone change, before recording Gate A clips.
 
 ## 5. What the desktop shows
 

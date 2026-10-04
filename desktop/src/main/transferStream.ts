@@ -20,7 +20,13 @@
 
 import { BasketLedger, type LedgerStore, type ReviewItem } from './basketLedger'
 import type { CartEntry } from './cartState'
-import { frameBox, presetRegions, type ZonePreset } from './transferGeometry'
+import {
+  frameBox,
+  layoutKey,
+  layoutRegions,
+  type ZoneLayout,
+  type ZonePreset
+} from './transferGeometry'
 import {
   DEFAULT_TRANSFER_CONFIG,
   TransferStateMachine,
@@ -71,6 +77,20 @@ export interface BasketReadout {
   blind: boolean
 }
 
+/**
+ * What the basket test screen shows: the ledger's readout, the zones it is judging under (to draw
+ * them over the preview), and who the ledger is bound to. Separate from `PosState` because that is
+ * `null` whenever the POS integration is off, and a desk test has no pushcart-web at all.
+ */
+export interface BasketViewState {
+  readout: BasketReadout
+  layout: ZoneLayout
+  /** A desk practice run is bound: deposits and removals count with no tablet session. */
+  practice: boolean
+  /** A real customer session is bound (practice cannot start while one is). */
+  customerBound: boolean
+}
+
 export interface BasketTrackerOptions {
   store?: LedgerStore
   transfer?: TransferStateConfig
@@ -86,13 +106,19 @@ export interface BasketTrackerOptions {
   onChange?: (readout: BasketReadout) => void
 }
 
+/** A bare preset is a band layout: that is what every caller passed before outlines existed. */
+export function asLayout(zones: ZonePreset | ZoneLayout): ZoneLayout {
+  return 'mode' in zones ? zones : { mode: 'bands', ...zones }
+}
+
 export function zonesKey(p: ZonePreset): string {
-  return `preset:${p.cartEdge}:${p.insideFraction}:${p.openingFraction}`
+  return layoutKey({ mode: 'bands', ...p })
 }
 
 export class BasketTracker {
   readonly ledger: BasketLedger
   private machine: TransferStateMachine
+  private layout: ZoneLayout
   private zones: string
   private lastFreshT: number | null = null
   private captureRunning = true
@@ -111,15 +137,16 @@ export class BasketTracker {
   private readonly now: () => number
 
   constructor(
-    preset: ZonePreset,
+    zones: ZonePreset | ZoneLayout,
     private readonly opts: BasketTrackerOptions = {}
   ) {
     this.ledger = new BasketLedger(opts.store)
     this.machine = new TransferStateMachine(
-      presetRegions(preset),
+      layoutRegions(asLayout(zones)),
       opts.transfer ?? DEFAULT_TRANSFER_CONFIG
     )
-    this.zones = zonesKey(preset)
+    this.layout = asLayout(zones)
+    this.zones = layoutKey(this.layout)
     this.now = opts.now ?? (() => Date.now() / 1000)
   }
 
@@ -128,12 +155,24 @@ export class BasketTracker {
     this.machine.setConfThreshold(value)
   }
 
-  /** A new zone preset (the Admin Panel saved one). In-flight candidates survive. */
-  setZones(preset: ZonePreset): void {
-    const key = zonesKey(preset)
+  /** New zones (bands or drawn outlines) were saved. In-flight candidates survive. */
+  setZones(zones: ZonePreset | ZoneLayout): void {
+    const layout = asLayout(zones)
+    const key = layoutKey(layout)
     if (key === this.zones) return
-    this.machine.setRegions(presetRegions(preset))
+    this.machine.setRegions(layoutRegions(layout))
+    this.layout = layout
     this.zones = key
+  }
+
+  /** The layout the basket is judging under, for drawing it over the preview. */
+  zoneLayout(): ZoneLayout {
+    return this.layout
+  }
+
+  /** Whether a session (a customer's, or a desk practice run) is bound to the ledger. */
+  boundSessionRef(): string | null {
+    return this.ledger.sessionRef
   }
 
   // ---- the port the POS orchestrator uses ----

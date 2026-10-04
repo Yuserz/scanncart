@@ -25,13 +25,13 @@
 // - "Excluded: simultaneous exchanges / bundles" -> a completion while another track was in
 //   the opening at the same moment goes to review (`concurrentOpeningS`).
 //
-// Regions are pure geometry policy: the caller supplies rect regions (outside / opening /
-// inside) in true (unmirrored) frame coordinates and this module never touches pixels. A
-// box is in a region when its centre is. For v1 the regions come from a preset of bands
-// (`transferGeometry.presetRegions`); drawn polygons are a later version that changes only
-// how `regionOf` answers.
+// Regions are pure geometry policy: the caller supplies regions (outside / opening / inside) in
+// true (unmirrored) frame coordinates and this module never touches pixels. A box is in a region
+// when its centre is. A region is a band from a preset (`transferGeometry.presetRegions`, the
+// camera under the handle) or an outline someone drew (`layoutRegions`, a camera looking down into
+// the basket); only `regionOf` knows the difference, through `pointInZone`.
 
-import { center, pointIn, validateRegions, type Box } from './transferGeometry'
+import { center, pointInZone, validateRegions, type Box, type Zone } from './transferGeometry'
 
 // ---------------------------------------------------------------------------
 // Vocabulary
@@ -131,15 +131,15 @@ export const DEFAULT_TRANSFER_CONFIG: TransferStateConfig = {
 // ---------------------------------------------------------------------------
 
 export interface Regions {
-  outside: Box
-  opening: Box
-  inside: Box
+  outside: Zone
+  opening: Zone
+  inside: Zone
 }
 
 export function regionOf(regions: Regions, box: Box): Region {
   const c = center(box)
-  if (pointIn(c, regions.inside)) return 'inside'
-  if (pointIn(c, regions.opening)) return 'opening'
+  if (pointInZone(c, regions.inside)) return 'inside'
+  if (pointInZone(c, regions.opening)) return 'opening'
   // Anything not in the cart band or the opening is outside the basket.
   return 'outside'
 }

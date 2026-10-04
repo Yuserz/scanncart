@@ -21,9 +21,52 @@ export interface Point {
   y: number
 }
 
+/** A closed outline, its vertices in order (the last joins the first). */
+export interface Polygon {
+  points: Point[]
+}
+
+/**
+ * One region's shape: a band from a preset (`Box`) or an outline someone drew (`Polygon`). The
+ * state machine asks only "is this point in it", so the two are interchangeable to everything
+ * past `pointInZone`.
+ */
+export type Zone = Box | Polygon
+
+export function isPolygon(zone: Zone): zone is Polygon {
+  return Array.isArray((zone as Polygon).points)
+}
+
 /** True when `p` lies inside (inclusive edges) the rect `r`. */
 export function pointIn(p: Point, r: Box): boolean {
   return p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h
+}
+
+/** Even-odd ray cast: true when `p` lies inside the outline `pts`. */
+export function pointInPolygon(p: Point, pts: readonly Point[]): boolean {
+  let inside = false
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const a = pts[i]
+    const b = pts[j]
+    if (a.y > p.y !== b.y > p.y && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) {
+      inside = !inside
+    }
+  }
+  return inside
+}
+
+/** True when `p` lies in the zone, whichever shape it has. */
+export function pointInZone(p: Point, zone: Zone): boolean {
+  return isPolygon(zone) ? pointInPolygon(p, zone.points) : pointIn(p, zone)
+}
+
+/** Area enclosed by an outline (shoelace), always positive. */
+export function polygonArea(pts: readonly Point[]): number {
+  let twice = 0
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    twice += (pts[j].x + pts[i].x) * (pts[j].y - pts[i].y)
+  }
+  return Math.abs(twice) / 2
 }
 
 /** Centre point of a box. */
@@ -67,10 +110,17 @@ export function coverageFraction(inner: Box, outer: Box): number {
  * or inverted regions are not.
  */
 export function validateRegions(
-  regions: Record<string, Box> | { outside: Box; opening: Box; inside: Box }
+  regions: Record<string, Zone> | { outside: Zone; opening: Zone; inside: Zone }
 ): string[] {
   const problems: string[] = []
   for (const [name, r] of Object.entries(regions)) {
+    if (isPolygon(r)) {
+      if (r.points.length < 3) problems.push(`${name}: an outline needs at least 3 points`)
+      else if (r.points.some((p) => !Number.isFinite(p.x) || !Number.isFinite(p.y))) {
+        problems.push(`${name}: non-finite coordinate`)
+      } else if (polygonArea(r.points) <= 0) problems.push(`${name}: the outline encloses no area`)
+      continue
+    }
     if (
       !Number.isFinite(r.x) ||
       !Number.isFinite(r.y) ||
@@ -174,6 +224,103 @@ export function presetRegions(p: ZonePreset = DEFAULT_ZONE_PRESET): {
         outside: { x: 0, y: 0, w: rest, h: F }
       }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Drawn zones: outlines instead of bands
+// ---------------------------------------------------------------------------
+
+/**
+ * How the zones are laid out. `bands` (spot A in the cart layout: the camera under the handle,
+ * looking *across* the basket) is the default, and a preset of three bands from one edge
+ * describes that picture. `drawn` (spot B: a camera above the basket looking *down* into it) is
+ * for a picture where the rim is a ring rather than a line, so the inside and the opening are
+ * outlines someone draws on the preview; everything outside both is "outside".
+ */
+export type ZoneMode = 'bands' | 'drawn'
+export const ZONE_MODES: readonly ZoneMode[] = ['bands', 'drawn']
+
+/**
+ * The two outlines of a drawn layout, as normalized 0–1 points in **true** (unmirrored) frame
+ * orientation — the same frame the sidecar's boxes are in once `frameBox` undoes the preview
+ * mirror. Normalized rather than in `TRANSFER_FRAME` units so the stored config means the same
+ * thing whatever the capture resolution or the frame unit becomes.
+ */
+export interface DrawnZones {
+  inside: Point[]
+  opening: Point[]
+}
+
+/** A zone layout: a band preset (spot A) or drawn outlines (spot B). */
+export type ZoneLayout = ({ mode: 'bands' } & ZonePreset) | ({ mode: 'drawn' } & DrawnZones)
+
+/**
+ * An outline smaller than this share of the frame is almost certainly a stray click rather than a
+ * basket: a box's centre would land in it by accident or never at all.
+ */
+export const MIN_DRAWN_AREA = 0.005
+
+/** Problems with drawn outlines; empty means usable. */
+export function drawnZoneProblems(d: DrawnZones): string[] {
+  const problems: string[] = []
+  for (const [name, pts] of [
+    ['inside', d.inside],
+    ['opening', d.opening]
+  ] as const) {
+    if (!Array.isArray(pts) || pts.length < 3) {
+      problems.push(`the ${name} outline needs at least 3 points`)
+      continue
+    }
+    if (pts.some((p) => !Number.isFinite(p?.x) || !Number.isFinite(p?.y))) {
+      problems.push(`the ${name} outline has a point that is not a number`)
+      continue
+    }
+    if (pts.some((p) => p.x < 0 || p.x > 1 || p.y < 0 || p.y > 1)) {
+      problems.push(`the ${name} outline has a point outside the picture`)
+      continue
+    }
+    if (polygonArea(pts) < MIN_DRAWN_AREA) {
+      problems.push(`the ${name} outline is too small to be a basket region`)
+    }
+  }
+  return problems
+}
+
+function scaled(points: readonly Point[]): Polygon {
+  return { points: points.map((p) => ({ x: p.x * TRANSFER_FRAME, y: p.y * TRANSFER_FRAME })) }
+}
+
+/**
+ * The regions for a layout, in `TRANSFER_FRAME` units. A drawn layout's "outside" is the whole
+ * frame: `regionOf` asks inside first and opening second, so outside is simply everything left.
+ */
+export function layoutRegions(layout: ZoneLayout): { outside: Zone; opening: Zone; inside: Zone } {
+  if (layout.mode === 'bands') return presetRegions(layout)
+  const problems = drawnZoneProblems(layout)
+  if (problems.length > 0) throw new Error(`invalid drawn zones: ${problems.join('; ')}`)
+  return {
+    inside: scaled(layout.inside),
+    opening: scaled(layout.opening),
+    outside: { x: 0, y: 0, w: TRANSFER_FRAME, h: TRANSFER_FRAME }
+  }
+}
+
+/** Problems with any layout; empty means usable. */
+export function layoutProblems(layout: ZoneLayout): string[] {
+  return layout.mode === 'bands' ? zonePresetProblems(layout) : drawnZoneProblems(layout)
+}
+
+/**
+ * A stable identity for a layout: equal layouts give equal keys, so a save that changed nothing
+ * does not reset the machine, and the ledger's evidence trail names the geometry it judged under.
+ */
+export function layoutKey(layout: ZoneLayout): string {
+  if (layout.mode === 'bands') {
+    return `preset:${layout.cartEdge}:${layout.insideFraction}:${layout.openingFraction}`
+  }
+  const pts = (ps: Point[]): string =>
+    ps.map((p) => `${p.x.toFixed(4)},${p.y.toFixed(4)}`).join(';')
+  return `drawn:${pts(layout.inside)}|${pts(layout.opening)}`
 }
 
 /**

@@ -8,8 +8,24 @@ import {
   PosConfigError,
   PosConfigStore,
   insecureBaseUrlWarning,
-  isPosEnabled
+  isPosEnabled,
+  zoneLayoutOf
 } from './posConfig'
+import { DEFAULT_ZONE_PRESET } from './transferGeometry'
+
+// A basket seen from above: the inside a quadrilateral in the lower middle, the rim a strip above.
+const BASKET = [
+  { x: 0.25, y: 0.55 },
+  { x: 0.75, y: 0.55 },
+  { x: 0.7, y: 0.95 },
+  { x: 0.3, y: 0.95 }
+]
+const RIM = [
+  { x: 0.2, y: 0.4 },
+  { x: 0.8, y: 0.4 },
+  { x: 0.75, y: 0.55 },
+  { x: 0.25, y: 0.55 }
+]
 
 let dir: string
 let store: PosConfigStore
@@ -98,6 +114,56 @@ describe('PosConfigStore', () => {
     )
     const loaded = await store.load()
     expect([loaded.cartMode, loaded.cartEdge]).toEqual(['counter', 'bottom'])
+  })
+
+  it('defaults to bands (the camera under the handle) with no outlines', async () => {
+    const loaded = await store.load()
+    expect(loaded.zoneMode).toBe('bands')
+    expect(zoneLayoutOf(loaded)).toEqual({ mode: 'bands', ...DEFAULT_ZONE_PRESET })
+  })
+
+  it('saves drawn outlines and describes them as a drawn layout', async () => {
+    const saved = await store.save({ zoneMode: 'drawn', drawnInside: BASKET, drawnOpening: RIM })
+    expect(saved.zoneMode).toBe('drawn')
+    expect(zoneLayoutOf(await store.load())).toEqual({
+      mode: 'drawn',
+      inside: BASKET,
+      opening: RIM
+    })
+  })
+
+  it('refuses an unusable outline with the reason, and writes nothing', async () => {
+    await expect(
+      store.save({ zoneMode: 'drawn', drawnInside: BASKET.slice(0, 2), drawnOpening: RIM })
+    ).rejects.toThrow(/inside outline needs at least 3 points/)
+    expect(await store.load()).toEqual(DEFAULT_POS_CONFIG)
+  })
+
+  it('reads a stored drawn layout it cannot use as bands, keeping the outlines', async () => {
+    // Hand-edited or from an older build: the basket keeps working on the bands rather than
+    // being left with no zones, and the editor can still show what was drawn.
+    await fs.writeFile(
+      join(dir, 'pos.json'),
+      JSON.stringify({ zoneMode: 'drawn', drawnInside: [{ x: 0.1, y: 0.1 }], drawnOpening: RIM }),
+      'utf8'
+    )
+    const loaded = await store.load()
+    expect(loaded.zoneMode).toBe('bands')
+    expect(loaded.drawnOpening).toEqual(RIM)
+  })
+
+  it('drops outline points that are not numbers instead of keeping half an outline', async () => {
+    await fs.writeFile(
+      join(dir, 'pos.json'),
+      JSON.stringify({
+        drawnInside: [
+          { x: 0.2, y: 'low' },
+          { x: 0.5, y: 0.5 }
+        ]
+      }),
+      'utf8'
+    )
+    expect((await store.load()).drawnInside).toEqual([])
   })
 
   it('accepts a commitDwellS above the sidecar expiry', async () => {

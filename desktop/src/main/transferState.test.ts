@@ -19,7 +19,11 @@ import {
 } from './transferState'
 import {
   DEFAULT_ZONE_PRESET,
+  drawnZoneProblems,
   frameBox,
+  layoutKey,
+  layoutRegions,
+  pointInPolygon,
   presetRegions,
   zonePresetProblems
 } from './transferGeometry'
@@ -371,5 +375,106 @@ describe('reset', () => {
     feed(m, at(OUT, 2))
     m.setRegions(presetRegions({ ...DEFAULT_ZONE_PRESET, insideFraction: 0.3 }))
     expect(m.snapshot()).toHaveLength(1)
+  })
+})
+
+describe('drawn zones (a camera looking down into the basket)', () => {
+  // The rim seen from above is a ring: the inside a quadrilateral, the opening an outline drawn
+  // around it. `regionOf` asks inside first, so the opening outline may enclose the inside.
+  const drawn = {
+    mode: 'drawn' as const,
+    inside: [
+      { x: 0.3, y: 0.4 },
+      { x: 0.7, y: 0.4 },
+      { x: 0.7, y: 0.8 },
+      { x: 0.3, y: 0.8 }
+    ],
+    opening: [
+      { x: 0.2, y: 0.3 },
+      { x: 0.8, y: 0.3 },
+      { x: 0.8, y: 0.9 },
+      { x: 0.2, y: 0.9 }
+    ]
+  }
+  const r = layoutRegions(drawn)
+  const box = (cx: number, cy: number): { x: number; y: number; w: number; h: number } => ({
+    x: cx * 1000 - 20,
+    y: cy * 1000 - 20,
+    w: 40,
+    h: 40
+  })
+
+  it('places a box by its centre: inside, the ring around it, and everything else', () => {
+    expect(regionOf(r, box(0.5, 0.6))).toBe('inside')
+    expect(regionOf(r, box(0.25, 0.6))).toBe('opening')
+    expect(regionOf(r, box(0.5, 0.1))).toBe('outside')
+    expect(regionOf(r, box(0.95, 0.6))).toBe('outside')
+  })
+
+  it('confirms a deposit along a path from outside, through the ring, into the inside', () => {
+    const m = new TransferStateMachine(r, cfg)
+    const events: TransferEvent[] = []
+    let t = 0
+    const step = (cx: number, cy: number): void => {
+      t += 0.2
+      const out = m.observe({
+        seq: t * 5,
+        t,
+        trackId: 4,
+        className: 'soda',
+        conf: 0.9,
+        box: box(cx, cy)
+      })
+      events.push(...out.events)
+    }
+    for (const cy of [0.1, 0.15, 0.2, 0.25]) step(0.5, cy)
+    for (const cy of [0.33, 0.37]) step(0.5, cy)
+    for (let i = 0; i < 8; i++) step(0.5, 0.6)
+    expect(events.map((e) => [e.kind, e.className])).toEqual([['inbound', 'soda']])
+  })
+
+  it('refuses outlines that cannot describe a basket', () => {
+    expect(drawnZoneProblems({ ...drawn, inside: drawn.inside.slice(0, 2) })).toEqual([
+      'the inside outline needs at least 3 points'
+    ])
+    expect(
+      drawnZoneProblems({
+        ...drawn,
+        opening: [
+          { x: 0, y: 0 },
+          { x: 1.2, y: 0 },
+          { x: 1, y: 1 }
+        ]
+      })
+    ).toEqual(['the opening outline has a point outside the picture'])
+    const sliver = [
+      { x: 0.5, y: 0.5 },
+      { x: 0.51, y: 0.5 },
+      { x: 0.5, y: 0.51 }
+    ]
+    expect(drawnZoneProblems({ ...drawn, inside: sliver })).toEqual([
+      'the inside outline is too small to be a basket region'
+    ])
+    expect(() => layoutRegions({ ...drawn, inside: [] })).toThrow(/invalid drawn zones/)
+  })
+
+  it('keys a band layout exactly as before, so the ledger trail does not change', () => {
+    expect(layoutKey({ mode: 'bands', ...DEFAULT_ZONE_PRESET })).toBe('preset:bottom:0.35:0.2')
+    expect(layoutKey(drawn)).toMatch(/^drawn:/)
+    expect(layoutKey(drawn)).toBe(layoutKey({ ...drawn }))
+  })
+
+  it('counts points inside a non-convex outline correctly', () => {
+    // An L shape: the notch is outside even though it sits inside the bounding box.
+    const ell = [
+      { x: 0, y: 0 },
+      { x: 10, y: 0 },
+      { x: 10, y: 4 },
+      { x: 4, y: 4 },
+      { x: 4, y: 10 },
+      { x: 0, y: 10 }
+    ]
+    expect(pointInPolygon({ x: 2, y: 8 }, ell)).toBe(true)
+    expect(pointInPolygon({ x: 8, y: 8 }, ell)).toBe(false)
   })
 })

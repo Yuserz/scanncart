@@ -3,9 +3,12 @@ import { electronAPI } from '@electron-toolkit/preload'
 import type { SidecarHealth } from '../main/sidecarHealth'
 import type { PosConfig } from '../main/posConfig'
 import type { PosConnectionResult, PosState } from '../main/posSession'
+import type { BasketViewState } from '../main/transferStream'
 
 // The channel the main process pushes POS state on, mirroring `sidecar:health`.
 const POS_STATE_CHANNEL = 'pos:state'
+// ...and the basket test screen's state, pushed the same way.
+const BASKET_STATE_CHANNEL = 'basket:state'
 
 // Custom APIs for renderer. Hands the renderer the sidecar port (null until the
 // sidecar has reported it); the renderer then connects directly over WS/HTTP.
@@ -44,6 +47,20 @@ const api = {
     ipcRenderer.on(POS_STATE_CHANNEL, listener)
     return () => {
       ipcRenderer.removeListener(POS_STATE_CHANNEL, listener)
+    }
+  },
+  // The basket test screen: the ledger's readout and the zones it judges under, available with
+  // the POS integration off, plus a desk practice session that binds the ledger with no tablet.
+  // `null` from the read means the controller is not up yet (no sidecar port).
+  getBasketState: (): Promise<BasketViewState | null> => ipcRenderer.invoke('basket:get-state'),
+  startBasketPractice: (): Promise<BasketViewState> => ipcRenderer.invoke('basket:practice-start'),
+  stopBasketPractice: (): Promise<BasketViewState | null> =>
+    ipcRenderer.invoke('basket:practice-stop'),
+  onBasketState: (cb: (state: BasketViewState) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, state: BasketViewState): void => cb(state)
+    ipcRenderer.on(BASKET_STATE_CHANNEL, listener)
+    return () => {
+      ipcRenderer.removeListener(BASKET_STATE_CHANNEL, listener)
     }
   }
 }

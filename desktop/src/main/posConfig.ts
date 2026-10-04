@@ -10,8 +10,13 @@ import { join } from 'path'
 import {
   CART_EDGES,
   DEFAULT_ZONE_PRESET,
+  drawnZoneProblems,
+  ZONE_MODES,
   zonePresetProblems,
-  type CartEdge
+  type CartEdge,
+  type Point,
+  type ZoneLayout,
+  type ZoneMode
 } from './transferGeometry'
 
 /**
@@ -50,6 +55,16 @@ export interface PosConfig {
   insideFraction: number
   /** Share of the frame just past the inside band that is the opening (0–1). */
   openingFraction: number
+  /**
+   * `bands` uses the three fields above (the camera under the cart handle, looking across the
+   * basket — the default). `drawn` uses the two outlines below (a camera looking down into the
+   * basket, where the rim is a ring rather than a line).
+   */
+  zoneMode: ZoneMode
+  /** The inside-the-basket outline for `drawn`: normalized 0–1 points, true orientation. */
+  drawnInside: Point[]
+  /** The opening (rim) outline for `drawn`, in the same frame. */
+  drawnOpening: Point[]
 }
 
 export const POS_CONFIG_FILENAME = 'pos.json'
@@ -70,7 +85,34 @@ export const DEFAULT_POS_CONFIG: PosConfig = {
   cartMode: 'counter',
   cartEdge: DEFAULT_ZONE_PRESET.cartEdge,
   insideFraction: DEFAULT_ZONE_PRESET.insideFraction,
-  openingFraction: DEFAULT_ZONE_PRESET.openingFraction
+  openingFraction: DEFAULT_ZONE_PRESET.openingFraction,
+  zoneMode: 'bands',
+  drawnInside: [],
+  drawnOpening: []
+}
+
+/** The layout a config describes, as the basket tracker takes it. */
+export function zoneLayoutOf(config: PosConfig): ZoneLayout {
+  return config.zoneMode === 'drawn'
+    ? { mode: 'drawn', inside: config.drawnInside, opening: config.drawnOpening }
+    : {
+        mode: 'bands',
+        cartEdge: config.cartEdge,
+        insideFraction: config.insideFraction,
+        openingFraction: config.openingFraction
+      }
+}
+
+/** Plain `{x, y}` points with finite coordinates, or null when the value is not that shape. */
+function readPoints(value: unknown): Point[] | null {
+  if (!Array.isArray(value)) return null
+  const out: Point[] = []
+  for (const raw of value) {
+    const p = raw as Partial<Point> | null
+    if (!p || !isFiniteNumber(p.x) || !isFiniteNumber(p.y)) return null
+    out.push({ x: p.x, y: p.y })
+  }
+  return out
 }
 
 /** The feature is on only when all three connection fields are set. */
@@ -113,6 +155,9 @@ function sanitize(raw: unknown): PosConfig {
   if (typeof source.stationId === 'string') out.stationId = source.stationId
   if (CART_MODES.includes(source.cartMode as CartMode)) out.cartMode = source.cartMode as CartMode
   if (CART_EDGES.includes(source.cartEdge as CartEdge)) out.cartEdge = source.cartEdge as CartEdge
+  if (ZONE_MODES.includes(source.zoneMode as ZoneMode)) out.zoneMode = source.zoneMode as ZoneMode
+  out.drawnInside = readPoints(source.drawnInside) ?? []
+  out.drawnOpening = readPoints(source.drawnOpening) ?? []
 
   const numeric: Array<[keyof PosConfig, (n: number) => boolean]> = [
     ['commitDwellS', (n) => n > 0],
@@ -134,6 +179,15 @@ function sanitize(raw: unknown): PosConfig {
   if (zonePresetProblems(out).length > 0) {
     out.insideFraction = DEFAULT_ZONE_PRESET.insideFraction
     out.openingFraction = DEFAULT_ZONE_PRESET.openingFraction
+  }
+  // A stored drawn layout that cannot be used (hand-edited, or from an older build) falls back to
+  // the bands rather than leaving the basket with no zones at all; the outlines are kept so the
+  // editor can show what was there.
+  if (
+    out.zoneMode === 'drawn' &&
+    drawnZoneProblems({ inside: out.drawnInside, opening: out.drawnOpening }).length > 0
+  ) {
+    out.zoneMode = 'bands'
   }
 
   return out
@@ -184,6 +238,15 @@ export class PosConfigStore {
       openingFraction: Number(asked.openingFraction)
     })
     if (zoneProblems.length > 0) throw new PosConfigError(`Zones: ${zoneProblems.join('; ')}.`)
+    // The same rule for drawn outlines, for the same reason: `sanitize` falls back to the bands
+    // for a stored file, and an operator who just drew an unusable outline has to hear why.
+    if (asked.zoneMode === 'drawn') {
+      const drawn = drawnZoneProblems({
+        inside: readPoints(asked.drawnInside) ?? [],
+        opening: readPoints(asked.drawnOpening) ?? []
+      })
+      if (drawn.length > 0) throw new PosConfigError(`Drawn zones: ${drawn.join('; ')}.`)
+    }
 
     await fs.mkdir(this.dir, { recursive: true })
     await fs.writeFile(this.path, `${JSON.stringify(next, null, 2)}\n`, 'utf8')

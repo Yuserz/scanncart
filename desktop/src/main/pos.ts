@@ -17,6 +17,7 @@ import {
   insecureBaseUrlWarning,
   isPosEnabled,
   PosConfigStore,
+  zoneLayoutOf,
   type PosConfig
 } from './posConfig'
 import {
@@ -30,9 +31,15 @@ import {
   type SidecarLogsResponse
 } from './posSession'
 import { DEFAULT_ZONE_PRESET } from './transferGeometry'
-import { BasketTracker } from './transferStream'
+import { BasketTracker, type BasketViewState } from './transferStream'
+
+export type { BasketViewState }
 
 export const POS_STATE_CHANNEL = 'pos:state'
+export const BASKET_STATE_CHANNEL = 'basket:state'
+
+/** The prefix of a desk practice session's ref, so it can never be mistaken for a customer's. */
+export const PRACTICE_REF_PREFIX = 'practice:'
 
 const SIDECAR_TIMEOUT_MS = 6000
 /** How often the basket tracker checks for a stream that went quiet (ms). */
@@ -65,10 +72,13 @@ export class PosController {
     this.basket = new BasketTracker(DEFAULT_ZONE_PRESET, {
       store: new BasketLedgerFileStore(userDataDir),
       onChange: (readout) => {
-        const key = JSON.stringify(readout)
+        // The bound ref is part of the key: a practice run starting or a customer binding can
+        // leave the readout identical (an empty basket) while who the ledger belongs to changed.
+        const key = `${this.basket?.boundSessionRef() ?? ''}|${JSON.stringify(readout)}`
         if (key === this.lastBasketKey) return
         this.lastBasketKey = key
         this.orchestrator.notifyBasketChanged()
+        this.pushBasketState()
       }
     })
     this.orchestrator = new PosSessionOrchestrator(this.buildDeps())
@@ -122,11 +132,51 @@ export class PosController {
 
   private async applyZones(): Promise<void> {
     const c = await this.store.load()
-    this.basket.setZones({
-      cartEdge: c.cartEdge,
-      insideFraction: c.insideFraction,
-      openingFraction: c.openingFraction
-    })
+    this.basket.setZones(zoneLayoutOf(c))
+    this.pushBasketState()
+  }
+
+  // ---- desk practice ----
+  /**
+   * Bind the basket to a local practice session, so deposits and removals count at a desk with
+   * no pushcart-web and no tablet. Refused while a customer's session is bound: that ledger is
+   * someone's cart. A customer session binding later simply replaces the practice run.
+   */
+  async startBasketPractice(): Promise<BasketViewState> {
+    const bound = this.basket.boundSessionRef()
+    if (bound !== null && !bound.startsWith(PRACTICE_REF_PREFIX)) {
+      throw new Error('A customer session is open on this station; practice is unavailable.')
+    }
+    // A fresh run each time: re-binding the same ref would keep the last run's basket.
+    if (bound !== null) this.basket.unbind()
+    await this.basket.bind(`${PRACTICE_REF_PREFIX}${Date.now()}`)
+    this.pushBasketState()
+    return this.getBasketState()
+  }
+
+  /** End a practice run; a customer session is never ended from here. */
+  stopBasketPractice(): BasketViewState {
+    if (this.basket.boundSessionRef()?.startsWith(PRACTICE_REF_PREFIX)) this.basket.unbind()
+    this.pushBasketState()
+    return this.getBasketState()
+  }
+
+  getBasketState(): BasketViewState {
+    const bound = this.basket.boundSessionRef()
+    const practice = bound !== null && bound.startsWith(PRACTICE_REF_PREFIX)
+    return {
+      readout: this.basket.readout(),
+      layout: this.basket.zoneLayout(),
+      practice,
+      customerBound: bound !== null && !practice
+    }
+  }
+
+  private pushBasketState(): void {
+    const state = this.getBasketState()
+    for (const window of BrowserWindow.getAllWindows()) {
+      window.webContents.send(BASKET_STATE_CHANNEL, state)
+    }
   }
 
   // ---- IPC surface ----
