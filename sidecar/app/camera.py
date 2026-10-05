@@ -232,6 +232,11 @@ class CameraCapture:
 
     def open(self) -> bool:
         self._cap = self._cap_factory(self.index)
+        # MJPG first, then the size. The StreamCam reaches 60 fps at 720p/1080p only in MJPG; left
+        # to choose, MSMF negotiated the uncompressed format and delivered 29 fps at a 60 fps setting
+        # whatever the exposure. The order matters because MSMF picks its media type when the size
+        # is set. A camera with no MJPG mode ignores the request and keeps its own format.
+        self._cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
         self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
         self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
         self._cap.set(cv2.CAP_PROP_FPS, self.fps)

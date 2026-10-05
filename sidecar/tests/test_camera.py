@@ -459,3 +459,19 @@ def test_a_rejected_control_write_does_not_kill_the_capture_thread():
         assert src._thread.is_alive()
     finally:
         src.release()
+
+
+def test_open_asks_for_mjpg_before_the_resolution():
+    """The StreamCam reaches 60 fps at 720p/1080p only in MJPG; left to choose, MSMF negotiated the
+    uncompressed format and the camera delivered 29 fps at a 60 fps setting whatever the exposure.
+    The format has to be asked for before the size, because MSMF picks a media type when the size is
+    set. A camera without MJPG ignores the request and keeps its own format."""
+    cap = _RecordingCap()
+    src = CameraCapture(0, 1280, 720, 60, cap_factory=lambda i: cap)
+    src.open()
+    try:
+        props = [p for p, _, _ in cap.sets]
+        assert _wrote(cap, cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        assert props.index(cv2.CAP_PROP_FOURCC) < props.index(cv2.CAP_PROP_FRAME_WIDTH)
+    finally:
+        src.release()
