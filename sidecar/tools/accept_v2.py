@@ -28,9 +28,12 @@ number exists:
    quoting it as a comparison would be comparing two different measurements. A class may lose up
    to `--regression-tolerance` (0.02) before it counts - the floor is the bar, and a wobble above
    it is not a regression.
-5. **Does it beat v1 where this dataset exists to win?** The crowded counter: how many test frames
-   each weight finds **two or more** items on, which is a count and can be checked rather than
-   argued. Asked *per distance*, because the cells this dataset exists to win are the `mid`/`far`
+5. **Does it beat v1 where this dataset exists to win?** The crowded counter: of the test frames
+   whose **labels** hold two or more items, how many each weight reports two or more items on -
+   a count, checked against the labels rather than argued. (It used to count every frame a weight
+   reported two items on, which credited a doubled detection of one item as a crowd found: v1
+   "found" 3 crowded `mid` frames whose labels hold none. Frames a weight doubles up on are now
+   reported separately and never credited.) Asked *per distance*, because the cells this dataset exists to win are the `mid`/`far`
    ones and a total over the split cannot answer for them: on a split whose crowded frames are all
    `close`, the total can rise while the captures the project was re-shot for get worse. So the
    table below is cut by the distance each frame was filed under and the claim is made on
@@ -323,14 +326,40 @@ def frame_instances(predict, images: list[Path], conf: float, iou: float) -> dic
     return {image.name: list(predict(image, conf, iou)) for image in images}
 
 
-def crowding(counts: dict[str, list[str]]) -> dict:
-    """How many frames hold two or more items, in total and for one product.
+def label_counts(images: Path) -> dict[str, int]:
+    """`{image name: how many items its labels hold}` for one split - the ground truth for crowding.
 
-    Per product as well as in total because the two answer different questions: "two or more items"
-    is the crowded counter this dataset exists for, while "two or more of *one* product" is the
-    near-duplicate case 4 warns about - the one that logs a single physical item twice, because the
-    tracker sees a second instance and mints a second `track_id`. Both are reported; the verdict
-    uses the first.
+    Read from the split's own label files (`labels_dir`), one row per drawn item; a frame with no
+    label file holds none. The count is a fact about the frame rather than about either weight's
+    class order, so the set's labels answer it for both models without an `order_view`.
+    """
+    labels = labels_dir(images)
+    counts: dict[str, int] = {}
+    for image in split_images(images):
+        path = labels / f"{image.stem}.txt"
+        rows = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
+        counts[image.name] = sum(1 for row in rows if row.strip())
+    return counts
+
+
+def crowding(counts: dict[str, list[str]], truth: dict[str, int] | None = None) -> dict:
+    """How many frames a model reports two or more items on - and, given the labels, how many of
+    those are really crowded.
+
+    `crowded_frames` is the raw report: frames the model put two or more items on. On its own it is
+    not evidence of anything, which is the mistake this function used to make the verdict on: a
+    model that draws two boxes on one item "finds" a crowded frame, so a weight that doubles up
+    detections wins the count. Measured on `merged-v2`'s `test` split, v1 reported 3 crowded `mid`
+    frames where the labels hold none, and 6 `close` ones where they hold 2 - and the gate read that
+    as v2 falling behind. So with `truth` (`label_counts`) the block also carries:
+
+    - `truly_crowded`: frames whose labels hold two or more items - what there is to find;
+    - `crowded_found`: those of them the model reported two or more items on - what the verdict uses;
+    - `spurious_crowded`: frames the model reported two or more on whose labels hold fewer - the
+      doubled-up detections the raw count used to reward.
+
+    Per product as well because "two or more of *one* product" is the near-duplicate case 4 warns
+    about, the one that logs a single physical item twice. Reported, never the verdict.
     """
     crowded = {name: len(items) for name, items in counts.items() if len(items) >= CROWD_MIN}
     same_product: Counter = Counter()
@@ -340,13 +369,19 @@ def crowding(counts: dict[str, list[str]]) -> dict:
         for name, count in Counter(items).items():
             if count >= CROWD_MIN:
                 same_product[name] += 1
-    return {
+    block = {
         "frames": len(counts),
         "crowded_frames": len(crowded),
         "crowded_names": sorted(crowded),
         "same_product_frames": dict(sorted(same_product.items())),
         "detections": sum(len(items) for items in counts.values()),
     }
+    if truth is not None:
+        truly = {name for name in counts if truth.get(name, 0) >= CROWD_MIN}
+        block["truly_crowded"] = len(truly)
+        block["crowded_found"] = len(truly & set(crowded))
+        block["spurious_crowded"] = len(set(crowded) - truly)
+    return block
 
 
 def group_images(images: list[Path], distances: dict[str, str]) -> dict[str, list[Path]]:
@@ -363,7 +398,9 @@ def group_images(images: list[Path], distances: dict[str, str]) -> dict[str, lis
     return {name: found for name, found in buckets.items() if found}
 
 
-def crowd_by_distance(counts: dict[str, list[str]], distances: dict[str, str]) -> dict[str, dict]:
+def crowd_by_distance(
+    counts: dict[str, list[str]], distances: dict[str, str], truth: dict[str, int] | None = None
+) -> dict[str, dict]:
     """The same crowded-frame count, cut by the distance each frame was captured at.
 
     Pure regrouping of one counting pass, so a per-distance row and the total above it are the
@@ -377,7 +414,7 @@ def crowd_by_distance(counts: dict[str, list[str]], distances: dict[str, str]) -
     }
     for name, items in counts.items():
         buckets[distances.get(name) or UNATTRIBUTED][name] = items
-    return {name: crowding(items) for name, items in buckets.items() if items}
+    return {name: crowding(items, truth) for name, items in buckets.items() if items}
 
 
 def distance_claim(
@@ -407,15 +444,29 @@ def distance_claim(
                 "the cell (docs/CAPTURE_CHECKLIST.md) and rebuild the set."
             )
             continue
-        base = (left or {}).get("crowded_frames", 0)
-        cand = (right or {}).get("crowded_frames", 0)
-        if cand < base:
+        truly = (right or left or {}).get("truly_crowded", 0)
+        if not truly:
+            # The same "cannot be asked is not held" reading, one level down: the distance has
+            # frames, but its labels put two items on none of them, so neither weight can show it
+            # handles a crowd there - a model reporting two items on such a frame is doubling one.
             failed.append(
-                f"crowding at `{distance}`: v2 finds two or more items on {cand} of {frames} "
-                f"frame(s), v1 on {base}"
+                f"crowding at `{distance}`: not measured - no {split} frame at that distance holds "
+                f"two or more items in its labels ({frames} frame(s), all single-item), so there is "
+                "no crowd to find. Shoot crowded frames at that distance "
+                "(docs/CAPTURE_CHECKLIST.md) and rebuild the set."
             )
             continue
-        passed.append(f"crowding at `{distance}`: {cand} of {frames} frame(s), v1 {base} - held")
+        base = (left or {}).get("crowded_found", 0)
+        cand = (right or {}).get("crowded_found", 0)
+        if cand < base:
+            failed.append(
+                f"crowding at `{distance}`: v2 finds two or more items on {cand} of {truly} truly "
+                f"crowded frame(s), v1 on {base}"
+            )
+            continue
+        passed.append(
+            f"crowding at `{distance}`: {cand} of {truly} truly crowded frame(s), v1 {base} - held"
+        )
     return passed, failed
 
 
@@ -554,6 +605,13 @@ def order_view(
         )
     mapping = {index: order.index(name) for index, name in enumerate(set_order)}
     view = Path(project).expanduser() / f"{name}-order"
+    # A view is rebuilt on every run, so the previous one goes first. Left in place, the second run
+    # tried to hardlink each frame over its own earlier link, fell back to copying a file onto
+    # itself (the same inode), and Windows refused it - so `make accept-v2` worked exactly once.
+    # Removing a hardlink removes the link, never the set's frame; ultralytics' `labels.cache`
+    # from the last run goes with it, which is right, since the labels are rewritten below.
+    if view.exists():
+        shutil.rmtree(view)
     body: dict = {"path": str(view.resolve()), "nc": len(order), "names": list(order)}
     for split, images in sorted(splits.items()):
         if not images.is_dir():
@@ -854,22 +912,31 @@ def main(argv: list[str] | None = None, yolo=None, predict_factory=None) -> int:
         candidate_counts = frame_instances(
             factory(yolo, candidate, measured["candidate"][0], imgsz), images, args.conf, args.iou
         )
-        baseline_crowd = crowding(baseline_counts)
-        candidate_crowd = crowding(candidate_counts)
+        # The labels are the truth for "how many items are on this frame". Read from the split as
+        # it stands: a row count does not depend on either weight's class order.
+        truth = label_counts(splits[args.split])
+        baseline_crowd = crowding(baseline_counts, truth)
+        candidate_crowd = crowding(candidate_counts, truth)
+        print(
+            f"  the labels hold two or more items on {candidate_crowd['truly_crowded']} of "
+            f"{candidate_crowd['frames']} frame(s)"
+        )
         for label, block in (("v1", baseline_crowd), ("v2", candidate_crowd)):
             print(
-                f"  {label} {block['crowded_frames']:>4} of {block['frames']} frame(s) with two or "
-                f"more items, {block['detections']} detection(s) in total"
+                f"  {label} finds {block['crowded_found']:>3} of them; reports two or more on "
+                f"{block['spurious_crowded']} frame(s) whose labels hold fewer (doubled detections); "
+                f"{block['detections']} detection(s) in total"
             )
         if candidate_crowd["same_product_frames"]:
             print(
                 "  frames with two of the *same* product (the near-duplicate case 4 warns about): "
                 + ", ".join(f"{name} {n}" for name, n in candidate_crowd["same_product_frames"].items())
             )
-        if candidate_crowd["crowded_frames"] < baseline_crowd["crowded_frames"]:
+        if candidate_crowd["crowded_found"] < baseline_crowd["crowded_found"]:
             failures.append(
-                f"crowding: v2 finds two or more items on {candidate_crowd['crowded_frames']} "
-                f"frame(s), v1 on {baseline_crowd['crowded_frames']}"
+                f"crowding: v2 finds two or more items on {candidate_crowd['crowded_found']} of "
+                f"{candidate_crowd['truly_crowded']} truly crowded frame(s), v1 on "
+                f"{baseline_crowd['crowded_found']}"
             )
 
         # The same two passes, cut by distance. `dataset_distances` reads the *set's* own
@@ -877,8 +944,8 @@ def main(argv: list[str] | None = None, yolo=None, predict_factory=None) -> int:
         # grid does and for the same reason: the set is the artifact being measured, and the
         # directory it was built from can be gone by the time this runs.
         distances, distance_source = train_model.dataset_distances(dataset, generation.manifest)
-        baseline_by = crowd_by_distance(baseline_counts, distances)
-        candidate_by = crowd_by_distance(candidate_counts, distances)
+        baseline_by = crowd_by_distance(baseline_counts, distances, truth)
+        candidate_by = crowd_by_distance(candidate_counts, distances, truth)
         print()
         print(
             "  by distance ("
@@ -887,15 +954,17 @@ def main(argv: list[str] | None = None, yolo=None, predict_factory=None) -> int:
         )
         rows = (*train_model.DISTANCE_ORDER, UNATTRIBUTED)
         width = max(len(name) for name in rows)
-        print(f"    {'distance':<{width}}  {'frames':>6}  {'v1':>5}  {'v2':>5}")
+        print(f"    {'distance':<{width}}  {'frames':>6}  {'crowded':>7}  {'v1':>5}  {'v2':>5}")
         for name in rows:
             left, right = baseline_by.get(name), candidate_by.get(name)
             frames = (right or left or {}).get("frames", 0)
+            truly = (right or left or {}).get("truly_crowded")
             mark = "*" if name in claim_distances else " "
             print(
-                f"    {name:<{width}}  {frames:>6}  {_crowd_cell(left):>5}  "
-                f"{_crowd_cell(right):>5} {mark}"
+                f"    {name:<{width}}  {frames:>6}  {'-' if truly is None else truly:>7}  "
+                f"{_crowd_cell(left):>5}  {_crowd_cell(right):>5} {mark}"
             )
+        print("    (crowded = frames whose labels hold two or more items; v1/v2 = how many of them each found)")
         if claim_distances:
             print(f"    (* = a cell the claim is about: {', '.join(claim_distances)})")
         if not claim_distances:
@@ -1025,7 +1094,9 @@ def _crowd_cell(block: dict | None) -> str:
     A missing row and a zero are deliberately different glyphs: `0` is a measured and clean row
     (the weight found nothing to be crowded), `-` is a row nothing was asked in.
     """
-    return "-" if block is None else str(block["crowded_frames"])
+    if block is None:
+        return "-"
+    return str(block.get("crowded_found", block["crowded_frames"]))
 
 
 def claim_distance_list(raw: str) -> tuple[str, ...]:

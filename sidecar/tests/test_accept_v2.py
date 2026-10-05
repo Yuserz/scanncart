@@ -79,8 +79,12 @@ def _dataset(
             name = f"{split}_{index:04d}.jpg"
             frames.append(name)
             _jpeg(dataset / split / "images" / name)
+            # The test frames are *crowded* in their labels - two items each - because the crowding
+            # claim is scored against the labels: a split whose frames all hold one item has no
+            # crowd to find, and the claim would read "not measured" on every distance.
+            rows = "0 0.5 0.5 0.2 0.2\n" + ("0 0.2 0.2 0.1 0.1\n" if split == "test" else "")
             (dataset / split / "labels" / f"{split}_{index:04d}.txt").write_text(
-                "0 0.5 0.5 0.2 0.2\n", encoding="utf-8"
+                rows, encoding="utf-8"
             )
     import yaml
 
@@ -482,9 +486,11 @@ perfectly happy, so the claim is made on the distances and not on the total."""
     distances = {"a.jpg": "close", "b.jpg": "close", "c.jpg": "far", "d.jpg": "far"}
     baseline_counts = {"a.jpg": [], "b.jpg": [], "c.jpg": ["milo", "safeguard"], "d.jpg": ["milo", "milo"]}
     candidate_counts = {"a.jpg": ["milo", "milo"], "b.jpg": ["milo", "milo"], "c.jpg": [], "d.jpg": ["milo"]}
+    # Every frame truly holds two items, so each crowded report is a real find.
+    truth = {name: 2 for name in distances}
 
-    baseline = accept_v2.crowd_by_distance(baseline_counts, distances)
-    candidate = accept_v2.crowd_by_distance(candidate_counts, distances)
+    baseline = accept_v2.crowd_by_distance(baseline_counts, distances, truth)
+    candidate = accept_v2.crowd_by_distance(candidate_counts, distances, truth)
     passed, failed = accept_v2.distance_claim(baseline, candidate, ("mid", "far"), "test")
 
     # The rule that already existed: v2 finds more crowded frames overall, so it does not fire.
@@ -494,9 +500,54 @@ perfectly happy, so the claim is made on the distances and not on the total."""
     assert candidate["far"]["crowded_frames"] == 0
     assert passed == []
     assert any("crowding at `far`" in line and "v1 on 2" in line for line in failed)
+    assert candidate["far"]["crowded_found"] == 0 and baseline["far"]["crowded_found"] == 2
     # And `mid` files no frame at all here, which is a different failure from losing the row: the
     # split cannot speak for the cell, so the claim was never answered.
     assert any("crowding at `mid`" in line and "not measured" in line for line in failed)
+
+
+def test_a_doubled_detection_on_a_one_item_frame_is_not_a_crowded_frame_found():
+    """The flaw this rule was rewritten for, measured on `merged-v2`'s test split: v1 reported two
+or more items on 3 `mid` frames whose labels hold one item each, and the old count read that as v1
+finding crowds v2 missed. Scored against the labels, those are doubled detections - reported as
+`spurious_crowded`, never credited - and with no truly crowded frame at `mid` the claim there is
+"not measured", not a loss for the weight that drew one box per item."""
+    distances = {"a.jpg": "mid", "b.jpg": "mid", "c.jpg": "far", "d.jpg": "far"}
+    truth = {"a.jpg": 1, "b.jpg": 1, "c.jpg": 2, "d.jpg": 1}
+    v1 = {"a.jpg": ["milo", "milo"], "b.jpg": ["safeguard", "safeguard"], "c.jpg": ["milo", "tuna"], "d.jpg": ["milo"]}
+    v2 = {"a.jpg": ["milo"], "b.jpg": ["safeguard"], "c.jpg": ["milo", "tuna"], "d.jpg": ["milo"]}
+
+    whole_v1 = accept_v2.crowding(v1, truth)
+    whole_v2 = accept_v2.crowding(v2, truth)
+    assert whole_v1["crowded_frames"] == 3 and whole_v2["crowded_frames"] == 1  # the old, raw count
+    assert whole_v1["truly_crowded"] == whole_v2["truly_crowded"] == 1
+    assert whole_v1["crowded_found"] == whole_v2["crowded_found"] == 1  # a tie, not a v1 win
+    assert whole_v1["spurious_crowded"] == 2 and whole_v2["spurious_crowded"] == 0
+
+    passed, failed = accept_v2.distance_claim(
+        accept_v2.crowd_by_distance(v1, distances, truth),
+        accept_v2.crowd_by_distance(v2, distances, truth),
+        ("mid", "far"),
+        "test",
+    )
+    assert any("crowding at `far`" in line and "held" in line for line in passed)
+    assert any(
+        "crowding at `mid`" in line and "not measured" in line and "single-item" in line
+        for line in failed
+    )
+
+
+def test_label_counts_reads_one_item_per_row_and_zero_for_a_missing_label_file(tmp_path):
+    """The ground truth the claim is scored against: rows in the split's own label files."""
+    images = tmp_path / "test" / "images"
+    for name in ("a.jpg", "b.jpg", "c.jpg"):
+        _jpeg(images / name)
+    labels = tmp_path / "test" / "labels"
+    labels.mkdir(parents=True)
+    (labels / "a.txt").write_text("0 0.5 0.5 0.2 0.2\n1 0.1 0.1 0.1 0.1\n\n", encoding="utf-8")
+    (labels / "b.txt").write_text("0 0.5 0.5 0.2 0.2\n", encoding="utf-8")
+
+    assert accept_v2.label_counts(images) == {"a.jpg": 2, "b.jpg": 1, "c.jpg": 0}
 
 
 def test_a_claimed_distance_the_split_never_files_is_a_failure_rather_than_a_pass():
@@ -506,9 +557,10 @@ nothing to say about."""
     distances = {"a.jpg": "close", "b.jpg": "close"}
     counts = {"a.jpg": ["milo", "milo"], "b.jpg": ["milo", "safeguard"]}
 
+    truth = {"a.jpg": 2, "b.jpg": 2}
     passed, failed = accept_v2.distance_claim(
-        accept_v2.crowd_by_distance(counts, distances),
-        accept_v2.crowd_by_distance(counts, distances),
+        accept_v2.crowd_by_distance(counts, distances, truth),
+        accept_v2.crowd_by_distance(counts, distances, truth),
         ("mid", "far"),
         "test",
     )
@@ -681,6 +733,18 @@ def test_a_weight_whose_class_list_is_not_a_reordering_is_refused(tmp_path):
     assert f"the set has \n  {V2.classes[-1]}\nthat it cannot predict" in message
 
 
+def test_the_acceptance_can_be_run_twice_with_a_reordered_baseline(tmp_path):
+    """The view is rebuilt every run. The second `make accept-v2` on a real set used to crash
+    building it: each frame's hardlink already existed, the copy fallback then copied a file onto
+    itself, and Windows refused - so the command worked exactly once per set."""
+    weights = _weights(tmp_path, baseline_order=BASELINE_ORDER)
+
+    first = _run(tmp_path, _models(0.80, 0.90, {}, {}), weights=weights)
+    second = _run(tmp_path, _models(0.80, 0.90, {}, {}), weights=weights)
+
+    assert first == second == 0
+
+
 def test_a_baseline_in_another_order_is_measured_on_a_remapped_view(tmp_path, capsys):
     """The measurement the view exists for: same weights, same frames, same boxes, and the class
     column in the order that weight's head counts in. The candidate - trained on this set - needs no
@@ -716,6 +780,7 @@ def test_a_baseline_in_another_order_is_measured_on_a_remapped_view(tmp_path, ca
     # be credited with it.
     assert (view / "test" / "labels" / "test_0000.txt").read_text(encoding="utf-8") == (
         f"{BASELINE_ORDER.index(V2.classes[0])} 0.5 0.5 0.2 0.2\n"
+        f"{BASELINE_ORDER.index(V2.classes[0])} 0.2 0.2 0.1 0.1\n"
     )
 
 
