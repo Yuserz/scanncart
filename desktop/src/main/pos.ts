@@ -42,6 +42,13 @@ export const BASKET_STATE_CHANNEL = 'basket:state'
 export const PRACTICE_REF_PREFIX = 'practice:'
 
 const SIDECAR_TIMEOUT_MS = 6000
+/**
+ * Starting capture opens the camera and loads the model before it answers: measured up to ~43 s for
+ * a StreamCam (`main.py`'s `_acquire`). Under the ordinary 6 s deadline every start "failed" with
+ * "The operation was aborted due to timeout" while the start went on succeeding behind it, and the
+ * Admin Panel showed the POS loop in error for a capture that was coming up normally.
+ */
+const SIDECAR_START_TIMEOUT_MS = 90_000
 /** How often the basket tracker checks for a stream that went quiet (ms). */
 const BASKET_TICK_MS = 1000
 /**
@@ -227,7 +234,8 @@ export class PosController {
         ...base,
         ok: false,
         status: null,
-        message: `Unreachable: ${probe.unreachable}`
+        // The probe's own sentence already names the host and the reason.
+        message: `${probe.unreachable}.`
       }
     }
 
@@ -280,24 +288,40 @@ export class PosController {
   }
 
   // ---- sidecar ----
-  private async sidecarJson<T>(path: string, init?: RequestInit): Promise<T> {
+  /** A request to the sidecar, with a failure worded for the operator who reads it. */
+  private async sidecarFetch(
+    path: string,
+    init: RequestInit,
+    timeoutMs: number
+  ): Promise<Response> {
     const port = this.getPort()
-    if (port === null) throw new Error('sidecar is not running')
-    const response = await fetch(`http://127.0.0.1:${port}${path}`, {
-      ...init,
-      signal: AbortSignal.timeout(SIDECAR_TIMEOUT_MS)
-    })
+    if (port === null) throw new Error('the sidecar is not running')
+    try {
+      return await fetch(`http://127.0.0.1:${port}${path}`, {
+        ...init,
+        signal: AbortSignal.timeout(timeoutMs)
+      })
+    } catch (error) {
+      const name = (error as { name?: string } | null)?.name
+      if (name === 'TimeoutError' || name === 'AbortError') {
+        throw new Error(`the sidecar did not answer ${path} within ${timeoutMs / 1000} s`)
+      }
+      throw new Error(`the sidecar could not be reached (${(error as Error)?.message ?? error})`)
+    }
+  }
+
+  private async sidecarJson<T>(path: string, init?: RequestInit): Promise<T> {
+    const response = await this.sidecarFetch(path, init ?? {}, SIDECAR_TIMEOUT_MS)
     if (!response.ok) throw new Error(`sidecar ${path} failed (${response.status})`)
     return (await response.json()) as T
   }
 
   private async sidecarStartCapture(): Promise<{ ok: boolean; status: number }> {
-    const port = this.getPort()
-    if (port === null) throw new Error('sidecar is not running')
-    const response = await fetch(`http://127.0.0.1:${port}/api/capture/start`, {
-      method: 'POST',
-      signal: AbortSignal.timeout(SIDECAR_TIMEOUT_MS)
-    })
+    const response = await this.sidecarFetch(
+      '/api/capture/start',
+      { method: 'POST' },
+      SIDECAR_START_TIMEOUT_MS
+    )
     return { ok: response.ok, status: response.status }
   }
 

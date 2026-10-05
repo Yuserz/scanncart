@@ -251,6 +251,27 @@ describe('PosSessionOrchestrator', () => {
     orch.stop()
   })
 
+  it('reports no contact until pushcart-web has answered, so an unreachable host never reads as ready', async () => {
+    const h = harness()
+    h.state.remote = null
+    h.state.sessionError = new PosTransportError(
+      'pushcart-web at http://x did not answer within 8 s'
+    )
+    const orch = new PosSessionOrchestrator(h.deps)
+
+    await orch.start()
+    await vi.advanceTimersByTimeAsync(3_000)
+    expect(h.calls.states.at(-1)?.lastContactMs).toBeNull()
+    expect(h.calls.states.at(-1)?.phase).toBe('error')
+
+    h.state.sessionError = null
+    await vi.advanceTimersByTimeAsync(10_000)
+    const after = h.calls.states.at(-1)
+    expect(after?.phase).toBe('unbound')
+    expect(after?.lastContactMs).not.toBeNull()
+    orch.stop()
+  })
+
   it('surfaces a transport error and recovers on the next sync', async () => {
     const h = harness()
     h.state.logs.events = [event({ enteredAt: BASE_S + 1 })]

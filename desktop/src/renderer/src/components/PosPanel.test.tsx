@@ -10,6 +10,7 @@ const BOUND: PosState = {
   lastSyncAgeS: 12,
   error: null,
   retryAtMs: null,
+  lastContactMs: null,
   cartMode: 'counter',
   basket: null
 }

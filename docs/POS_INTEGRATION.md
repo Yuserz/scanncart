@@ -63,23 +63,31 @@ the shop goes live, the ordered run is [POS_SMOKE_TEST.md](./POS_SMOKE_TEST.md).
 
 ## 3. Set up SCANnCART
 
-Admin Panel → **Self-checkout (POS integration)**:
+Admin Panel → **Self-checkout**. Its header shows the live status — *Off* (not configured), *Connecting…* (pushcart-web has not answered yet), *Ready*, *Customer session open*, or *Error* with the reason, such as the address that could not be reached. Its own **Save self-checkout settings** button saves this section; the page's Save bar is for the other settings.
 
 | Field | Meaning |
 | --- | --- |
-| pushcart-web base URL | Whichever host runs pushcart-web: `http://192.168.1.20:3000` for Docker on the shop LAN, `https://pushcart.example.com` for cloud hosting. No trailing path. |
-| POS secret | The same value as pushcart-web's `POS_INGEST_SECRET`. |
-| Station id | The `id` of the station registered for **this** counter (§2 step 3). |
-| Commit dwell (s) | How long an item must be seen before it counts. Default 3. |
-| Remove settle (s) | How long a lower count must hold before an item is removed. Default 10. **Suspended 2026-10-03:** until the removal-capable model ships, no automatic removal happens — a verified count is a floor for the rest of the session, and this window only carries the count through camera dropouts. |
-| Min commit confidence | Confidence below which a detection never counts. Default 0.6, to be tuned at the counter. |
-| Unbound poll (ms) | How often the desktop asks for a session while unbound. Default 1000. |
-| Session poll (ms) | The same, while bound. Default 5000. |
-| Logs poll (ms) | How often the sidecar's tracks are read while bound. Default 1000. |
-| Cart mode | `Counter` (default): the cart is what the camera sees, with the posted count as a floor. `Basket`: the cart is the transfer ledger — a confirmed deposit adds, a confirmed removal subtracts, hiding changes nothing. See §4a. |
-| Cart is at | Which edge of the camera frame the cart is at (the camera's own edge, not the mirrored preview's). A deposit moves toward it. Default bottom. |
-| Cart band / Opening band | The share of the frame, from that edge, that is inside the cart (default 0.35) and the opening just past it (default 0.2). The rest is outside. Save refuses a pair that leaves no outside band. |
-| Zone layout | `Bands` (default) uses the three rows above. `Drawn outlines` uses two outlines drawn on the preview instead. Set and drawn on the **Basket test** screen (§4b). |
+| pushcart-web address | Whichever host runs pushcart-web: `http://192.168.1.20:3000` for Docker on the shop LAN, `https://pushcart.example.com` for cloud hosting. No trailing path. |
+| Shared secret | The same value as pushcart-web's `POS_INGEST_SECRET`. Hidden unless you press *Show*. |
+| Station | The `id` of the station registered for **this** counter (§2 step 3). |
+| Time before an item is added (s) | How long an item must be seen before it counts. Default 3. |
+| Time before an item is removed (s) | How long a lower count must hold before an item is removed. Default 10. **Suspended 2026-10-03:** until the removal-capable model ships, no automatic removal happens — a verified count is a floor for the rest of the session, and this window only carries the count through camera dropouts. |
+| Minimum confidence | Confidence below which a detection never counts. Default 0.6, to be tuned at the counter. |
+| Check for a new customer every (ms, under *Advanced*) | How often the desktop asks for a session while unbound. Default 1000. |
+| Check the open session every (ms, under *Advanced*) | The same, while bound. Default 5000. |
+| Read the camera's tracks every (ms, under *Advanced*) | How often the sidecar's tracks are read while bound. Default 1000. |
+| What the cart follows | `Counter` (default): the cart is what the camera sees, with the posted count as a floor. `Basket`: the cart is the transfer ledger — a confirmed deposit adds, a confirmed removal subtracts, hiding changes nothing. See §4a. |
+
+The **zones** are summarised in this section (one line under the cart mode) and edited on the
+**Basket test** tab (§4b), which draws them over the live picture. They are stored in the same
+configuration:
+
+| Zone setting | Meaning |
+| --- | --- |
+| Zone layout | `A · Bands` (default, the camera under the cart handle) or `B · Drawn outlines` (a camera looking down into the basket). |
+| Basket is at | Bands only: which edge of the camera frame the basket is at (the camera's own edge, not the mirrored preview's). A deposit moves toward it. Default bottom. |
+| Inside band / Opening band | Bands only: the share of the picture, from that edge, that is inside the basket (default 35%) and the opening just past it (default 20%). The rest is outside. Save refuses a pair that leaves no outside band. |
+| Inside and opening outlines | Drawn only: the outlines placed by clicking their corners on the picture; each point can be dragged afterwards. |
 
 **An empty URL, secret or station id turns the feature off** — a state, not an error: the Live view
 then shows no POS panel at all, and capture behaves exactly as it did before. The configuration is

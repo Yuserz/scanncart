@@ -12,9 +12,11 @@
 import {
   presetRegions,
   TRANSFER_FRAME,
+  type CartEdge,
   type Point,
   type ZoneLayout
 } from '../../../main/transferGeometry'
+import type { PosConfig } from '../../../main/posConfig'
 
 /** A layout's two outlines, normalized 0–1, true orientation. */
 export interface ZoneOutlines {
@@ -132,4 +134,23 @@ export function clickPoint(
     x: clamp((clientX - rect.left) / rect.width),
     y: clamp((clientY - rect.top) / rect.height)
   }
+}
+
+const EDGE_WORDS: Record<CartEdge, string> = {
+  bottom: 'bottom',
+  top: 'top',
+  left: 'left side',
+  right: 'right side'
+}
+
+/** The zone setup in one line, from the saved config (the Admin Panel's POS section). */
+export function zoneSummary(config: PosConfig): string {
+  if (config.zoneMode === 'drawn') {
+    const n = (pts: unknown[]): string => `${pts.length} point${pts.length === 1 ? '' : 's'}`
+    return `B · Drawn outlines — inside ${n(config.drawnInside)}, opening ${n(config.drawnOpening)}`
+  }
+  const pct = (v: number): string => `${Math.round(v * 100)}%`
+  return `A · Bands — basket at the ${EDGE_WORDS[config.cartEdge]} of the picture, inside ${pct(
+    config.insideFraction
+  )}, opening ${pct(config.openingFraction)}`
 }

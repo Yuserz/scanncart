@@ -37,14 +37,32 @@ export function syncUrl(baseUrl: string): string {
  * A refused connection or a DNS failure is a plain `TypeError` out of `fetch`, but every caller here
  * reasons in terms of `PosTransportError` ("pushcart-web could not be reached") — so without this the
  * one failure the smoke test spends a whole row on would arrive as a `TypeError: fetch failed` with
- * nothing to catch it by. The original message is kept, because it names the errno.
+ * nothing to catch it by. The message names the host and the reason - the errno for a refused
+ * connection, the deadline for a timeout - because it is shown to an operator as it is: `fetch`'s own
+ * "The operation was aborted due to timeout" or "fetch failed" says neither what nor where.
  */
 async function request(url: string, init: RequestInit): Promise<Response> {
   try {
     return await fetch(url, init)
   } catch (error) {
-    throw new PosTransportError(error instanceof Error ? error.message : String(error))
+    throw new PosTransportError(unreachableMessage(url, error))
   }
+}
+
+/** Why a request never got an answer, in words that name the host. */
+export function unreachableMessage(url: string, error: unknown): string {
+  let host = url
+  try {
+    host = new URL(url).origin
+  } catch {
+    // An unparseable URL is still the best name for where the request went.
+  }
+  const err = error as { name?: string; message?: string; cause?: { code?: string } } | null
+  if (err?.name === 'TimeoutError' || err?.name === 'AbortError') {
+    return `pushcart-web at ${host} did not answer within ${WEBAPP_TIMEOUT_MS / 1000} s`
+  }
+  const code = err?.cause?.code
+  return `pushcart-web at ${host} could not be reached (${code ?? err?.message ?? String(error)})`
 }
 
 export interface PosSessionProbe {

@@ -134,6 +134,27 @@ if (mode === 'smoke') {
   const hw = await page.evaluate(() => document.querySelector('[data-testid="hardware-info"]').innerText);
   console.log('hardware info:\n' + hw);
   await shot(page, 'smoke-02-admin');
+  // The self-checkout section sits below the fold; screenshot it on its own so a layout change
+  // there can be read without scrolling a full-page shot.
+  const pos = await page.$('[data-testid="pos-admin"]');
+  if (pos) {
+    await pos.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(1_500);
+    console.log('pos status:', JSON.stringify(await readText('[data-testid="pos-status"]')));
+    // The status settles once the POS loop's first round trip is done, which waits for capture to
+    // start (the camera open alone can take tens of seconds); read it again after that.
+    await page.waitForTimeout(45_000);
+    console.log('pos status after 45 s:', JSON.stringify(await readText('[data-testid="pos-status"]')));
+    // The section is taller than the window, so its head and its save bar are shot separately.
+    await pos.evaluate((el) => el.scrollIntoView({ block: 'start' }));
+    await page.waitForTimeout(500);
+    await shot(page, 'smoke-03-pos-admin-top');
+    await page.evaluate(() =>
+      document.querySelector('[data-testid="pos-admin"] .pos-foot')?.scrollIntoView({ block: 'center' })
+    );
+    await page.waitForTimeout(500);
+    await shot(page, 'smoke-04-pos-admin-bottom');
+  }
 }
 
 if (mode === 'allowlist') {

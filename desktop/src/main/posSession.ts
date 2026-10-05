@@ -33,6 +33,13 @@ export interface PosState {
    * locally. It is set only at the tick tail, only while `consecutiveFailures` stands above zero.
    */
   retryAtMs: number | null
+  /**
+   * When pushcart-web last answered this station (a session poll or a sync that came back), or null
+   * when it never has since launch. An `unbound` phase alone cannot say "ready": it is also what the
+   * loop reports before its first request has returned, so for the first seconds against a server
+   * that is down the Admin Panel read "Ready" over a connection nothing had proven.
+   */
+  lastContactMs: number | null
   /** Which derivation the posted cart follows (`posConfig.cartMode`). */
   cartMode: CartMode
   /**
@@ -246,6 +253,8 @@ export class PosSessionOrchestrator {
    * retry that is not coming.
    */
   private retryAtMs: number | null = null
+  /** See `PosState.lastContactMs`. */
+  private lastContactMs: number | null = null
 
   /**
    * Whether the tick chain is scheduled or running. It is what keeps *one* chain: `start()` runs
@@ -419,6 +428,7 @@ export class PosSessionOrchestrator {
     let remote: RemoteSession | null
     try {
       remote = await this.deps.getRemoteSession(this.cfg.stationId)
+      this.noteContact()
     } catch (error) {
       this.tickFailed = true
       this.errorSource = 'webapp'
@@ -672,6 +682,7 @@ export class PosSessionOrchestrator {
 
     try {
       const response = await this.deps.postSync(payload)
+      this.noteContact()
       this.lastSent = snapshot
       if (review !== undefined) this.lastReviewSent = review.length
       let floorGrew = false
@@ -721,6 +732,13 @@ export class PosSessionOrchestrator {
     }
   }
 
+  /** pushcart-web answered. The first answer is a transition worth telling an open window about. */
+  private noteContact(): void {
+    const first = this.lastContactMs === null
+    this.lastContactMs = Date.now()
+    if (first) this.emit()
+  }
+
   private setError(message: string): void {
     this.error = message
     this.emit()
@@ -740,6 +758,7 @@ export class PosSessionOrchestrator {
       lastSyncAgeS: this.lastSyncAtMs ? (Date.now() - this.lastSyncAtMs) / 1000 : null,
       error: this.error,
       retryAtMs: this.retryAtMs,
+      lastContactMs: this.lastContactMs,
       cartMode: this.cfg.cartMode,
       basket: this.deps.basket?.readout() ?? null
     })

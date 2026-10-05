@@ -10,6 +10,7 @@ const STATE: PosState = {
   lastSyncAgeS: 1,
   error: null,
   retryAtMs: null,
+  lastContactMs: null,
   cartMode: 'counter',
   basket: null
 }
