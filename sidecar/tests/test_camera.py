@@ -573,7 +573,13 @@ class _SceneCap(_RecordingCap):
     def read(self):
         time.sleep(0.002)
         level = int(max(0, min(255, self.brightness * 0.8 - 50)))
-        return True, np.full((16, 16, 3), level, dtype=np.uint8)
+        # A scene with detail in it (8-pixel blocks +-20 around the level, so the mean is the level
+        # and the contrast is a lit room's - blocks, because `frame_levels` samples every 8th
+        # pixel), since a flat frame is what `AutoExposure` now reads as too dark to brighten.
+        rows, cols = np.indices((16, 16))
+        sign = np.where((rows // 8 + cols // 8) % 2 == 0, 20, -20)
+        frame = np.clip(level + sign, 0, 255).astype(np.uint8)
+        return True, np.repeat(frame[:, :, None], 3, axis=2)
 
 
 def test_capture_with_auto_exposure_drives_the_picture_to_the_target():
@@ -615,5 +621,131 @@ def test_a_manual_drag_while_auto_is_on_is_not_written():
         src.set_controls(brightness=10)
         time.sleep(0.3)
         assert not _wrote(cap, cv2.CAP_PROP_BRIGHTNESS, 10)
+    finally:
+        src.release()
+
+
+# ---- too dark: a state, not a brightness ----------------------------------------------------
+
+from app.camera import frame_levels  # noqa: E402
+
+GREY_CARD = 2.3  # measured contrast of the grey picture the old loop produced in a dark room
+LIT = 28.0  # an ordinary lit scene measured 24-33
+
+
+def _tick(ae: AutoExposure, lum: float, contrast: float, t: list[float]) -> dict:
+    t[0] += 1.0  # past both the interval and the settle time
+    return ae.update(lum, t[0], contrast)
+
+
+def test_a_room_too_dark_for_the_shutter_is_reported_rather_than_greyed_out():
+    """The 04:30 measurement: at -6 the picture was black, and holding the target by brightness
+    painted it a flat grey (contrast 2.3). The loop now backs brightness off and says so."""
+    ae = AutoExposure(60, brightness=215, exposure=-6)
+    t = [0.0]
+    assert _tick(ae, 100, GREY_CARD, t) == {"brightness": AutoExposure.BRIGHTNESS_NEUTRAL}
+    assert ae.too_dark
+    # Black and flat at neutral brightness: nothing more to write, and no climbing back to grey.
+    assert _tick(ae, 1, 2.4, t) == {}
+    assert ae.too_dark and ae.brightness == AutoExposure.BRIGHTNESS_NEUTRAL
+    assert ae.exposure == -6  # the 60 fps shutter was kept
+
+
+def test_light_coming_back_clears_the_state_and_brightness_works_again():
+    ae = AutoExposure(60, brightness=128, exposure=-6)
+    t = [0.0]
+    _tick(ae, 1, 2.4, t)
+    assert ae.too_dark
+    writes = _tick(ae, 70, LIT, t)
+    assert not ae.too_dark
+    assert writes.get("brightness", 0) > 128
+
+
+def test_a_dark_but_detailed_picture_is_still_brightened():
+    """Flatness is what decides it, not darkness: a dim picture with detail in it is the case
+    brightness exists for."""
+    ae = AutoExposure(60, brightness=128, exposure=-6)
+    t = [0.0]
+    writes = _tick(ae, 60, LIT, t)
+    assert writes.get("brightness", 0) > 128 and not ae.too_dark
+
+
+def test_without_a_contrast_reading_the_loop_behaves_as_before():
+    ae = AutoExposure(60, brightness=128, exposure=-6)
+    assert ae.update(1, 1.0) == {"brightness": 128 + AutoExposure.MAX_STEP}
+    assert not ae.too_dark
+
+
+def test_the_slow_trade_spends_one_stop_before_giving_up_and_no_more():
+    ae = AutoExposure(60, brightness=128, exposure=-6, allow_slow=True)
+    t = [0.0]
+    assert ae.slow_cap == -5
+    assert _tick(ae, 1, 2.4, t) == {"exposure": -5}
+    assert not ae.too_dark  # not given up yet: the slower shutter has not been judged
+    assert _tick(ae, 3, 5.0, t) == {}  # still too dark at 30 fps
+    assert ae.too_dark and ae.exposure == -5
+
+
+def test_the_slow_trade_comes_back_to_the_cap_only_with_light_to_spare():
+    ae = AutoExposure(60, brightness=128, exposure=-6, allow_slow=True)
+    t = [0.0]
+    _tick(ae, 1, 2.4, t)
+    assert ae.exposure == -5
+    # On target at 30 fps: halving the light would undo it, so it stays.
+    _tick(ae, AutoExposure.TARGET, LIT, t)
+    assert ae.exposure == -5
+    # Twice the target's floor: one stop shorter still reaches it.
+    assert _tick(ae, 240, LIT, t) == {"exposure": -6}
+
+
+def test_turning_the_slow_trade_off_puts_the_shutter_straight_back():
+    ae = AutoExposure(60, brightness=128, exposure=-6, allow_slow=True)
+    t = [0.0]
+    _tick(ae, 1, 2.4, t)
+    assert ae.set_allow_slow(False) == {"exposure": -6}
+    assert ae.set_allow_slow(False) == {}
+
+
+def test_frame_levels_tells_a_flat_frame_from_a_detailed_one():
+    flat = np.full((32, 32, 3), 100, dtype=np.uint8)
+    rows, cols = np.indices((32, 32))
+    checker = np.where((rows // 8 + cols // 8) % 2 == 0, 130, 70).astype(np.uint8)
+    detailed = np.repeat(checker[:, :, None], 3, axis=2)
+    assert frame_levels(flat) == pytest.approx((100, 0), abs=0.5)
+    mean, contrast = frame_levels(detailed)
+    assert mean == pytest.approx(100, abs=0.5) and contrast > AutoExposure.CONTRAST_FLOOR
+
+
+class _DarkCap(_RecordingCap):
+    """A camera in a dark room: a flat, nearly black picture whatever is written to it."""
+
+    def read(self):
+        time.sleep(0.002)
+        return True, np.full((16, 16, 3), 2, dtype=np.uint8)
+
+
+def test_capture_reports_too_dark_only_while_auto_exposure_is_judging():
+    cap = _DarkCap()
+    src = CameraCapture(0, 16, 16, 60, cap_factory=lambda i: cap, brightness=215, auto_exposure=True)
+    src.open()
+    try:
+        assert _wait_for(lambda: src.too_dark, 5.0)
+        assert _wrote(cap, cv2.CAP_PROP_BRIGHTNESS, AutoExposure.BRIGHTNESS_NEUTRAL)
+        src.set_controls(auto_exposure=False)
+        assert _wait_for(lambda: not src.too_dark, 5.0)
+    finally:
+        src.release()
+
+
+def test_capture_turns_the_slow_trade_on_live():
+    cap = _DarkCap()
+    src = CameraCapture(0, 16, 16, 60, cap_factory=lambda i: cap, auto_exposure=True)
+    src.open()
+    try:
+        assert _wait_for(lambda: src.too_dark, 5.0)
+        src.set_controls(auto_exposure_slow=True)
+        assert _wait_for(lambda: _wrote(cap, cv2.CAP_PROP_EXPOSURE, -5.0), 5.0)
+        src.set_controls(auto_exposure_slow=False)
+        assert _wait_for(lambda: [v for p, v, _ in cap.sets if p == cv2.CAP_PROP_EXPOSURE][-1] == -6.0, 5.0)
     finally:
         src.release()

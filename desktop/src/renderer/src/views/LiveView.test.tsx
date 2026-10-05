@@ -186,6 +186,31 @@ describe('LiveView', () => {
     expect(screen.getByTestId('stat-shed')).toHaveTextContent('shed')
   })
 
+  it('says the room is too dark when the sidecar judged it so, and nothing otherwise', () => {
+    // The picture alone - dark, with nothing detected on it - reads as an empty counter. The
+    // notice is what tells the operator the fix is light, not the camera or the model.
+    const h = makeHarness()
+    render(<LiveView port={8765} deps={h.deps} />)
+    act(() => {
+      h.opts().onOpen?.()
+      h.opts().onFrame?.(frameWith([], { too_dark: true }))
+    })
+    expect(screen.getByTestId('live-too-dark')).toHaveTextContent('Add light')
+    expect(screen.getByTestId('live-too-dark')).toHaveTextContent('Allow 30 fps when dark')
+
+    act(() => {
+      h.opts().onFrame?.(frameWith([], { too_dark: false }))
+    })
+    expect(screen.queryByTestId('live-too-dark')).not.toBeInTheDocument()
+
+    const older = frameWith([])
+    delete older.stats.too_dark
+    act(() => {
+      h.opts().onFrame?.(older)
+    })
+    expect(screen.queryByTestId('live-too-dark')).not.toBeInTheDocument()
+  })
+
   it('leaves the shed tile off on an ordinary frame', () => {
     const h = makeHarness()
     render(<LiveView port={8765} deps={h.deps} />)

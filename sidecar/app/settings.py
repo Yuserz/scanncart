@@ -130,6 +130,11 @@ class Settings:
     # exposure causes (measured 12 fps). While on, camera_brightness/camera_exposure are only
     # its starting point. Hot-reloadable.
     camera_auto_exposure: bool = True
+    # The one trade auto exposure may make in a room too dark for the framerate's shutter: one stop
+    # longer (30 fps at a 60 fps setting) before it gives up and reports `too_dark`. Off by default,
+    # because 60 fps is the promise and a lamp is the better fix; tracking still works at 30.
+    # Hot-reloadable; switching it off puts a lengthened shutter straight back.
+    camera_auto_exposure_slow: bool = False
 
     # Which detector implementation backs capture. "native" runs the weights in
     # this process (the only backend that satisfies the PRD's offline promise);

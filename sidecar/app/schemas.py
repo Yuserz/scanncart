@@ -51,6 +51,13 @@ class Stats(BaseModel):
     # backend and on any remote server that is not refusing requests, which is every ordinary
     # frame of every capture.
     shed: bool = False
+    # Whether the app's auto exposure has judged the room too dark to light the picture at this
+    # framerate (`AutoExposure.too_dark` in `app/camera.py`): the picture is both under its target
+    # and flat, so raising brightness would only turn it grey, and the loop has stopped doing that.
+    # The operator's fix is light, which nothing on this side can supply - hence a flag the Live
+    # view turns into a sentence. False whenever auto exposure is off (the operator owns the
+    # controls then) and on every frame of a lit capture.
+    too_dark: bool = False
 
 
 class FrameMessage(BaseModel):
@@ -210,6 +217,7 @@ class SettingsPayload(BaseModel):
     camera_autofocus: bool | None
     camera_focus: float | None
     camera_auto_exposure: bool
+    camera_auto_exposure_slow: bool
 
 
 class UnrecordedResizeMode(BaseModel):
@@ -310,6 +318,7 @@ class SettingsUpdateRequest(BaseModel):
     camera_autofocus: bool | None = None
     camera_focus: float | None = Field(default=None, ge=FOCUS_RANGE[0], le=FOCUS_RANGE[1])
     camera_auto_exposure: bool | None = None
+    camera_auto_exposure_slow: bool | None = None
 
     # exclude_none=True means a patch can never send a field back to null, so
     # without this Revert cannot restore "this app imposes no value" — which is

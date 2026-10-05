@@ -337,7 +337,13 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
   {
     key: 'camera_auto_exposure',
     label: 'Auto exposure',
-    hint: 'Keeps the picture evenly lit as the light changes, without lowering the framerate: it holds the shutter at the longest the capture fps allows and adjusts brightness, shortening the shutter only when the scene is too bright. Turn it off to set brightness and exposure by hand.',
+    hint: 'Keeps the picture evenly lit as the light changes, without lowering the framerate: it holds the shutter at the longest the capture fps allows and adjusts brightness, shortening the shutter only when the scene is too bright. In a room too dark for that shutter it stops brightening (brightness would only turn the picture grey) and the Live view says to add light. Turn it off to set brightness and exposure by hand.',
+    type: 'boolean'
+  },
+  {
+    key: 'camera_auto_exposure_slow',
+    label: 'Allow 30 fps when dark',
+    hint: 'When the room is too dark for the full frame rate, let auto exposure use a shutter one stop longer — half the frame rate (30 at a 60 fps setting) — before it gives up. It returns to the full rate by itself once there is light to spare. Off keeps the full frame rate; more light is the better fix.',
     type: 'boolean'
   },
   {
@@ -420,6 +426,7 @@ export const SETTINGS_GROUPS: FieldGroup[] = [
     home: 'live',
     keys: [
       'camera_auto_exposure',
+      'camera_auto_exposure_slow',
       'camera_brightness',
       'camera_exposure',
       'camera_autofocus',

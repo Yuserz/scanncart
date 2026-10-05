@@ -142,6 +142,19 @@ def test_a_shed_frame_is_reported_as_shed_rather_than_as_a_clean_counter():
     assert out["stats"]["shed"] is True
 
 
+class _DarkSource(_StubSource):
+    too_dark = True
+
+
+def test_a_room_too_dark_to_light_is_reported_on_the_frame():
+    """The camera judged the picture too dark and flat to brighten; the frame says so, because the
+    picture alone - dark, and with nothing detected on it - reads as an empty counter."""
+    pipe = Pipeline(_DarkSource(), _StubDetector(), Settings(), on_message=lambda _m: None)
+    assert pipe.process_once()["stats"]["too_dark"] is True
+    plain = Pipeline(_StubSource(), _StubDetector(), Settings(), on_message=lambda _m: None)
+    assert plain.process_once()["stats"]["too_dark"] is False
+
+
 def test_a_detector_with_no_such_attribute_reports_no_shed():
     """The native shape - no server to refuse anything - and the default an older detector gets.
     `getattr` rather than a protocol member, because only the remote backend can be shed."""

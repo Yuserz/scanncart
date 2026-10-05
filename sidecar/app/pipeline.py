@@ -183,6 +183,9 @@ class Pipeline:
         # it is a remote-detector extra rather than part of the `Detector` protocol - the native
         # path has no server to be shed by and reports nothing here.
         shed = bool(getattr(self._detector, "last_shed", False))
+        # The camera's own verdict on the light (`CameraCapture.too_dark`), read the same way: a
+        # source extra rather than part of `FrameSource`, since a fake or a file has no exposure.
+        too_dark = bool(getattr(self._source, "too_dark", False))
         # One owner for the accept/reject decision (`app/acceptance.py`), asked once, so the overlay,
         # the item log and the store cannot disagree about what survived: the accepted list is the
         # only thing that travels past this line, and everything declined is absent from all three
@@ -220,6 +223,7 @@ class Pipeline:
             latency_ms=round((t1 - t0) * 1000.0, 1),
             suppressed=suppressed,
             shed=shed,
+            too_dark=too_dark,
         )
         with self._state_lock:
             # The *true* detections are what is stored: `emit_preview` reflects them on the way

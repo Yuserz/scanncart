@@ -98,6 +98,9 @@ export interface SettingsPayload {
   /** The app's own auto-exposure: while on it moves brightness (and, in bright light, shortens
    *  the shutter) itself, so the two fields above are only its starting point. */
   camera_auto_exposure: boolean
+  /** Lets auto exposure trade down to half the framerate (one stop longer shutter) in a room too
+   *  dark for the full rate, before it gives up and reports `too_dark`. */
+  camera_auto_exposure_slow: boolean
 }
 
 // Weights whose training geometry nothing recorded, with the sentence saying so and the mode a

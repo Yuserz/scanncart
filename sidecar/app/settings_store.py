@@ -179,6 +179,8 @@ HOT_RELOADABLE_FIELDS = {
     # Queued to the capture thread like the four above; switching it off hands brightness and
     # exposure back to the values set for them.
     "camera_auto_exposure",
+    # Queued the same way; read by the running AutoExposure.
+    "camera_auto_exposure_slow",
 }
 RESTART_REQUIRED_FIELDS = {
     "active_model",
@@ -283,7 +285,7 @@ def _valid_field(name: str, value: Any) -> bool:
         return value is None or isinstance(value, (int, float))
     if name == "camera_autofocus":
         return value is None or isinstance(value, bool)
-    if name == "camera_auto_exposure":
+    if name in ("camera_auto_exposure", "camera_auto_exposure_slow"):
         return isinstance(value, bool)
     return False
 

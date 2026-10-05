@@ -247,6 +247,8 @@ export function CameraTuning({
     const disabled =
       unsupported(field.key) ||
       (field.key === 'camera_focus' && autofocusOn) ||
+      // Only auto exposure reads it, so it means nothing while auto exposure is off.
+      (field.key === 'camera_auto_exposure_slow' && !autoExposureOn) ||
       ((field.key === 'camera_brightness' || field.key === 'camera_exposure') && autoExposureOn)
 
     return (

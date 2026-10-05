@@ -110,6 +110,17 @@ def test_autofocus_reaches_the_device_as_a_bool(running):
     assert src.controls["autofocus"] is False
 
 
+def test_the_30_fps_trade_reaches_the_open_device_and_the_response(running):
+    """Hot like auto exposure itself: switched on in the middle of a dark capture, the running
+    loop is what has to hear it, and the panel reads it back off the response."""
+    client, _, src, _ = running
+    r = client.patch("/api/settings", json={"camera_auto_exposure_slow": True})
+
+    assert r.status_code == 200
+    assert src.controls["auto_exposure_slow"] is True
+    assert r.json()["camera_auto_exposure_slow"] is True
+
+
 def test_a_conf_patch_reaches_the_running_detector(running):
     client, _, _, det = running
     client.patch("/api/settings", json={"conf_threshold": 0.8})

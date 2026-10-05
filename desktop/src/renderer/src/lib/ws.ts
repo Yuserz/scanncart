@@ -24,6 +24,11 @@ export interface FrameStats {
   // Optional for the same reason as `suppressed`: a sidecar that predates the field sends no such
   // key, and `undefined` has to read as "not shed" rather than as a missing reading.
   shed?: boolean
+  // Whether the sidecar's auto exposure judged the room too dark to light the picture at this
+  // framerate: under its target *and* flat, so brightness would only turn it grey and the loop has
+  // stopped raising it. Light is the fix and nothing in the app can supply it, so this becomes a
+  // notice. Optional, like the two above, for a sidecar that predates the field.
+  too_dark?: boolean
 }
 
 export interface FrameMessage {

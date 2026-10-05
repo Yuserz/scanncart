@@ -73,8 +73,26 @@ class AutoExposure:
     bright for the lowest useful brightness shortens the shutter, one stop at a time, and the
     shutter is never lengthened past the cap.
 
-    Pure: it is handed a luminance and returns the writes to make, so it is tested without a
-    device. The capture thread owns the device and does the writing.
+    **Too dark is a state, not a brightness.** On this camera brightness is a black-level offset,
+    not a gain (and the gain control is not honoured over MSMF - `camera_profiles.json` measured
+    `gain: false`), so in a room too dark for the 60 fps shutter it cannot add detail: measured at
+    04:30 with the lights low, the -6 shutter gave mean luminance 1 (brightest pixel 18), and
+    raising brightness to hold the target turned that into a flat grey card - contrast (the
+    standard deviation of the sample) 2.3 where a usable picture reads 24-33, with every pixel
+    between 96 and 120. The model reads phantoms off a picture like that. So when the reading is
+    both under the target and flat (`CONTRAST_FLOOR`), the loop stops raising brightness, brings it
+    back to `BRIGHTNESS_NEUTRAL` and sets `too_dark`, which the pipeline carries to the Live view as
+    a notice: a dark honest picture and a sentence saying "add light" instead of a grey one that
+    looks like the camera's fault.
+
+    `allow_slow` (`camera_auto_exposure_slow`, off by default) is the one trade it may make first:
+    one stop of shutter past the cap, `slow_cap` - 30 fps at a 60 fps setting, which tracking still
+    handles - before giving up. It comes back to the cap only once the picture would still reach the
+    target with half the light (`_SLOW_EXIT`), so it cannot ring between the two rates.
+
+    Pure: it is handed a luminance (and, when the caller has it, a contrast) and returns the writes
+    to make, so it is tested without a device. The capture thread owns the device and does the
+    writing.
     """
 
     TARGET = 130.0  # camera_quality.BRIGHTNESS_TARGET, the level calibration aims for
@@ -88,9 +106,25 @@ class AutoExposure:
     INTERVAL_S = 0.2
     # A shutter change takes a few frames to show; judging sooner would step twice.
     SETTLE_S = 0.6
+    # Below this the sample holds no detail worth brightening (measured: a flat grey card 2.2-2.6,
+    # a dark-but-real picture at one stop longer 5-6.5, an ordinary lit scene 24-33).
+    CONTRAST_FLOOR = 8.0
+    # Where brightness goes back to when the room is too dark: the device's own middle, which keeps
+    # black black instead of lifting it to grey.
+    BRIGHTNESS_NEUTRAL = 128.0
 
-    def __init__(self, fps: float, brightness: float | None, exposure: float | None) -> None:
+    def __init__(
+        self,
+        fps: float,
+        brightness: float | None,
+        exposure: float | None,
+        allow_slow: bool = False,
+    ) -> None:
         self.cap = exposure_cap_for(fps)
+        # One stop past the cap: the longest shutter that still delivers half the framerate.
+        self.slow_cap = exposure_cap_for(fps / 2) if fps > 0 else self.cap
+        self.allow_slow = allow_slow
+        self.too_dark = False
         self.brightness = 128.0 if brightness is None else float(brightness)
         self.exposure = float(self.cap if exposure is None else min(exposure, self.cap))
         self._next_t = 0.0
@@ -98,12 +132,49 @@ class AutoExposure:
     def start_writes(self) -> dict:
         return {"exposure": self.exposure, "brightness": self.brightness}
 
-    def update(self, luminance: float, now: float) -> dict:
-        """The control writes this reading calls for (empty when nothing should change)."""
+    @property
+    def longest(self) -> float:
+        """The longest shutter the loop may use right now."""
+        return self.slow_cap if self.allow_slow else self.cap
+
+    # Back to the cap only when half the light would still reach the target (one stop halves it).
+    _SLOW_EXIT = 2 * (TARGET - DEADBAND)
+
+    def set_allow_slow(self, allow: bool) -> dict:
+        """Switch the 30 fps trade on or off; off puts a lengthened shutter straight back."""
+        self.allow_slow = bool(allow)
+        if not self.allow_slow and self.exposure > self.cap:
+            self.exposure = float(self.cap)
+            return {"exposure": self.exposure}
+        return {}
+
+    def update(self, luminance: float, now: float, contrast: float | None = None) -> dict:
+        """The control writes this reading calls for (empty when nothing should change).
+
+        `contrast` is the sample's standard deviation (`frame_levels`); without it the loop cannot
+        tell a dark picture from a flat one and never reports `too_dark`.
+        """
         if now < self._next_t:
             return {}
         self._next_t = now + self.INTERVAL_S
         err = self.TARGET - luminance
+        if self.exposure > self.cap and luminance >= self._SLOW_EXIT:
+            # Light enough again for the framerate's own shutter, with room to spare.
+            self.exposure -= 1
+            self._next_t = now + self.SETTLE_S
+            return {"exposure": self.exposure}
+        if err > self.DEADBAND and contrast is not None and contrast < self.CONTRAST_FLOOR:
+            # Too dark *and* flat: brightness would only lift black to grey.
+            if self.exposure < self.longest:
+                self.exposure += 1
+                self._next_t = now + self.SETTLE_S
+                return {"exposure": self.exposure}
+            self.too_dark = True
+            if self.brightness > self.BRIGHTNESS_NEUTRAL:
+                self.brightness = self.BRIGHTNESS_NEUTRAL
+                return {"brightness": self.brightness}
+            return {}
+        self.too_dark = False
         if abs(err) <= self.DEADBAND:
             return {}
         step = max(-self.MAX_STEP, min(self.MAX_STEP, err * self.GAIN))
@@ -114,7 +185,7 @@ class AutoExposure:
             self.brightness = min(self.BRIGHTNESS_MAX, self.brightness * 1.5)
             self._next_t = now + self.SETTLE_S
             return {"exposure": self.exposure, "brightness": self.brightness}
-        if err > 0 and wanted > self.BRIGHTNESS_MAX and self.exposure < self.cap:
+        if err > 0 and wanted > self.BRIGHTNESS_MAX and self.exposure < self.longest:
             # Too dark at full brightness, and a stop of shutter is still free.
             self.exposure += 1
             self.brightness = max(self.BRIGHTNESS_MIN, self.brightness / 1.5)
@@ -127,14 +198,25 @@ class AutoExposure:
         return {"brightness": self.brightness}
 
 
-def mean_luminance(frame: np.ndarray) -> float:
-    """Mean brightness of a frame, sampled sparsely: the loop needs a level, not detail."""
+def _luma_sample(frame: np.ndarray) -> np.ndarray:
     sample = frame[::8, ::8]
     if sample.ndim == 3:
         # BGR → luma weights, without a colour conversion of the whole frame.
         b, g, r = sample[..., 0], sample[..., 1], sample[..., 2]
-        return float((0.114 * b + 0.587 * g + 0.299 * r).mean())
-    return float(sample.mean())
+        return 0.114 * b + 0.587 * g + 0.299 * r
+    return sample.astype(float)
+
+
+def mean_luminance(frame: np.ndarray) -> float:
+    """Mean brightness of a frame, sampled sparsely: the loop needs a level, not detail."""
+    return float(_luma_sample(frame).mean())
+
+
+def frame_levels(frame: np.ndarray) -> tuple[float, float]:
+    """`(mean, contrast)` of the same sparse sample - contrast being its standard deviation, the
+    one number that tells a dark picture from a flat grey one."""
+    sample = _luma_sample(frame)
+    return float(sample.mean()), float(sample.std())
 
 
 class LatestFrameBuffer:
@@ -208,6 +290,7 @@ class CameraCapture:
         brightness: float | None = None, exposure: float | None = None,
         autofocus: bool | None = None, focus: float | None = None,
         auto_exposure: bool = False,
+        auto_exposure_slow: bool = False,
     ):
         self.index = index
         self.width = width
@@ -226,6 +309,7 @@ class CameraCapture:
         # While on, `AutoExposure` owns brightness and exposure: the manual values are only its
         # starting point, and come back into force when it is switched off.
         self._auto_exposure = auto_exposure
+        self._auto_exposure_slow = auto_exposure_slow
         self._ae: AutoExposure | None = None
         # Control changes queued by another thread, drained by _loop between
         # reads. cv2.VideoCapture is not thread-safe, so set() must never be
@@ -296,6 +380,19 @@ class CameraCapture:
         with self._controls_lock:
             self._pending_controls.update(changes)
 
+    def _new_auto_exposure(self) -> AutoExposure:
+        return AutoExposure(
+            self.fps, self._brightness, self._exposure, allow_slow=bool(self._auto_exposure_slow)
+        )
+
+    @property
+    def too_dark(self) -> bool:
+        """Whether auto exposure has judged the room too dark to light the picture (see
+        `AutoExposure`). Always False while auto exposure is off: then the operator owns the
+        controls and nothing here is judging the picture."""
+        ae = self._ae
+        return bool(ae is not None and ae.too_dark)
+
     def _drain_controls(self) -> None:
         with self._controls_lock:
             if not self._pending_controls:
@@ -306,11 +403,12 @@ class CameraCapture:
         for name, value in changes.items():
             setattr(self, f"_{name}", value)
         ae_switch = changes.pop("auto_exposure", None)
+        slow_switch = changes.pop("auto_exposure_slow", None)
         # Every value in one write, so the autofocus-before-focus order holds
         # across a batch that moves both.
         writes = _with_restores(changes)
         if ae_switch is True and self._ae is None:
-            self._ae = AutoExposure(self.fps, self._brightness, self._exposure)
+            self._ae = self._new_auto_exposure()
             writes.update(self._ae.start_writes())
         elif ae_switch is False and self._ae is not None:
             # Hand the two controls back to the operator's own values, where there are any.
@@ -323,6 +421,9 @@ class CameraCapture:
             # A manual drag while auto is on is its next starting point, not a write.
             writes.pop("brightness", None)
             writes.pop("exposure", None)
+        if slow_switch is not None and self._ae is not None:
+            # After the drag rule above, which would otherwise discard the loop's own write.
+            writes.update(self._ae.set_allow_slow(slow_switch))
         self._write_safely(writes)
 
     def _write_safely(self, writes: dict) -> None:
@@ -353,7 +454,7 @@ class CameraCapture:
         self._cap.set(cv2.CAP_PROP_FPS, self.fps)
         controls = self._current_controls()
         if self._auto_exposure:
-            self._ae = AutoExposure(self.fps, self._brightness, self._exposure)
+            self._ae = self._new_auto_exposure()
             controls.update(self._ae.start_writes())
         self._write_controls(self._cap, controls)
         if not self._cap.isOpened():
@@ -396,7 +497,8 @@ class CameraCapture:
             self._failing_since = None
             self._drain_controls()
             if self._ae is not None:
-                self._write_safely(self._ae.update(mean_luminance(frame), time.monotonic()))
+                level, contrast = frame_levels(frame)
+                self._write_safely(self._ae.update(level, time.monotonic(), contrast))
             self._read_times.append(time.monotonic())
             self._seq += 1
             self._buffer.put(self._seq, frame)

@@ -247,6 +247,9 @@ export function LiveView({ port, deps }: LiveViewProps): JSX.Element {
   // Absent on a sidecar that predates the field, which reads as "not shed" — the healthy default,
   // and the only honest reading of a message that says nothing about refusals.
   const shed = stats?.shed ?? false
+  // Absent on an older sidecar, and false whenever auto exposure is off - the operator owns the
+  // controls then, and nothing is judging the picture.
+  const tooDark = stats?.too_dark ?? false
   // Real decoded frame size, read on img load — drives the wrapper's
   // aspect-ratio and fit-to-column sizing in CSS (falls back to 16/9
   // while idle). Same-value updates bail out, so per-frame loads are free.
@@ -323,6 +326,19 @@ export function LiveView({ port, deps }: LiveViewProps): JSX.Element {
             </b>{' '}
             Detections will fail while it is down. {inferenceRemedy(inference)}
             {inference.detail ? ` (${inference.detail})` : ''}
+          </span>
+        </div>
+      )}
+      {/* The room is too dark for the shutter this framerate allows, and auto exposure has
+          stopped brightening because brightness only lifts black to grey on this camera (no gain
+          over MSMF). A state, not an event: it clears by itself when the light comes back, so it
+          is not dismissible. It names the fix, light, and the one trade the app can make. */}
+      {tooDark && (
+        <div className="live-warning" role="status" data-testid="live-too-dark">
+          <span>
+            <b>Too dark for the camera at this frame rate.</b> Add light over the basket — auto
+            exposure has stopped brightening the picture, because more brightness would only turn it
+            grey. Or switch on <i>Allow 30 fps when dark</i> in Camera tuning.
           </span>
         </div>
       )}
