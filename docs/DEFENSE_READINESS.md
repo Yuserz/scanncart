@@ -33,7 +33,7 @@ have no field accuracy number.
 | — | Admin screens closed to customers | **Met** | `scripts/pos-admin-routes-e2e.mjs` (pushcart-web): an anonymous tablet session and a non-admin user are refused (403) on all 11 POS admin calls, an admin is allowed — 29/29 on 2026-10-05 |
 | N1 | Camera-to-screen < 150 ms | **Met (estimate)** | ≤ 17 ms frame wait + 19 ms analysis + 17 ms delivery to a WebSocket client + ~17 ms paint ≈ 70 ms. Component sum, not a photon-to-photon measurement |
 | N2 | Transfer → tablet ≤ 5 s (p95) | **Implemented, unmeasured** | Design: confirmation ~0.5 s after landing, posted immediately (~0.25 s round trip locally). Gate C would measure it |
-| N3 | ≥ 2 h continuous | **Partly measured** | 34 min unbroken before the session ended: scanner up throughout, memory flat, connections 4–11. In two runs capture latched from 60 to ~30 fps at minute 18–23 (once with NVIDIA Broadcast closed); the scanner kept running but the camera's cause is unconfirmed (see Soak result) |
+| N3 | ≥ 2 h continuous | **Partly measured** | Two runs (34 and 80+ min): scanner up throughout, never restarted, memory flat, connections 4–15. In two runs capture latched from 60 to ~30 fps at minute 18–23 (once with NVIDIA Broadcast closed); the scanner kept running but the camera's cause is unconfirmed (see Soak result) |
 | N4 | Detection with no internet | **Met** | Native backend, local weights; only the pushcart-web hop uses the LAN |
 | N5 | Modular, tested without hardware | **Met** | 560 desktop (Vitest) + 1,717 sidecar (pytest) tests on fakes; CI; POS contract check against pushcart-web's source |
 
