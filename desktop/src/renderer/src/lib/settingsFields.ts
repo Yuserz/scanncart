@@ -11,7 +11,7 @@ import type { SettingsPayload } from './api'
 // .onnx/.pt under sidecar/models/ is valid, this is just the one we ship with. (The
 // Roboflow-exported ONNX, models/scanncart-grocery.onnx, is the same architecture pre-retrain
 // and remains selectable.)
-export const CUSTOM_MODEL = 'models/scanncart-grocery.pt'
+export const CUSTOM_MODEL = 'models/scanncart-grocery-v1.pt'
 // The locally trained successor (MODEL_TRAINING.md §8.2). Named here only for its label and
 // hint; the picker *discovers* the file from GET /api/models, so this entry is optional and
 // its absence would not hide the model — a future v3 needs no entry at all to be selectable.

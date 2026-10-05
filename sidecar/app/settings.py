@@ -10,7 +10,7 @@ class Settings:
     # on CUDA (~18 ms isolated, ~40 fps in-app) while letterbox-native and
     # retrainable. The ONNX export remains selectable (models/scanncart-grocery.onnx).
     # See docs/DETECTOR_BACKENDS.md §1a for the backend comparison.
-    active_model: str = "models/scanncart-grocery.pt"
+    active_model: str = "models/scanncart-grocery-v1.pt"
     camera_index: int = 0
     # 640x480@30 opens and streams reliably over USB 2.0; the StreamCam's
     # 1080p60 needs USB 3.0 and a failed mode switch there can wedge the MSMF
