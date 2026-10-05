@@ -237,6 +237,8 @@ class Side:
     # Polygon rows reduced to their bounding boxes, counted because it is the one transformation
     # here that changes the numbers in a label file rather than just their class index.
     polygons: int = 0
+    # Boxes dropped because they lie inside a larger box of the same product (`drop_nested_rows`).
+    nested: int = 0
     notes: list[str] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)
 
@@ -397,6 +399,53 @@ def remap_rows(text: str, names: list[str] | None) -> tuple[list[str], list[str]
     return rows, problems, polygons
 
 
+# How far, in the frame's 0-1 coordinates, a box may stick out of a larger one and still count as
+# inside it. The same 2% the scan of the live project used to find these boxes.
+NESTED_TOLERANCE = 0.02
+
+
+def drop_nested_rows(rows: list[str], tolerance: float = NESTED_TOLERANCE) -> tuple[list[str], int]:
+    """The rows with every box that lies inside a larger box *of the same product* removed.
+
+    v1-era labels hold a second, partial box around a part of the item - the "555" logo inside a
+    sardines can, the noodle picture inside a Lucky Me pouch - beside the box around the whole item.
+    Scored against those labels a detector that draws one box per item is charged with a miss for
+    every partial box (v2 found all 37 Lucky Me items in `merged-v2`'s test split at 0.92-0.96 and
+    still scored 0.794, its partial-box IoUs being 0.16-0.32), and trained on them it learns to draw
+    the partial box too. One box per item is what the app counts, so the larger box is the label.
+
+    Boxes are kept largest first, so of two identical boxes one survives. Rows of different products
+    never affect each other: a small item in front of a large one is two items. Returns
+    `(rows, dropped)`, in the input order.
+    """
+    parsed = []
+    for index, row in enumerate(rows):
+        cls, cx, cy, w, h = row.split()[:5]
+        cx, cy, w, h = float(cx), float(cy), float(w), float(h)
+        parsed.append((index, cls, (cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2), w * h))
+    kept: list[tuple[int, str, tuple[float, float, float, float]]] = []
+    for index, cls, box, _area in sorted(parsed, key=lambda item: (-item[3], item[0])):
+        inside = any(
+            cls == other_cls
+            and box[0] >= other[0] - tolerance
+            and box[1] >= other[1] - tolerance
+            and box[2] <= other[2] + tolerance
+            and box[3] <= other[3] + tolerance
+            for _i, other_cls, other in kept
+        )
+        if not inside:
+            kept.append((index, cls, box))
+    keep = {index for index, _cls, _box in kept}
+    return [row for index, row in enumerate(rows) if index in keep], len(rows) - len(keep)
+
+
+def nested_note(side: "Side") -> str:
+    return (
+        f"[nested] {side.nested} box(es) dropped because they lie inside a larger box of the same "
+        "product - one box per item, the larger one (`drop_nested_rows`)"
+    )
+
+
 def stretch_image(path: Path, size: int = SIZE) -> Image.Image:
     """The frame at `size`x`size`, stretched - which is the requirement, not a convenience.
 
@@ -478,6 +527,8 @@ def build_v1(v1_dir: Path, out: Path, size: int = SIZE) -> Side:
                 # Not written: a frame whose boxes could not be translated would train as a
                 # background frame, which is a worse outcome than a loud refusal.
                 continue
+            rows, nested = drop_nested_rows(rows)
+            side.nested += nested
             write_frame(image, rows, out, split, image.name, size)
             side.placed[image.name] = split
             if rows:
@@ -490,6 +541,8 @@ def build_v1(v1_dir: Path, out: Path, size: int = SIZE) -> Side:
             f"[polygons] {side.polygons} polygon row(s) reduced to their bounding boxes - the "
             "same conversion ultralytics applies at load time (segments2boxes)"
         )
+    if side.nested:
+        side.notes.append(nested_note(side))
     return side
 
 
@@ -716,6 +769,8 @@ def build_v2(
             side.problems.append(f"{split}/{frame.name}: {detail}")
         if row_problems:
             continue
+        rows, nested = drop_nested_rows(rows)
+        side.nested += nested
         write_frame(frame.image, rows, out, split, frame.name, size)
         if frame.slug:
             # `frame.slug` is the manifest's `class` - the class the frame was staged as, which is
@@ -735,6 +790,8 @@ def build_v2(
         if frame.machine_only:
             side.machine_only[split] += 1
 
+    if side.nested:
+        side.notes.append(nested_note(side))
     if unassigned:
         message = (
             f"{len(unassigned)} decided frame(s) have no split in {v2_dir / SPLITS_NAME}: "
@@ -1172,6 +1229,7 @@ def summarise(
                 "background": dict(side.background),
                 "machine_only": dict(side.machine_only),
                 "polygons_reduced": side.polygons,
+                "nested_dropped": side.nested,
                 "notes": side.notes,
                 "problems": side.problems,
                 # v2's own frames' distance mix per split (`tags` carries the class, this carries
@@ -1515,6 +1573,11 @@ def main(argv: list[str] | None = None) -> int:
                 side_lines.append(
                     f"  - {side.polygons} polygon row(s) reduced to their bounding boxes, the same "
                     "conversion ultralytics applies at load time"
+                )
+            if side.nested:
+                side_lines.append(
+                    f"  - {side.nested} box(es) inside a larger box of the same product dropped "
+                    "(one box per item)"
                 )
             if side.machine_only:
                 side_lines.append(

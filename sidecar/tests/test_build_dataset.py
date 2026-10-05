@@ -1499,3 +1499,64 @@ def test_capture_splits_rides_along_with_a_roboflow_run(tmp_path, monkeypatch):
     assert json.loads((out / "splits.json").read_text(encoding="utf-8")) == {"milo_0001.jpg": "test"}
 
 
+
+
+def test_a_box_inside_a_larger_box_of_the_same_product_is_dropped():
+    """The v1-era partial box - a logo or picture panel boxed again inside the whole item - goes, and
+    the box around the whole item stays."""
+    whole = "3 0.500000 0.500000 0.600000 0.800000"
+    logo = "3 0.450000 0.400000 0.200000 0.150000"
+    rows, dropped = build_dataset.drop_nested_rows([logo, whole])
+    assert rows == [whole] and dropped == 1
+
+
+def test_nested_boxes_of_different_products_are_two_items():
+    """A small item in front of a large one is two items, so the rule never crosses products."""
+    large = "0 0.500000 0.500000 0.600000 0.800000"
+    small = "4 0.450000 0.400000 0.200000 0.150000"
+    assert build_dataset.drop_nested_rows([large, small]) == ([large, small], 0)
+
+
+def test_side_by_side_and_overlapping_boxes_of_one_product_are_kept():
+    """Two cans of the same product next to each other, or partly overlapping, are two items."""
+    left = "1 0.250000 0.500000 0.300000 0.400000"
+    right = "1 0.750000 0.500000 0.300000 0.400000"
+    overlapping = "1 0.400000 0.500000 0.300000 0.400000"
+    assert build_dataset.drop_nested_rows([left, right, overlapping]) == (
+        [left, right, overlapping],
+        0,
+    )
+
+
+def test_a_box_sticking_out_within_the_tolerance_still_counts_as_inside():
+    whole = "2 0.500000 0.500000 0.400000 0.400000"  # 0.30 .. 0.70
+    edge = "2 0.405000 0.500000 0.230000 0.200000"  # left edge 0.29, 1% outside
+    past = "2 0.390000 0.500000 0.240000 0.200000"  # left edge 0.27, 3% outside
+    assert build_dataset.drop_nested_rows([whole, edge]) == ([whole], 1)
+    assert build_dataset.drop_nested_rows([whole, past]) == ([whole, past], 0)
+
+
+def test_of_two_identical_boxes_one_survives():
+    row = "5 0.500000 0.500000 0.300000 0.300000"
+    assert build_dataset.drop_nested_rows([row, row]) == ([row], 1)
+
+
+def test_the_merge_writes_one_box_per_item_and_reports_the_count(tmp_path):
+    """Through `build_v1`, so the rule is on the path the set is actually written by."""
+    import yaml
+
+    v1 = _export_with_names(
+        tmp_path / "export-v1", {"train": ["a.jpg"], "valid": ["b.jpg"], "test": ["c.jpg"]}
+    )
+    names = yaml.safe_load((v1 / "data.yaml").read_text(encoding="utf-8"))["names"]
+    (v1 / "train" / "labels" / "a.txt").write_text(
+        "0 0.5 0.5 0.6 0.8\n0 0.45 0.4 0.2 0.15\n", encoding="utf-8"
+    )
+    staging = tmp_path / "staging"
+    side = build_dataset.build_v1(v1, staging)
+
+    assert side.problems == [] and side.nested == 1
+    assert any(note.startswith("[nested] 1 box(es)") for note in side.notes)
+    written = (staging / "train" / "labels" / "a.txt").read_text(encoding="utf-8").splitlines()
+    assert len(written) == 1
+    assert build_dataset.CANONICAL_NAMES[int(written[0].split()[0])] == names[0]
