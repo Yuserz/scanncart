@@ -40,8 +40,11 @@ the shop goes live, the ordered run is [POS_SMOKE_TEST.md](./POS_SMOKE_TEST.md).
    { "POS_INGEST_SECRET": "<32+ hex>", "POS_IDLE_CANCEL_MINUTES": 5, "POS_STAFF_PIN": "<digits>" }
    ```
 
-   `POS_STAFF_PIN` turns on the one manual correction left: staff lowering a quantity on the
-   tablet (*Staff* → PIN → *Remove 1*). Empty means off. Customers cannot add, change or remove
+   The **staff code** turns on the one manual correction left: staff lowering a quantity on the
+   tablet (*Staff* → code → *Remove 1*). An admin sets and changes it on the POS Mapping screen
+   (step 3, *Staff code* card) with no restart; it is stored as a bcrypt hash and never shown back.
+   `POS_STAFF_PIN` is only the default used until an admin sets one; with neither, staff removal
+   is off. Customers cannot add, change or remove
    items at all — the tablet has no buttons for it, the routes answer `403`, and the database's own
    policies refuse a direct write to a cart in an open session (migration
    `20261003120000_pos_basket_automation.sql`).
@@ -59,7 +62,10 @@ the shop goes live, the ordered run is [POS_SMOKE_TEST.md](./POS_SMOKE_TEST.md).
 
    The same screen lists the recent unmapped classes (with one-click mapping), the open sessions
    (with a *Cancel* for a stuck one) and the customer-edit log — the record of items a customer
-   removed, which is the only shrinkage trail this design has.
+   removed, which is the only shrinkage trail this design has. Its **Staff code** card sets or
+   changes the tablet's staff code (4–8 digits, typed twice), says which code is in force (*Set
+   here*, *Server default* or *Off*) and when it changed, and *Remove this code* returns to
+   `POS_STAFF_PIN`. A forgotten code is replaced, not recovered.
 
 ## 3. Set up SCANnCART
 
@@ -129,7 +135,7 @@ running rather than the default.
    the session). In **basket mode** (§4a) a confirmed removal lowers the cart instead; in counter
    mode staff's PIN removal is the way out.
 6. **The camera got it wrong.** Customers cannot edit the cart. Staff unlock *Staff* on the tablet
-   with `POS_STAFF_PIN` and tap *Remove 1* on the line; it can only lower a quantity, it is logged as
+   with the staff code (set in POS Mapping, or `POS_STAFF_PIN` until one is) and tap *Remove 1* on the line; it can only lower a quantity, it is logged as
    `pos_sync_log.kind = staff_edit`, and the camera stops managing that product for the rest of the
    session (an override, so the next snapshot cannot put it back). Five wrong PINs lock it for a
    minute.

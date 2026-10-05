@@ -66,7 +66,8 @@ These are the paths that decide whether a wrong count is *fixable* at the counte
 | --- | --- |
 | Look for a way to edit the cart as the customer | There is none: the tablet shows quantities only, and no *−*, *+* or *×* |
 | *Staff* → wrong PIN → *Remove 1* | *Wrong staff PIN*; nothing changes |
-| *Staff* → `POS_STAFF_PIN` → *Remove 1* on a camera-detected item, then leave the item on the counter | The quantity drops by one and stays there. Later snapshots report it `overridden` and never re-add it |
+| *Staff* → the staff code → *Remove 1* on a camera-detected item, then leave the item on the counter | The quantity drops by one and stays there. Later snapshots report it `overridden` and never re-add it |
+| Admin → POS Mapping → *Staff code* → set a new code; on the tablet try the old code, then the new one | The old code is refused as *Wrong staff PIN*; the new one works at once, with no restart. The card reads *Set here* and never shows the code |
 | (basket mode) Make two items cross the opening together | The tablet shows *Staff check needed* and Finish is disabled; **Basket checked** on the desktop clears it within a sync |
 | Place an item whose class is not mapped to a product | The tablet shows *N items not recognized — please ask staff*; nothing enters the cart. Staff add it by hand as a manual row, and later snapshots leave that row alone |
 | Check the shrinkage trail | `pos_sync_log` rows with `kind = staff_edit` are the staff removals from this run — the only record that a camera-detected item was taken off by hand |

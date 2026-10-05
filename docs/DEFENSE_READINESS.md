@@ -29,9 +29,11 @@ have no field accuracy number.
 | F7 | SQLite track log | **Met** | `logging_store.py` + tests; `scanncart.db` |
 | F8 | Camera disconnect / sidecar stop explained | **Met** | 3 s camera-failure deadline → error banner; main-process health monitor → *sidecar unresponsive* notice |
 | F9 | Start/stop, live tuning | **Met** | Live view; hot-reloadable settings incl. confidence, filters, camera controls, auto exposure |
+| — | Staff correction (decrease-only) with a changeable staff code | **Met** | pushcart-web *Staff* → code → *Remove 1*; an admin sets/changes the code on POS Mapping (bcrypt hash in `pos_settings`, admin-only database functions; `POS_STAFF_PIN` is the fallback). Database checks 2026-10-05: non-admin refused, bad format refused, only the right code matches. The admin card's click-through is still to be done by hand |
+| — | Admin screens closed to customers | **Met** | `scripts/pos-admin-routes-e2e.mjs` (pushcart-web): an anonymous tablet session and a non-admin user are refused (403) on all 11 POS admin calls, an admin is allowed — 29/29 on 2026-10-05 |
 | N1 | Camera-to-screen < 150 ms | **Met (estimate)** | ≤ 17 ms frame wait + 19 ms analysis + 17 ms delivery to a WebSocket client + ~17 ms paint ≈ 70 ms. Component sum, not a photon-to-photon measurement |
 | N2 | Transfer → tablet ≤ 5 s (p95) | **Implemented, unmeasured** | Design: confirmation ~0.5 s after landing, posted immediately (~0.25 s round trip locally). Gate C would measure it |
-| N3 | ≥ 2 h continuous | **In progress** | 2-hour soak started 2026-10-05 (CSV every 30 s: fps, latency, memory, connections) — result to be filled in below |
+| N3 | ≥ 2 h continuous | **Partly measured** | 34 min unbroken before the session ended: scanner up throughout, memory flat, connections 4–11. Capture fell from 60 to ~30 fps at minute 18 — traced to NVIDIA Broadcast relaunching and taking the camera (see Soak result). A clean 2-hour run with Broadcast closed is still owed |
 | N4 | Detection with no internet | **Met** | Native backend, local weights; only the pushcart-web hop uses the LAN |
 | N5 | Modular, tested without hardware | **Met** | 560 desktop (Vitest) + 1,717 sidecar (pytest) tests on fakes; CI; POS contract check against pushcart-web's source |
 
@@ -51,7 +53,7 @@ The weakness is items far from the camera and two SKUs (Sardines, Milo).
 
 | Risk | Seen | Mitigation |
 | --- | --- | --- |
-| Capture dropped to ~30 fps once and stayed there across a capture restart; a fresh app restart restored 60 | 2026-10-05, not reproduced since | Check the Capture fps tile before the demo; restart the app if it reads ~30 |
+| Capture drops from 60 to ~30 fps when NVIDIA Broadcast relaunches and attaches to the StreamCam (it restarts itself from the tray/autostart) | 2026-10-05, twice; reproduced with the app closed — a fresh process got 27–30 fps and the shutter control stopped changing the picture | Disable NVIDIA Broadcast's autostart; before the demo confirm it is not running and the Capture fps tile reads ≈ 60 |
 | The scanner refused requests (“Exceeded concurrency limit”, > 64 open connections) once, then the app closed | 2026-10-05, during repeated dev-mode reloads of the Basket test screen; idle connection count is 4–8 | The soak watches the connection count; avoid hot-reloading during the demo (run a normal build) |
 | Products on the desk inside the *inside* zone trigger review | 2026-10-05 | Clear the inside zone before Start; press **Basket checked** if it fires |
 | The self-checkout config defaults to **Counter** mode | by design | Set **Basket** in Admin → Self-checkout before the demo (done on this machine) |
@@ -68,7 +70,7 @@ The weakness is items far from the camera and two SKUs (Sardines, Milo).
 
 ## Demo-day checklist
 
-1. Close NVIDIA Broadcast, Discord and anything else that can hold the camera.
+1. Close NVIDIA Broadcast (and turn off its autostart), Discord and anything else that can hold the camera.
 2. Start Docker Desktop → `npx supabase start` and `npm run dev` in pushcart-web.
 3. Start SCANnCART; on **Live**, confirm Capture fps ≈ 60 and the model is `scanncart-grocery-v1`.
 4. Admin → Self-checkout: station `cart-1`, mode **Basket**, *Test connection* answers 200.
@@ -80,4 +82,17 @@ The weakness is items far from the camera and two SKUs (Sardines, Milo).
 
 ## Soak result (N3)
 
-_In progress — filled in when the 2-hour run completes._
+Run 2026-10-05, one sample every 30 s from a separate client (health, a 30-frame WebSocket
+sample, the scanner's memory and its open connections); stopped at 34 min when the session ended.
+
+| Window | Capture fps | Analysed fps | Analysis ms | Delivery ms | Scanner memory | Connections |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0–18 min | 60–62 | 44–52 | 16.6–20.0 | 15.6–19.7 | 1,488–1,499 MB | 4–11 |
+| 18–34 min | 27–30 | 29–32 | 16.3–20.0 | 8.2–18.2 | 1,450–1,497 MB | 6–11 |
+
+The scanner never stopped answering, memory did not grow, and connections did not pile up. The
+drop at minute 18 was not the scanner: with the app closed, a bare OpenCV capture of the same
+camera also got 27–30 fps, the exposure control no longer changed the picture (it had, earlier
+the same day), and NVIDIA Broadcast was found running again. A capture-only test writing
+brightness five times a second ruled out the app's auto exposure (30 fps with and without the
+writes, in that state). **Owed:** a full 2-hour run with Broadcast closed and its autostart off.
