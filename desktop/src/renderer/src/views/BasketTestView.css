@@ -114,6 +114,39 @@
   vector-effect: non-scaling-stroke;
 }
 
+/* Each detection's label, pinned to its box's top-left corner and sitting just above it — or just
+   inside it when the box touches the top of the picture, where above would be cut off. */
+.bt-labels {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.bt-label {
+  position: absolute;
+  transform: translateY(-100%);
+  max-width: 60%;
+  padding: 1px 6px;
+  border-radius: 4px 4px 4px 0;
+  background: var(--text);
+  color: var(--bg);
+  font: 600 11px/16px var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bt-label.inside-box {
+  transform: none;
+  border-radius: 0 0 4px 0;
+}
+
+.bt-label-id {
+  opacity: 0.7;
+  font-weight: 400;
+}
+
 /* The drawn points: a layer the size of the picture that lets clicks through to it, with each
    point a numbered dot that can be grabbed. Positioned in percent of the picture, so they stay on
    their spot whatever size the preview is drawn at. */

@@ -374,6 +374,26 @@ export function BasketTestView({
               ))}
             </svg>
           )}
+          {/* What each box is, beside it: the product, the confidence and the track it is followed
+              under. HTML rather than SVG text, because the overlay is stretched to the picture
+              (`preserveAspectRatio="none"`) and text drawn in it would be stretched with it. It
+              lets clicks through, so drawing over a box still places a point. */}
+          {stream.frame && stream.frame.detections.length > 0 && (
+            <div className="bt-labels" data-testid="bt-labels">
+              {stream.frame.detections.map((d, i) => (
+                <span
+                  key={`${d.track_id ?? 'x'}-${i}`}
+                  className={`bt-label${d.box[1] < 0.06 ? ' inside-box' : ''}`}
+                  data-testid="bt-label"
+                  style={{ left: `${d.box[0] * 100}%`, top: `${d.box[1] * 100}%` }}
+                  title={d.cls}
+                >
+                  {d.cls} {Math.round(d.conf * 100)}%
+                  {d.track_id !== null && <span className="bt-label-id"> #{d.track_id}</span>}
+                </span>
+              ))}
+            </div>
+          )}
           {/* Every drawn point as a marker, numbered in the order it was placed, from the first
               click - a single point draws no outline, so without these a click looked like it did
               nothing. Draggable whenever the drawn layout is chosen, so a misplaced point is

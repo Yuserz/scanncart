@@ -10,7 +10,7 @@ import { DEFAULT_ZONE_PRESET } from '../../../main/transferGeometry'
 
 function harness(mirrored = false): {
   streamDeps: StreamDeps
-  frame: () => void
+  frame: (detections?: FrameMessage['detections']) => void
   status: (state: string, detail: string) => void
 } {
   let captured: StreamClientOptions | null = null
@@ -25,13 +25,13 @@ function harness(mirrored = false): {
         return { connect: vi.fn(), close: vi.fn() }
       }
     },
-    frame: () => {
+    frame: (detections: FrameMessage['detections'] = []) => {
       const msg: FrameMessage = {
         type: 'frame',
         ts: 1,
         seq: 1,
         jpeg: 'AAAA',
-        detections: [],
+        detections,
         stats: { infer_fps: 10, capture_fps: 30, latency_ms: 20, suppressed: 0 },
         fresh: true,
         mirrored
@@ -92,6 +92,36 @@ describe('BasketTestView', () => {
       '0.0000,0.6500 1.0000,0.6500 1.0000,1.0000 0.0000,1.0000'
     )
     expect(screen.getByTestId('zone-opening')).toBeInTheDocument()
+  })
+
+  it('labels each detected box with its product, confidence and track', async () => {
+    const h = harness()
+    const state = basketState()
+    render(
+      <BasketTestView
+        port={8765}
+        streamDeps={h.streamDeps}
+        basketDeps={{ read: async () => state, subscribe: () => () => {} }}
+        bridge={bridgeWith(state)}
+      />
+    )
+    h.frame([
+      { track_id: 7, cls: 'safeguard_pure_white_60g', conf: 0.913, box: [0.2, 0.3, 0.4, 0.5] },
+      {
+        track_id: null,
+        cls: 'Milo Chocolate Drink 22g Sachet',
+        conf: 0.6,
+        box: [0.5, 0.0, 0.7, 0.2]
+      }
+    ] as FrameMessage['detections'])
+    const labels = await screen.findAllByTestId('bt-label')
+    expect(labels.map((l) => l.textContent)).toEqual([
+      'safeguard_pure_white_60g 91% #7',
+      'Milo Chocolate Drink 22g Sachet 60%'
+    ])
+    expect(labels[0]).toHaveStyle({ left: '20%', top: '30%' })
+    // A box touching the top of the picture keeps its label inside rather than cut off.
+    expect(labels[1]).toHaveClass('inside-box')
   })
 
   it('stores a click on a mirrored preview un-mirrored, and saves drawn outlines', async () => {
