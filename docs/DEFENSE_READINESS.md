@@ -77,7 +77,7 @@ blank grey surface. The app's frame-edge filter (on by default) removed every on
 log stayed empty — so the app behaves correctly, but it depends on that filter. Training with
 empty-basket photos from the cart's view is the fix.
 
-v1 and the first v2 (`scanncart-grocery-v2-prev`) stay installed, one click away in Admin → Model.
+v1 stays installed, one click away in Admin → Model. The first v2 is kept out of the picker, with its record, in `sidecar/data/datasets/runs/scanncart-grocery-v2/installed-record/` — copy both files back into `sidecar/models/` to offer it again.
 
 ## Open risks for the defense day
 
