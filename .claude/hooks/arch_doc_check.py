@@ -4,9 +4,9 @@ Reads the hook payload on stdin. If the edited file belongs to a layer the
 architecture docs describe, emits additionalContext naming the specific
 sections to re-check. Silent for everything else.
 
-Docs kept in sync:  docs/ARCHITECTURE.md
-                    docs/architecture.drawio          (Layout C — swimlanes)
-                    docs/architecture-layout-a.drawio (Layout A — pipeline)
+Docs kept in sync:  docs/ARCHITECTURE.md (its Mermaid and ASCII diagrams are the drawn ones;
+                    the old .drawio exports were retired on 2026-10-05 as they predated the
+                    self-checkout and basket ledger)
 """
 
 import json
@@ -34,7 +34,13 @@ RULES: list[tuple[str, str]] = [
     ("sidecar/app/hardware.py",
      "S7 configuration — hardware probing feeds preset recommendation"),
     ("sidecar/run.py",
-     "S2 containers + startup handshake strip (port discovery is drawn in both .drawio files)"),
+     "S2 containers + startup handshake strip (port discovery)"),
+    ("desktop/src/main/pos",
+     "S10 self-checkout — orchestrator, sync protocol, cart modes"),
+    ("desktop/src/main/transfer",
+     "S10 self-checkout — the deposit/removal rules table"),
+    ("desktop/src/main/basketLedger.ts",
+     "S10 self-checkout — the basket ledger"),
     ("desktop/src/main/sidecar.ts",
      "S2 containers + S7 lifecycle — spawn/port handshake"),
     ("desktop/src/main/index.ts",
@@ -56,11 +62,7 @@ RULES: list[tuple[str, str]] = [
      "S8 design decisions / CLAUDE.md commands"),
 ]
 
-DOCS = (
-    "docs/ARCHITECTURE.md",
-    "docs/architecture.drawio",
-    "docs/architecture-layout-a.drawio",
-)
+DOCS = ("docs/ARCHITECTURE.md",)
 
 
 def relevant(rel: str) -> str | None:
@@ -100,8 +102,8 @@ def main() -> int:
         f"describe. Re-read the relevant part of docs/ARCHITECTURE.md and update it if "
         f"this change altered the described behavior.\n"
         f"Likely affected: {affects}\n"
-        f"If the change is drawn in the diagrams (a box, an arrow, or a label), also update "
-        f"docs/architecture.drawio and docs/architecture-layout-a.drawio. "
+        f"If the change is drawn in its diagrams (a box, an arrow, or a label), update the "
+        f"Mermaid/ASCII diagram in the same section. "
         f"If nothing architectural changed, do nothing and do not mention this."
     )
 

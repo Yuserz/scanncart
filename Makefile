@@ -9,9 +9,12 @@
 ## from within WSL or a Git Bash shell that has `make` on PATH.
 ##
 ## `test` is CI's target and stays fake-only, so it needs no data. `verify-clamp`,
-## `verify-unsure`, `annotate`, `human-pass`, `doctor` and `accept-v2` are the ones that
-## do - see the notes above them. `verify-live-layout` needs no data either but does need
-## a display, which is the other thing CI runs it in its own job for.
+## `verify-unsure`, `annotate`, `human-pass`, `doctor`, `accept-v2`, `replay-scenarios`
+## and `verify-pos-routes` are the ones that do - see the notes above them.
+## `verify-live-layout` needs no data either but does need a display, which is the other
+## thing CI runs it in its own job for. `verify-pos-contract` needs the sibling
+## pushcart-web checkout rather than data, and `.github/workflows/pos-contract.yml`
+## checks that repo out beside this one to run it.
 ##
 
 SIDECAR_DIR := sidecar
@@ -26,7 +29,8 @@ endif
 .DEFAULT_GOAL := help
 
 .PHONY: help install dev test docs-check docs-sync docs-sync-check build lint format typecheck clean \
-        verify-clamp verify-unsure verify-live-layout doctor annotate human-pass accept-v2 \
+        verify-clamp verify-unsure verify-live-layout verify-pos-routes verify-pos-contract \
+        doctor annotate human-pass accept-v2 replay-scenarios \
         sidecar-setup sidecar-run sidecar-test \
         desktop-install desktop-dev desktop-start desktop-test desktop-test-watch \
         desktop-build desktop-build-win desktop-build-mac desktop-build-linux \
@@ -49,6 +53,9 @@ help:
 	@echo "                       HUMAN_PASS_ARGS=--check verifies it, =--status exits nonzero while the gate is dirty"
 	@echo "  doctor               check the merged set before training it (local data, not CI)"
 	@echo "  accept-v2            measure v2 against v1 on the merged set's test split (local data, not CI)"
+	@echo "  replay-scenarios     replay the recorded counter corpus into the desktop fixtures (local data, not CI)"
+	@echo "  verify-pos-routes    check the POS stand-in against a real pushcart-web (needs a running server, not CI)"
+	@echo "  verify-pos-contract  fail if pushcart-web's POS routes moved out from under the recorded contract, or the two repos' copies disagree (needs the sibling checkout; CI checks it out)"
 	@echo "  build                typecheck + build the desktop app"
 	@echo "  lint                 lint the desktop app"
 	@echo "  format               format the desktop app"
@@ -251,6 +258,77 @@ accept-v2:
 	cd $(SIDECAR_DIR) && $(SIDECAR_VENV_PY) tools/accept_v2.py \
 		--baseline $(ACCEPT_BASELINE) --candidate $(ACCEPT_CANDIDATE) \
 		--split $(ACCEPT_SPLIT) --iou-sweep
+
+# The counting-accuracy corpus (spec §7.1): replay each recorded scenario through the app's own
+# `Pipeline` and write its track log to `desktop/src/main/__fixtures__/scenarios/<name>.json`.
+# `npm test` then scores those fixtures with `cartState.ts` - no camera, no GPU - which is what makes
+# tuning `commitDwellS`/`removeSettleS`/`minCommitConf` a test run rather than a trip to the counter.
+#
+# Same data needs as `verify-clamp`, and the same contract: the videos and their scripts are recorded
+# with the counter camera into the gitignored workspace (`sidecar/data/scenarios/`), and an installed
+# weight is required, so it is not in `test` and not in CI - and it fails loudly rather than skipping
+# when the corpus is absent, because a corpus that quietly shrank is a counting-accuracy gate that
+# stopped measuring anything. The fixtures it writes are committed; the corpus is not, and both
+# formats are documented in `desktop/src/main/__fixtures__/scenarios/README.md`.
+# `REPLAY_ARGS=--only 04_place_three_take_one` replays one scenario while iterating on it.
+REPLAY_ARGS ?=
+
+replay-scenarios:
+	cd $(SIDECAR_DIR) && $(SIDECAR_VENV_PY) tools/replay_scenarios.py $(REPLAY_ARGS)
+
+# The POS route fidelity check (spec §7; docs/POS_SMOKE_TEST.md §3): run the protocol half of
+# `desktop/src/main/posRoutes.integration.test.ts` against a *real* pushcart-web rather than the
+# in-repo stand-in. The stand-in exists so the desktop's status-code mapping is exercised in
+# `make test` with no server; this target is the other half, and the only thing that can catch the
+# stand-in drifting from the routes it mirrors - a header, a path, a status code, a validation rule.
+# It needs a running server with a station registered on its admin POS screen, so it is out of CI -
+# and it fails loudly (exit 2, naming the three variables) rather than reporting a green skip.
+POS_E2E_BASE_URL ?=
+POS_E2E_SECRET ?=
+POS_E2E_STATION_ID ?=
+
+verify-pos-routes:
+	@if [ -z "$(POS_E2E_BASE_URL)" ] || [ -z "$(POS_E2E_SECRET)" ] || [ -z "$(POS_E2E_STATION_ID)" ]; then \
+		echo "verify-pos-routes needs a running pushcart-web, and it is not configured."; \
+		echo "Set POS_E2E_BASE_URL (e.g. http://192.168.1.20:3000), POS_E2E_SECRET (the same"; \
+		echo "POS_INGEST_SECRET the desktop holds) and POS_E2E_STATION_ID (a station registered on"; \
+		echo "pushcart-web's admin POS screen), then run this target again."; \
+		exit 2; \
+	fi
+	cd $(DESKTOP_DIR) && \
+		POS_E2E_BASE_URL=$(POS_E2E_BASE_URL) POS_E2E_SECRET=$(POS_E2E_SECRET) \
+		POS_E2E_STATION_ID=$(POS_E2E_STATION_ID) npx vitest run src/main/posRoutes.integration.test.ts
+
+# Does this repo still speak pushcart-web's POS routes? The desktop's half of the integration is a
+# contract with a codebase in another checkout - two route paths, a header name, and the status codes
+# they answer in - and nothing here can notice it moving: the stand-in was written from those files
+# and the integration suite tests it against a client written beside it, so a header that moved in
+# both would pass every test this repo owns. Two halves, because neither can do the other's half:
+# `scripts/check-pos-contract.mjs` reads the contract out of the sibling checkout and fails when the
+# recorded copy (`src/main/posContract.json`) has gone stale, and `src/main/posContract.test.ts`
+# checks the modules against that copy and runs in `make test` on a bare checkout. This target needs
+# `../pushcart-web` and exits 2 when it is absent rather than skipping, which is why it is not in
+# `test`.
+#
+# There are two copies of the contract, though, one per repo: pushcart-web derives and records the same
+# surface from its own routes, and each copy is checked against its own source. A change re-recorded
+# on one side only therefore satisfies both of those guards while the two repos describe different
+# routes - the failure neither repo can see on its own, since it changes neither source. So this also
+# compares the two records key by key (`auth_header`, `outcomes`, `routes`, `statuses`), and the
+# comparison has to happen where both trees are in hand rather than in a file both repos trust: the
+# two derivations are deliberately independent, and each record carries a note naming the script that
+# wrote it, which differs by design. `.github/workflows/pos-contract.yml` is that place - it supplies the checkout
+# in its own job and runs this target there on any PR, on a push to `main` and nightly, because the
+# drift starts in the *other* repo, so a schedule in `ci.yml` would have made every job in it run
+# nightly for a reason only this one has. That job also proves the branch it watches still exists
+# before checking it out, so a renamed branch fails there naming the ref rather than quietly checking a
+# contract against the default branch.
+# A deliberate pushcart-web change is one write away: POS_CONTRACT_ARGS=--write.
+POS_CONTRACT_ARGS ?=
+
+verify-pos-contract:
+	cd $(DESKTOP_DIR) && node scripts/check-pos-contract.mjs $(POS_CONTRACT_ARGS)
+	cd $(DESKTOP_DIR) && npx vitest run src/main/posContract.test.ts
 
 build: desktop-build
 

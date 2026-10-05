@@ -459,3 +459,161 @@ def test_a_rejected_control_write_does_not_kill_the_capture_thread():
         assert src._thread.is_alive()
     finally:
         src.release()
+
+
+def test_open_asks_for_mjpg_before_the_resolution():
+    """The StreamCam reaches 60 fps at 720p/1080p only in MJPG; left to choose, MSMF negotiated the
+    uncompressed format and the camera delivered 29 fps at a 60 fps setting whatever the exposure.
+    The format has to be asked for before the size, because MSMF picks a media type when the size is
+    set. A camera without MJPG ignores the request and keeps its own format."""
+    cap = _RecordingCap()
+    src = CameraCapture(0, 1280, 720, 60, cap_factory=lambda i: cap)
+    src.open()
+    try:
+        props = [p for p, _, _ in cap.sets]
+        assert _wrote(cap, cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        assert props.index(cv2.CAP_PROP_FOURCC) < props.index(cv2.CAP_PROP_FRAME_WIDTH)
+    finally:
+        src.release()
+
+
+# ---- auto exposure -------------------------------------------------------------------------
+
+from app.camera import AutoExposure, exposure_cap_for, mean_luminance  # noqa: E402
+
+
+def test_the_exposure_cap_is_the_longest_shutter_the_framerate_allows():
+    assert exposure_cap_for(60) == -6
+    assert exposure_cap_for(30) == -5
+    assert exposure_cap_for(0) == 0
+
+
+def _settle(ae: AutoExposure, scene, steps: int = 200) -> float:
+    """Run the loop against a simulated camera: luminance = scene(brightness, exposure)."""
+    # The clock carries on across calls, as the capture thread's does.
+    t = _CLOCK.get(id(ae), 0.0)
+    lum = scene(ae.brightness, ae.exposure)
+    for _ in range(steps):
+        t += 0.05
+        ae.update(lum, t)
+        lum = scene(ae.brightness, ae.exposure)
+    _CLOCK[id(ae)] = t
+    return lum
+
+
+_CLOCK: dict[int, float] = {}
+
+
+def _room(light: float):
+    # Roughly the StreamCam at -6: ~0.8 luminance per brightness unit, doubling per stop.
+    return lambda b, e: min(255.0, max(0.0, (b * 0.8 - 50) * light * 2 ** (e + 6)))
+
+
+def _sunlit(light: float):
+    # Brightness as a pure gain, so a strong light overexposes even at the brightness floor.
+    return lambda b, e: min(255.0, b * 0.6 * light * 2 ** (e + 6))
+
+
+def test_a_dim_room_is_brought_to_the_target_by_brightness_alone_at_60_fps():
+    ae = AutoExposure(60, brightness=None, exposure=None)
+    lum = _settle(ae, _room(0.8))
+    assert abs(lum - AutoExposure.TARGET) <= AutoExposure.DEADBAND + 4
+    assert ae.exposure == -6  # the shutter never went past the 60 fps cap
+
+
+def test_a_very_dark_room_never_lengthens_the_shutter_past_the_cap():
+    ae = AutoExposure(60, brightness=128, exposure=-6)
+    _settle(ae, _room(0.1))
+    assert ae.exposure == -6
+    assert ae.brightness == AutoExposure.BRIGHTNESS_MAX
+
+
+def test_a_bright_scene_shortens_the_shutter_instead_of_crushing_brightness():
+    ae = AutoExposure(60, brightness=200, exposure=-6)
+    # Sunlit: even at the lowest useful brightness the picture would be blown out.
+    lum = _settle(ae, _sunlit(6.0), steps=400)
+    assert ae.exposure < -6
+    assert ae.brightness >= AutoExposure.BRIGHTNESS_MIN
+    assert abs(lum - AutoExposure.TARGET) <= AutoExposure.DEADBAND + 10
+
+
+def test_it_comes_back_up_to_the_cap_when_the_light_drops_again():
+    ae = AutoExposure(60, brightness=200, exposure=-6)
+    _settle(ae, _sunlit(6.0), steps=400)
+    _settle(ae, _sunlit(0.8), steps=400)
+    assert ae.exposure == -6
+
+
+def test_inside_the_deadband_nothing_is_written():
+    ae = AutoExposure(60, brightness=128, exposure=-6)
+    assert ae.update(AutoExposure.TARGET + 5, 1.0) == {}
+
+
+def test_a_manual_exposure_longer_than_the_cap_is_clamped_at_start():
+    ae = AutoExposure(60, brightness=128, exposure=-2)
+    assert ae.start_writes()["exposure"] == -6
+
+
+def test_mean_luminance_reads_a_bgr_frame():
+    assert mean_luminance(np.full((16, 16, 3), 100, dtype=np.uint8)) == pytest.approx(100, abs=0.5)
+
+
+class _SceneCap(_RecordingCap):
+    """A camera whose picture brightness follows the brightness control, like the StreamCam."""
+
+    def __init__(self):
+        super().__init__()
+        self.brightness = 128.0
+
+    def set(self, prop, value):
+        if prop == cv2.CAP_PROP_BRIGHTNESS:
+            self.brightness = float(value)
+        return super().set(prop, value)
+
+    def read(self):
+        time.sleep(0.002)
+        level = int(max(0, min(255, self.brightness * 0.8 - 50)))
+        return True, np.full((16, 16, 3), level, dtype=np.uint8)
+
+
+def test_capture_with_auto_exposure_drives_the_picture_to_the_target():
+    cap = _SceneCap()
+    src = CameraCapture(0, 16, 16, 60, cap_factory=lambda i: cap, auto_exposure=True)
+    src.open()
+    try:
+        assert _wait_for(lambda: abs(cap.brightness * 0.8 - 50 - AutoExposure.TARGET) <= 15, 5.0)
+        assert _wrote(cap, cv2.CAP_PROP_EXPOSURE, -6.0)
+        assert all(t != threading.current_thread().name for p, _, t in cap.sets
+                   if p == cv2.CAP_PROP_BRIGHTNESS and _ != 128.0)
+    finally:
+        src.release()
+
+
+def test_switching_auto_exposure_off_restores_the_manual_values():
+    cap = _SceneCap()
+    src = CameraCapture(0, 16, 16, 60, cap_factory=lambda i: cap,
+                        brightness=90, exposure=-7, auto_exposure=True)
+    src.open()
+    try:
+        assert _wait_for(lambda: cap.brightness > 150, 5.0)
+        src.set_controls(auto_exposure=False)
+        assert _wait_for(lambda: cap.brightness == 90.0)
+        assert _wrote(cap, cv2.CAP_PROP_EXPOSURE, -7)
+        settled = len(cap.sets)
+        time.sleep(0.5)
+        assert len(cap.sets) == settled  # the loop stopped writing
+    finally:
+        src.release()
+
+
+def test_a_manual_drag_while_auto_is_on_is_not_written():
+    cap = _SceneCap()
+    src = CameraCapture(0, 16, 16, 60, cap_factory=lambda i: cap, auto_exposure=True)
+    src.open()
+    try:
+        assert _wait_for(lambda: cap.brightness > 150, 5.0)
+        src.set_controls(brightness=10)
+        time.sleep(0.3)
+        assert not _wrote(cap, cv2.CAP_PROP_BRIGHTNESS, 10)
+    finally:
+        src.release()

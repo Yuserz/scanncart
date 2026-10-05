@@ -29,13 +29,15 @@ class _StubDetector:
 
 
 class _StubSource:
-    """Always returns the same latest frame."""
+    """Always returns the same image, as a new frame on every call."""
     width = 128
     height = 96
     fps = 30.0
+    _seq = 0
 
     def latest(self):
-        return (5, _frame())
+        self._seq += 1  # a new frame per call, as a live camera delivers; the pipeline analyses each frame once
+        return (self._seq, _frame())
 
     def read(self):
         return _frame()
@@ -108,7 +110,7 @@ def test_process_once_builds_frame_message():
     out = pipe.process_once()
     assert out is not None
     assert out["type"] == "frame"
-    assert out["seq"] == 5
+    assert out["seq"] == 1  # the camera's own frame number, passed through
     assert out["detections"][0]["cls"] == "banana"
     assert out["jpeg"]
     assert "infer_fps" in out["stats"]
@@ -216,6 +218,32 @@ def test_emit_preview_reuses_the_most_recent_detections():
     assert [d["track_id"] for d in msg["detections"]] == [1]
 
 
+def test_only_an_inference_frame_is_fresh_evidence():
+    """A gap frame repeats the last boxes, so a consumer counting sightings must be able to skip it.
+
+    The basket transfer machine requires two *fresh* observations per side; counting a gap frame
+    would let one inference satisfy the rule several times over.
+    """
+    pipe, _, _ = _preview_pipe()
+    inferred = pipe.process_once()
+    pipe._last_emit_ts = 0.0
+    gap = pipe.emit_preview()
+
+    assert inferred is not None and inferred["fresh"] is True
+    assert gap is not None and gap["fresh"] is False
+
+
+def test_a_frame_says_whether_its_boxes_were_mirrored():
+    """True geometry is recoverable only if the consumer knows the reflection was applied."""
+    for mirror in (True, False):
+        sent: list = []
+        pipe = Pipeline(
+            _StubSource(), _StubDetector(), Settings(preview_mirror=mirror), on_message=sent.append
+        )
+        msg = pipe.process_once()
+        assert msg is not None and msg["mirrored"] is mirror
+
+
 def test_emit_preview_is_rate_limited():
     pipe, _, _ = _preview_pipe(Settings(preview_max_fps=30))
 
@@ -300,11 +328,13 @@ def _left_lit_source(w=64, h=48):
 
     class _Source:
         width, height, fps = w, h, 30.0
+        _seq = 0
 
         def latest(self):
             frame = np.zeros((h, w, 3), dtype=np.uint8)
             frame[:, : w // 4] = 255
-            return (7, frame)
+            self._seq += 1  # a new frame per call, as a live camera delivers
+            return (self._seq, frame)
 
         def read(self):
             return self.latest()[1]
@@ -655,3 +685,38 @@ def test_the_suppression_can_be_turned_off_without_a_restart():
 def test_the_clamp_tolerance_is_the_measured_value():
     """Named rather than inlined, so the number and the measurement that chose it travel together."""
     assert CLAMPED_EDGE_TOLERANCE == 0.01
+
+
+def test_a_frame_already_analysed_is_not_analysed_again():
+    """One camera frame is one inference, however often the loop asks.
+
+    The frame buffer hands out the newest frame on every call, so a loop faster than the camera
+    used to re-infer the same frame several times over: a StreamCam delivering ~20 fps saw ~70
+    inferences a second, the wasted work contended with the capture thread and pulled the camera's
+    own delivered rate down, and every repeat went out marked `fresh` - so one frame could satisfy
+    the basket's "two sightings per side" by itself, the thing `fresh` exists to prevent.
+    """
+
+    class _SteppedSource:
+        width, height, fps = 128, 96, 30.0
+
+        def __init__(self):
+            self.seq = 1
+
+        def latest(self):
+            return (self.seq, _frame())
+
+    src = _SteppedSource()
+    det = _StubDetector()
+    msgs = []
+    pipe = Pipeline(src, det, Settings(), on_message=msgs.append)
+
+    assert pipe.process_once() is not None
+    assert pipe.process_once() is None, "the same frame was analysed twice"
+    assert pipe.process_once() is None
+    assert det.calls == 1
+    assert [m["fresh"] for m in msgs] == [True]
+
+    src.seq = 2  # the camera delivers a new frame
+    assert pipe.process_once() is not None
+    assert det.calls == 2

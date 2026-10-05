@@ -553,6 +553,17 @@ def test_the_tag_rule_is_decided_once_and_the_awkward_tags_are_its_own():
     ) == ("555 sardines 155grams", "safeguard_pure_white_60g")
 
 
+def test_a_multi_item_scene_that_names_its_product_is_not_a_mismatch():
+    """A Milo shot with a Bear Brand sachet also in frame, both boxed, is labelled correctly - the
+    docstring's "extra boxes on a multi-item scene are intended". The rule used to flag the
+    second product, which refused 16 such frames in the v2 merge. A frame that never names its
+    own product is still drawn wrong."""
+    milo = SLUG_TO_CLASS["milo"]
+    bear = SLUG_TO_CLASS["bear-brand-milk"]
+    assert label_classes.tag_mismatch("milo", [milo, bear]) == ()
+    assert label_classes.tag_mismatch("milo", [bear]) == (bear,)
+
+
 def test_a_tag_for_a_frame_the_set_does_not_hold_is_a_stale_report(tmp_path):
     """The builder records tags only for the frames it writes, so a tag naming a frame that is
     not here means the report describes a different build - the same finding as a stale split

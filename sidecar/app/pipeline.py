@@ -119,6 +119,8 @@ class Pipeline:
         self._thread = None
         self.is_running = False
         self._frame_counter = 0
+        # The sequence number of the last camera frame taken in, so each frame is analysed once.
+        self._last_seq: int | None = None
         self._last_infer_ts = None
         self._infer_fps = 0.0
         # Preview is decoupled from inference. Inference blocks its thread for
@@ -157,6 +159,15 @@ class Pipeline:
         if got is None:
             return None
         seq, frame = got
+        # One camera frame, one inference. The buffer hands out the newest frame on every call, so
+        # without this a loop faster than the camera re-inferred the same frame several times over:
+        # a StreamCam delivering ~20 fps saw ~70 inferences a second, that wasted work contended
+        # with the capture thread and pulled the camera's delivered rate down further, and every
+        # repeat went out `fresh` - so one frame could satisfy the basket's "two sightings per side"
+        # on its own. Returning None here is what makes `_loop` wait for the next frame.
+        if seq == self._last_seq:
+            return None
+        self._last_seq = seq
 
         skip = self._settings.infer_frame_skip
         self._frame_counter += 1
@@ -219,6 +230,7 @@ class Pipeline:
 
         msg = FrameMessage(
             type="frame", ts=t1, seq=seq, jpeg=jpeg, detections=shown, stats=stats,
+            fresh=True, mirrored=bool(self._settings.preview_mirror),
         ).model_dump()
         self._on_message(msg)
         return msg
@@ -257,6 +269,7 @@ class Pipeline:
             type="frame", ts=now, seq=seq, jpeg=jpeg, detections=shown,
             stats=stats
             or Stats(infer_fps=0.0, capture_fps=self._capture_fps(), latency_ms=0.0),
+            fresh=False, mirrored=bool(self._settings.preview_mirror),
         ).model_dump()
         self._on_message(msg)
         return msg

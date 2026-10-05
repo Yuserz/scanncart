@@ -115,6 +115,10 @@
 .tuning-field {
   display: flex;
   flex-direction: row;
+  /* Wraps so a row's note ("Ignored during calibration.") drops to its own line under the
+     control. On one line it was a third flex item: it took the width, the label shrank to
+     nothing, and the fixed-width value box and slider were drawn over the field's name. */
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   min-width: 0;
@@ -214,6 +218,8 @@
 }
 
 .tuning-field .field-hint {
+  /* A line of its own (see `.tuning-field`), never a column beside the slider. */
+  flex: 0 0 100%;
   font-size: 10px;
   line-height: 1.35;
   color: var(--dim);

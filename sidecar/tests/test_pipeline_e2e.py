@@ -38,8 +38,8 @@ class _FakeFrameSource:
         return True
 
     def latest(self):
-        self.pulls += 1
-        return (1, np.full((96, 128, 3), 50, dtype=np.uint8))
+        self.pulls += 1  # a new frame per call, as a live camera delivers; the pipeline analyses each frame once
+        return (self.pulls, np.full((96, 128, 3), 50, dtype=np.uint8))
 
     def read(self):
         return np.full((96, 128, 3), 50, dtype=np.uint8)

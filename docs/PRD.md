@@ -1,97 +1,105 @@
-# 📘 SCANnCART YOLO11 – Vision‑Only Prototype PRD
+# SCANnCART — Product Requirements (prototype)
 
-> Scope of this document: the **local prototype** we are building now.
-> Future/centralized deployment, edge hardware, and containerization live in [DEPLOYMENT.md](./DEPLOYMENT.md).
+> Scope: the **prototype as built for the capstone defense**, updated 2026-10-05.
+> Future work (edge hardware, cloud, more SKUs) lives in [DEPLOYMENT.md](./DEPLOYMENT.md);
+> how each requirement stands today, with its evidence, is [DEFENSE_READINESS.md](./DEFENSE_READINESS.md).
 
 ## 1. Overview
-SCANnCART is a **capstone system** designed for grocery stores.
-The prototype uses **YOLO11** and a **Logitech StreamCam (1080p @ 60fps)** to detect and classify grocery items in real time on a single PC.
 
-**Context (prototype):**
-- The cart acts as a **smart scanner**, detecting items as they are placed or tossed in.
-- All capture, inference, UI, and logging run **locally on one PC** — no server, no network.
+SCANnCART is a **camera on a shopping cart** that recognises grocery products as the customer puts
+them in or takes them out, and keeps the cart's bill on the store's self-checkout tablet in step —
+no barcode scanning, no cashier.
 
----
+- A **Logitech StreamCam** rides on the cart by the handle, looking over the basket.
+- A **Python sidecar** on one PC runs **YOLO11** (Ultralytics) detection + BoT-SORT tracking on
+  every camera frame.
+- An **Electron + React desktop app** shows the live picture, decides which movements are deposits
+  and removals, and keeps the basket's ledger.
+- **pushcart-web** (a separate Next.js + Supabase app) owns the cart rows, prices, stock and orders,
+  and runs the customer's tablet.
+
+Detection is local: the camera, the model and the ledger never need the internet. The only network
+hop is desktop → pushcart-web, on the shop LAN.
+
+**What changed from the first PRD (2026-07):** the "counter scanner on one PC, no network" became a
+cart with camera-only add/remove, a basket ledger and a self-checkout integration
+([POS_INTEGRATION_SPEC.md](./POS_INTEGRATION_SPEC.md), [CART_TRANSFER_SPEC.md](./CART_TRANSFER_SPEC.md)).
+The detector, the sidecar/desktop split, SQLite logging and the local-only detection promise are
+unchanged.
 
 ## 2. Objectives
-- ✅ Detect and classify grocery items quickly and accurately.
-- ✅ Handle varied item placement (gentle or tossed).
-- ✅ Provide real‑time visual feedback via the UI.
-- ✅ Log every detection locally for review.
 
----
+1. Recognise the store's products in real time from one camera.
+2. Turn a product going **into** the basket into +1 on the bill, and **out of** it into −1, with no
+   manual editing by the customer.
+3. Never guess: an ambiguous movement holds the bill unchanged and asks staff to check.
+4. Let the customer start, watch the total, and finish on a tablet.
+5. Log every tracked item locally for review.
 
 ## 3. Scope
-### In‑Scope (Now)
-- Camera input via Logitech StreamCam (USB, 1080p @ 60fps).
-- YOLO11 inference on PC via Ultralytics.
-- Python sidecar service that owns the camera + inference.
-- UI visualization (Electron + React).
-- Local database logging (SQLite).
 
-### Out‑of‑Scope (see DEPLOYMENT.md)
-- Centralized server / “brain” inference.
-- Edge hardware (ESP32-CAM, Pi Zero, Jetson, mini PC).
-- Weight sensors and ESP32 integration.
-- Cloud sync and analytics dashboard.
-- Mobile app control interface.
-- Docker containerization.
+### In scope (built)
 
----
+| Area | What is in |
+| --- | --- |
+| Camera | Logitech StreamCam, USB, 1280×720 at 60 fps (MJPG, Media Foundation), app-side auto exposure |
+| Model | YOLO11s fine-tuned on 7 grocery SKUs (`scanncart-grocery-v1`); v2 dataset built, not yet trained |
+| Detection | Ultralytics `track()` (BoT-SORT), confidence cutoff, three shape filters for phantom boxes |
+| Cart logic | Basket ledger driven by a deposit/removal state machine over three zones (outside / opening / inside) |
+| Customer UI | pushcart-web tablet pages: Start shopping, live read-only cart and total, Finish |
+| Staff UI | Desktop: Live view, Admin Panel, Basket test (zones + practice), Camera tuning; tablet: staff-PIN removal |
+| Data | SQLite track log on the PC; carts, orders and stock in pushcart-web's Supabase |
 
-## 4. Tech Stack (Recommended)
+### Out of scope (see DEPLOYMENT.md)
 
-| Layer | Choice | Notes |
-|-------|--------|-------|
-| **Camera** | Logitech StreamCam (USB) | 1080p @ 60fps; captured in Python via OpenCV. |
-| **Model** | YOLO11 (Ultralytics, PyTorch) | Object detection + classification. |
-| **Inference service** | Python sidecar | Owns the camera and runs YOLO11; spawned by Electron. |
-| **UI ↔ sidecar transport** | localhost **WebSocket** | Pushes detections / annotated frames in real time. |
-| **UI** | Electron + React | Live feed, bounding boxes, item log, start/stop. |
-| **Database** | SQLite | Local detection log. |
+Payment capture (Finish creates the order and deducts stock, no card is charged) · edge hardware on
+the cart · weight sensors · cloud sync and analytics · products beyond the 7 trained · more than one
+station per tablet.
 
-**Why this stack:**
-- Ultralytics YOLO11 is Python-only, so a **Python sidecar** keeps the heavy work (camera + inference) out of the Electron/Node process.
-- A **WebSocket** (push) fits continuous ~30fps streaming far better than REST polling — lower latency, no request-per-frame overhead.
-- **SQLite** (over TinyDB) is a single-file, zero-config, well-supported store that scales cleanly if the schema grows.
-- **Electron + React** (over PyQt6) gives a familiar web UI toolchain and matches the future dashboard, so UI work carries forward.
+## 4. Tech stack
 
-### 4.1 Architecture
-```
-Logitech StreamCam
-        │  (USB)
-        ▼
-Python sidecar  ──►  OpenCV capture  ──►  YOLO11 (Ultralytics)
-        │                                        │
-        │  localhost WebSocket (detections + annotated frames)
-        ▼                                        ▼
-Electron + React UI  ◄──────────────────  SQLite (detection log)
-```
-Electron spawns the Python sidecar on startup and connects to it over a localhost WebSocket. The sidecar captures frames, runs inference, writes detections to SQLite, and streams results to the UI.
+| Layer | Choice | Why |
+| --- | --- | --- |
+| Camera | Logitech StreamCam via OpenCV (MSMF) | 60 fps at 720p in MJPG; DirectShow caps at ~15 fps |
+| Model | YOLO11s, Ultralytics/PyTorch, CUDA | Best accuracy/latency on an RTX 4060 for this SKU set |
+| Inference service | Python sidecar (FastAPI), spawned by Electron | Ultralytics is Python-only; keeps CV work out of Node |
+| Desktop ↔ sidecar | localhost WebSocket (frames) + REST (control) | Push for continuous frames, pull for occasional calls |
+| Desktop | Electron + React + TypeScript | Web UI toolchain; main process hosts the basket logic |
+| Desktop ↔ pushcart-web | HTTPS/HTTP, `x-pos-token` shared secret, full-snapshot sync | Idempotent: a repeated snapshot never duplicates an item |
+| Checkout | pushcart-web (Next.js + Supabase/Postgres) | Owns money-relevant state; database policies lock the cart to the camera |
+| Local log | SQLite | Single file, zero config |
 
----
+## 5. Functional requirements
 
-## 5. Functional Requirements
-- **Real‑Time Detection:** ≥ 30 fps processing with YOLO11.
-- **UI Feedback:** Bounding boxes, item names, confidence scores.
-- **Logging:** Timestamp, item ID, confidence stored in SQLite.
-- **Error Handling:** Graceful fallback for camera disconnects and sidecar restarts.
-- **Controls:** Start/stop capture and an item-list view in the UI.
+| ID | Requirement |
+| --- | --- |
+| F1 | Detect and track the 7 SKUs at ≥ 30 fps (frames analysed per second). |
+| F2 | Show bounding boxes, product names and confidence on the live view (and on the Basket test screen). |
+| F3 | Add one unit on a confirmed deposit and remove one on a confirmed removal; hidden items stay billed. |
+| F4 | Send ambiguous movements to review (bill unchanged) and block Finish until staff clear it. |
+| F5 | Bind to the tablet's session automatically on *Start shopping*; unbind on Finish. |
+| F6 | Sync the whole cart to pushcart-web as soon as it changes, plus a heartbeat; recover from outages without duplicates. |
+| F7 | Log every track (product, best confidence, entered/left) in SQLite. |
+| F8 | Survive a camera disconnect and a sidecar stop with a clear on-screen explanation. |
+| F9 | Start/stop capture; tune camera and detection settings live. |
 
----
+## 6. Non-functional requirements
 
-## 6. Non-Functional Requirements
-- **Performance:** End-to-end latency < 150 ms (local).
-- **Reliability:** Continuous operation for ≥ 2 hours without restart.
-- **Usability:** Simple UI with start/stop and item-list view.
-- **Maintainability:** Modular codebase with clear separation of concerns.
+| ID | Requirement |
+| --- | --- |
+| N1 | Camera-to-screen latency under 150 ms. |
+| N2 | A confirmed transfer reaches the tablet within 5 s at the 95th percentile (spec Gate C). |
+| N3 | Run continuously for ≥ 2 hours without a restart. |
+| N4 | Detection works with no internet connection. |
+| N5 | Modular, tested code: every component testable against fakes, no camera/GPU/network in CI. |
 
----
+## 7. Success metrics
 
-## 7. Success Metrics
-- Stable detection at ≥ 30 fps.
-- End-to-end latency < 150 ms (local).
-- ≥ 90% accuracy on common grocery items.
-- Smooth UI performance with minimal latency.
-
----
+| Metric | Target |
+| --- | --- |
+| Analysed frames per second | ≥ 30 fps |
+| Camera-to-screen latency | < 150 ms |
+| Per-class recall on held-out images | ≥ 0.85 for every SKU (project floor) |
+| Overall detection accuracy | ≥ 90% (mAP50) |
+| Deposit / removal correctness (Gate C) | ≥ 34/35 per direction; zero ledger changes on 30 no-transfer trials |
+| Continuous operation | ≥ 2 hours |

@@ -1,0 +1,607 @@
+// @vitest-environment node
+// Synthetic track sequences through the transfer state machine.
+//
+// No camera, no sidecar, no pixels: each test feeds `Observation`s shaped like the ones the
+// stream forwards (fresh per-inference boxes in TRANSFER_FRAME units) over the default
+// preset — cart at the bottom 35% of the frame, opening the 20% above it, outside the rest —
+// and asserts what the spec §Gate-B(3) requires: confirmed only after an observed, held
+// completion, once per physical transfer, with reversals and identity conflicts routed to
+// abort/review instead of the ledger. The `#n` tags are the plan's events table.
+
+import { describe, it, expect, beforeEach } from 'vitest'
+import {
+  TransferStateMachine,
+  DEFAULT_TRANSFER_CONFIG,
+  regionOf,
+  type MachineOutput,
+  type Observation,
+  type TransferEvent
+} from './transferState'
+import {
+  DEFAULT_ZONE_PRESET,
+  drawnZoneProblems,
+  frameBox,
+  layoutKey,
+  layoutRegions,
+  pointInPolygon,
+  presetRegions,
+  zonePresetProblems
+} from './transferGeometry'
+
+const regions = presetRegions(DEFAULT_ZONE_PRESET)
+const cfg = { ...DEFAULT_TRANSFER_CONFIG } // 2 per side, 0.4 s hold, scanner threshold 0.5
+
+// Box centres for each band (box height 60, so y is the centre minus 30).
+const OUT = 200
+const OPEN = 550
+const IN = 820
+
+let seq = 0
+let t = 0
+beforeEach(() => {
+  seq = 0
+  t = 0
+})
+
+/** One observation 0.2 s after the previous (5 fresh inferences a second). */
+function obs(
+  o: { cy: number; x?: number } & Partial<Omit<Observation, 'box' | 'seq' | 't'>>
+): Observation {
+  seq += 1
+  t += 0.2
+  const { cy, x = 460, ...rest } = o
+  return {
+    seq,
+    t,
+    trackId: 7,
+    className: 'soda',
+    conf: 0.9,
+    box: { x, y: cy - 30, w: 80, h: 60 },
+    ...rest
+  }
+}
+
+/** `n` observations at one band — a hold of (n - 1) × 0.2 s. */
+const at = (cy: number, n: number, extra: Partial<Observation> = {}): Observation[] =>
+  Array.from({ length: n }, () => obs({ cy, ...extra }))
+
+interface Fed {
+  events: TransferEvent[]
+  outputs: MachineOutput[]
+  removed: NonNullable<MachineOutput['removed']>[]
+}
+
+function feed(m: TransferStateMachine, list: Observation[]): Fed {
+  const events: TransferEvent[] = []
+  const outputs: MachineOutput[] = []
+  for (const o of list) {
+    const out = m.observe(o)
+    events.push(...out.events)
+    outputs.push(out)
+  }
+  return { events, outputs, removed: outputs.flatMap((o) => (o.removed ? [o.removed] : [])) }
+}
+
+const deposit = (extra: Partial<Observation> = {}): Observation[] => [
+  ...at(OUT, 2, extra),
+  ...at(OPEN, 1, extra),
+  ...at(IN, 6, extra)
+]
+const removal = (extra: Partial<Observation> = {}): Observation[] => [
+  ...at(IN, 2, extra),
+  ...at(OPEN, 1, extra),
+  ...at(OUT, 6, extra)
+]
+
+describe('zone preset', () => {
+  it('cart at the bottom: bands stack outside → opening → inside downward', () => {
+    expect(zonePresetProblems(DEFAULT_ZONE_PRESET)).toEqual([])
+    const r = (cy: number): string => regionOf(regions, { x: 460, y: cy - 30, w: 80, h: 60 })
+    expect([r(OUT), r(OPEN), r(IN)]).toEqual(['outside', 'opening', 'inside'])
+  })
+
+  it('every edge produces usable, non-overlapping bands', () => {
+    for (const cartEdge of ['bottom', 'top', 'left', 'right'] as const) {
+      const p = presetRegions({ ...DEFAULT_ZONE_PRESET, cartEdge })
+      expect(Object.values(p).every((b) => b.w > 0 && b.h > 0)).toBe(true)
+    }
+  })
+
+  it('refuses a preset that leaves no outside band', () => {
+    expect(
+      zonePresetProblems({ cartEdge: 'bottom', insideFraction: 0.6, openingFraction: 0.4 })
+    ).not.toEqual([])
+    expect(() =>
+      presetRegions({ cartEdge: 'bottom', insideFraction: 0.6, openingFraction: 0.4 })
+    ).toThrow()
+  })
+
+  it('undoes the preview mirror with the sidecar rule', () => {
+    const t0 = frameBox([0.1, 0.2, 0.3, 0.4], false)
+    expect([t0.x, t0.y, t0.w, t0.h].map((v) => Math.round(v))).toEqual([100, 200, 200, 200])
+    const m = frameBox([0.7, 0.2, 0.9, 0.4], true)
+    expect(m.x).toBeCloseTo(100)
+    expect(m.w).toBeCloseTo(200)
+  })
+})
+
+describe('#1 deposit', () => {
+  it('commits after outside×2 → opening → inside held for the endpoint hold', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    const { events } = feed(m, deposit())
+    expect(events).toHaveLength(1)
+    expect(events[0]).toMatchObject({ kind: 'inbound', className: 'soda', completionConf: 0.9 })
+  })
+
+  it('does not commit before the endpoint hold has elapsed', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    const { events } = feed(m, [...at(OUT, 2), ...at(OPEN, 1), ...at(IN, 2)]) // 0.2 s inside
+    expect(events).toEqual([])
+    expect(m.snapshot()[0]?.phase).toBe('inbound_pending')
+  })
+
+  it('does not commit on a single outside sighting', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    expect(feed(m, [...at(OUT, 1), ...at(OPEN, 1), ...at(IN, 6)]).events).toEqual([])
+  })
+
+  it('a deposit hidden before the hold completes is reviewed, not committed', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    feed(m, [...at(OUT, 2), ...at(OPEN, 1), ...at(IN, 2)])
+    const expired = m.sweep(t + cfg.candidateTimeoutS + 0.1)
+    expect(expired).toEqual([expect.objectContaining({ phase: 'inbound_pending', review: true })])
+  })
+})
+
+describe('#2 removal', () => {
+  it('commits after inside×2 → opening → outside held clear for the endpoint hold', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    const { events } = feed(m, removal())
+    expect(events).toHaveLength(1)
+    expect(events[0].kind).toBe('outbound')
+  })
+})
+
+describe('#3 two identical units', () => {
+  it('two separate transfers are two events', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    const first = feed(m, deposit({ trackId: 1 })).events
+    const second = feed(m, deposit({ trackId: 2 })).events
+    expect([...first, ...second].map((e) => e.kind)).toEqual(['inbound', 'inbound'])
+  })
+})
+
+describe('#4 remove, then put back (same track)', () => {
+  it('deposit → removal → deposit is three events, never a duplicate', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    const kinds = [
+      ...feed(m, deposit()).events,
+      ...feed(m, at(IN, 4)).events, // rests in the cart: no re-fire
+      ...feed(m, [...at(OPEN, 1), ...at(OUT, 6)]).events, // taken out
+      ...feed(m, [...at(OPEN, 1), ...at(IN, 6)]).events // put back
+    ].map((e) => e.kind)
+    expect(kinds).toEqual(['inbound', 'outbound', 'inbound'])
+  })
+})
+
+describe('#5 #7 no-transfer families', () => {
+  it('outside presentation never crosses', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    expect(feed(m, at(OUT, 8)).events).toEqual([])
+  })
+
+  it('hover at the opening then back out is aborted without review, and a retry still counts', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    const hover = feed(m, [...at(OUT, 2), ...at(OPEN, 2), ...at(OUT, 1)])
+    expect(hover.events).toEqual([])
+    expect(hover.removed).toEqual([expect.objectContaining({ phase: 'aborted', review: false })])
+    expect(feed(m, [...at(OUT, 1), ...at(OPEN, 1), ...at(IN, 6)]).events).toHaveLength(1)
+  })
+
+  it('rearranging inside the cart is no event', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    expect(
+      feed(m, [obs({ cy: IN }), obs({ cy: IN + 40 }), obs({ cy: IN - 40 }), obs({ cy: IN })]).events
+    ).toEqual([])
+  })
+
+  it('lifting an item to the opening and setting it back down is no event', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    expect(feed(m, [...at(IN, 2), ...at(OPEN, 2), ...at(IN, 4)]).events).toEqual([])
+  })
+})
+
+describe('a dip back over the opening (review finding)', () => {
+  it('a deposit lifted back over the opening and set down again is one +1 and no review', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    const { events, removed } = feed(m, [
+      ...at(OUT, 2),
+      ...at(OPEN, 1),
+      ...at(IN, 2), // lowered in, not yet held
+      ...at(OPEN, 1), // lifted back over the rim
+      ...at(IN, 6) // set down and left
+    ])
+    expect(events.map((e) => e.kind)).toEqual(['inbound'])
+    expect(removed).toEqual([])
+  })
+
+  it('the hold restarts after the dip, so it cannot complete early', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    // 0.2 s inside, dip, then 0.2 s back inside: neither stretch is a full 0.4 s hold, though
+    // the two together span more than one.
+    const { events } = feed(m, [
+      ...at(OUT, 2),
+      ...at(OPEN, 1),
+      ...at(IN, 2),
+      ...at(OPEN, 1),
+      ...at(IN, 2)
+    ])
+    expect(events).toEqual([])
+  })
+
+  it('a removal that dips back over the opening is one −1 and no review', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    const { events, removed } = feed(m, [
+      ...at(IN, 2),
+      ...at(OPEN, 1),
+      ...at(OUT, 2),
+      ...at(OPEN, 1),
+      ...at(OUT, 6)
+    ])
+    expect(events.map((e) => e.kind)).toEqual(['outbound'])
+    expect(removed).toEqual([])
+  })
+
+  it('an item resting on the cart/opening boundary after a deposit never reviews or re-fires', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    expect(feed(m, deposit()).events).toHaveLength(1)
+    const jitter = Array.from({ length: 12 }, (_, i) => obs({ cy: i % 2 === 0 ? OPEN : IN }))
+    const { events, removed } = feed(m, jitter)
+    expect(events).toEqual([])
+    expect(removed.filter((r) => r.review)).toEqual([])
+  })
+
+  it('jumping from outside straight into the cart is not ordered evidence of the path', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    expect(feed(m, [...at(OUT, 2), ...at(IN, 6)]).events).toEqual([])
+  })
+})
+
+describe('#9 identity conflicts', () => {
+  it('a class change mid-path goes to review and commits nothing', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    const { events, removed } = feed(m, [...at(OUT, 2), obs({ cy: OPEN, className: 'water' })])
+    expect(events).toEqual([])
+    expect(removed[0]).toMatchObject({ review: true, className: 'soda' })
+    expect(removed[0].reason).toContain('class changed')
+  })
+
+  it('a jump within one region goes to review', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    const { removed } = feed(m, [obs({ cy: OUT, x: 50 }), obs({ cy: OUT, x: 800 })])
+    expect(removed[0]?.reason).toContain('box jumped')
+  })
+})
+
+describe('#10 stuck mid-path', () => {
+  it('a candidate that stops at the opening expires for review', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    feed(m, [...at(OUT, 2), ...at(OPEN, 1)])
+    const expired = m.sweep(t + cfg.candidateTimeoutS + 0.1)
+    expect(expired).toEqual([
+      expect.objectContaining({ phase: 'inbound_pending', review: true, className: 'soda' })
+    ])
+    expect(m.snapshot()).toEqual([])
+  })
+})
+
+describe('#12 two items at once', () => {
+  it('a completion while another track was in the opening goes to review', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    feed(m, at(OUT, 2, { trackId: 1 }))
+    feed(m, at(OUT, 2, { trackId: 2 }))
+    feed(m, [obs({ cy: OPEN, trackId: 1 }), obs({ cy: OPEN, trackId: 2 })])
+    const { events, removed } = feed(m, at(IN, 6, { trackId: 1 }))
+    expect(events).toEqual([])
+    expect(removed[0]?.reason).toContain('two items')
+  })
+})
+
+describe('#12 what is not two items at once', () => {
+  it('an item resting with its centre on the rim does not send later deposits to review', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    feed(m, at(OPEN, 3, { trackId: 9, className: 'rice' })) // parked on the rim
+    const path = [...at(OUT, 2), ...at(OPEN, 1), ...at(IN, 4)].flatMap((o) => [
+      o,
+      obs({ cy: OPEN, trackId: 9, className: 'rice' }) // still there, every frame
+    ])
+    const { events, removed } = feed(m, path)
+    expect(events.map((e) => e.kind)).toEqual(['inbound'])
+    expect(removed.filter((r) => r.review)).toEqual([])
+  })
+
+  it('a second item handed in just after the first is two deposits, not a bundle', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    const first = feed(m, deposit({ trackId: 1 })).events
+    const second = feed(m, deposit({ trackId: 2 })).events
+    expect([...first, ...second].map((e) => e.kind)).toEqual(['inbound', 'inbound'])
+  })
+})
+
+/** Observations at 60 fresh inferences a second — the sidecar's real rate on the StreamCam. */
+function sweepPath(
+  from: number,
+  to: number,
+  frames: number,
+  extra: Partial<Observation> = {}
+): Observation[] {
+  return Array.from({ length: frames }, (_, i) => {
+    seq += 1
+    t += 1 / 60
+    const cy = from + ((to - from) * (i + 1)) / frames
+    return {
+      seq,
+      t,
+      trackId: 7,
+      className: 'soda',
+      conf: 0.9,
+      box: { x: 460, y: cy - 30, w: 80, h: 60 },
+      ...extra
+    }
+  })
+}
+
+describe('fast hands at 60 fps', () => {
+  it('a brisk deposit confirms within half a second of reaching the basket', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    feed(m, sweepPath(150, 250, 6)) // picked up outside
+    feed(m, sweepPath(250, 820, 9)) // a quarter-second swing over the rim
+    const arrived = t
+    let confirmedAt: number | null = null
+    for (const o of sweepPath(820, 830, 60)) {
+      if (m.observe(o).events.length > 0 && confirmedAt === null) confirmedAt = o.t
+    }
+    expect(confirmedAt).not.toBeNull()
+    expect((confirmedAt as number) - arrived).toBeLessThanOrEqual(0.5)
+  })
+
+  it('a few dropped frames during a fast swing are motion, not a broken identity', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    feed(m, sweepPath(150, 200, 4))
+    // 6 frames lost (0.1 s) while the hand moves 180 units within the outside band.
+    t += 0.1
+    const { removed } = feed(m, sweepPath(380, 390, 1))
+    expect(removed).toEqual([])
+  })
+
+  it('a teleport between consecutive frames is still a broken identity', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    const { removed } = feed(m, [
+      ...sweepPath(100, 100, 1, { box: { x: 0, y: 70, w: 80, h: 60 } }),
+      ...sweepPath(100, 100, 1, { box: { x: 700, y: 70, w: 80, h: 60 } })
+    ])
+    expect(removed[0]?.reason).toContain('box jumped')
+  })
+})
+
+describe('a tracker id switch mid-path (stitching)', () => {
+  const live = (...ids: number[]): Set<number> => new Set(ids)
+
+  it('a new id that picks up where a lost one left off finishes the same deposit', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    feed(m, [...at(OUT, 2), ...at(OPEN, 1)]) // track 7 reaches the rim, then is lost
+    const next = obs({ cy: IN, trackId: 8 })
+    expect(m.stitch(next, live(8))).toBe(7)
+    const { events, removed } = feed(m, [next, ...at(IN, 3, { trackId: 8 })])
+    expect(events).toEqual([expect.objectContaining({ kind: 'inbound', trackId: 8 })])
+    expect(removed).toEqual([])
+  })
+
+  it('a removal whose id switches as it is lifted out is still one −1', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    feed(m, at(IN, 3)) // resting in the basket as track 7
+    const next = obs({ cy: OPEN, trackId: 8 })
+    expect(m.stitch(next, live(8))).toBe(7)
+    const { events, removed } = feed(m, [next, ...at(OUT, 4, { trackId: 8 })])
+    expect(events.map((e) => e.kind)).toEqual(['outbound'])
+    expect(removed.filter((r) => r.review)).toEqual([])
+  })
+
+  it('never stitches onto a track that is still in the frame', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    feed(m, at(OUT, 2))
+    expect(m.stitch(obs({ cy: OUT + 40, trackId: 8 }), live(7, 8))).toBeNull()
+  })
+
+  it('never stitches across products, distance or a long gap', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    feed(m, at(OUT, 2))
+    expect(m.stitch(obs({ cy: OUT, trackId: 8, className: 'water' }), live(8))).toBeNull()
+    expect(m.stitch(obs({ cy: IN, x: 900, trackId: 8 }), live(8))).toBeNull()
+    t += 1
+    expect(m.stitch(obs({ cy: OUT, trackId: 8 }), live(8))).toBeNull()
+  })
+
+  it('without stitching the same id switch is reviewed (the behaviour it replaces)', () => {
+    const m = new TransferStateMachine(regions, { ...cfg, stitchGapS: 0 })
+    feed(m, [...at(OUT, 2), ...at(OPEN, 1)])
+    const next = obs({ cy: OPEN, trackId: 8 })
+    expect(m.stitch(next, live(8))).toBeNull()
+    const { events, removed } = feed(m, [next, ...at(IN, 4, { trackId: 8 })])
+    expect(events).toEqual([])
+    expect(removed[0]?.reason).toContain('without origin evidence')
+  })
+})
+
+describe('#14 confidence follows the scanner threshold', () => {
+  it('below the scanner threshold never enters the machine', () => {
+    const m = new TransferStateMachine(regions, cfg) // the sidecar default, 0.5
+    expect(feed(m, deposit({ conf: 0.3 })).events).toEqual([])
+    expect(m.snapshot()).toEqual([])
+  })
+
+  it('at 0.9 on the scanner, a 0.85 deposit is not inferred and a 0.92 one is', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    m.setConfThreshold(0.9)
+    expect(feed(m, deposit({ conf: 0.85, trackId: 1 })).events).toEqual([])
+    expect(feed(m, deposit({ conf: 0.92, trackId: 2 })).events).toHaveLength(1)
+  })
+
+  it('one frame under the threshold on the path is simply not a sighting', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    m.setConfThreshold(0.9)
+    // Only one outside sighting clears 0.9, so there is no origin evidence to commit on.
+    const path = [
+      obs({ cy: OUT, conf: 0.95 }),
+      obs({ cy: OUT, conf: 0.6 }),
+      ...at(OPEN, 1),
+      ...at(IN, 6)
+    ]
+    expect(feed(m, path).events).toEqual([])
+  })
+
+  it('a lowered threshold is honoured too, with no second floor of its own', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    m.setConfThreshold(0.3)
+    expect(feed(m, deposit({ conf: 0.35 })).events).toHaveLength(1)
+  })
+
+  it('never writes through to the shared default', () => {
+    new TransferStateMachine(regions).setConfThreshold(0.95)
+    expect(DEFAULT_TRANSFER_CONFIG.confThreshold).toBe(0.5)
+  })
+
+  it('ignores a value that is not a confidence', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    m.setConfThreshold(Number.NaN)
+    m.setConfThreshold(4)
+    expect(m.getConfThreshold()).toBe(0.5)
+  })
+})
+
+describe('first seen mid-path', () => {
+  it('appearing in the opening and landing inside is reviewed, never committed', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    const { events, removed } = feed(m, [...at(OPEN, 2), ...at(IN, 6)])
+    expect(events).toEqual([])
+    expect(removed[0]).toMatchObject({ review: true })
+    expect(removed[0].reason).toContain('without origin evidence')
+  })
+})
+
+describe('reset', () => {
+  it('clears in-flight candidates', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    feed(m, [...at(OUT, 2), ...at(OPEN, 1)])
+    m.reset()
+    expect(m.snapshot()).toEqual([])
+  })
+
+  it('accepts new regions without losing candidates', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    feed(m, at(OUT, 2))
+    m.setRegions(presetRegions({ ...DEFAULT_ZONE_PRESET, insideFraction: 0.3 }))
+    expect(m.snapshot()).toHaveLength(1)
+  })
+})
+
+describe('drawn zones (a camera looking down into the basket)', () => {
+  // The rim seen from above is a ring: the inside a quadrilateral, the opening an outline drawn
+  // around it. `regionOf` asks inside first, so the opening outline may enclose the inside.
+  const drawn = {
+    mode: 'drawn' as const,
+    inside: [
+      { x: 0.3, y: 0.4 },
+      { x: 0.7, y: 0.4 },
+      { x: 0.7, y: 0.8 },
+      { x: 0.3, y: 0.8 }
+    ],
+    opening: [
+      { x: 0.2, y: 0.3 },
+      { x: 0.8, y: 0.3 },
+      { x: 0.8, y: 0.9 },
+      { x: 0.2, y: 0.9 }
+    ]
+  }
+  const r = layoutRegions(drawn)
+  const box = (cx: number, cy: number): { x: number; y: number; w: number; h: number } => ({
+    x: cx * 1000 - 20,
+    y: cy * 1000 - 20,
+    w: 40,
+    h: 40
+  })
+
+  it('places a box by its centre: inside, the ring around it, and everything else', () => {
+    expect(regionOf(r, box(0.5, 0.6))).toBe('inside')
+    expect(regionOf(r, box(0.25, 0.6))).toBe('opening')
+    expect(regionOf(r, box(0.5, 0.1))).toBe('outside')
+    expect(regionOf(r, box(0.95, 0.6))).toBe('outside')
+  })
+
+  it('confirms a deposit along a path from outside, through the ring, into the inside', () => {
+    const m = new TransferStateMachine(r, cfg)
+    const events: TransferEvent[] = []
+    let t = 0
+    const step = (cx: number, cy: number): void => {
+      t += 0.2
+      const out = m.observe({
+        seq: t * 5,
+        t,
+        trackId: 4,
+        className: 'soda',
+        conf: 0.9,
+        box: box(cx, cy)
+      })
+      events.push(...out.events)
+    }
+    for (const cy of [0.1, 0.15, 0.2, 0.25]) step(0.5, cy)
+    for (const cy of [0.33, 0.37]) step(0.5, cy)
+    for (let i = 0; i < 8; i++) step(0.5, 0.6)
+    expect(events.map((e) => [e.kind, e.className])).toEqual([['inbound', 'soda']])
+  })
+
+  it('refuses outlines that cannot describe a basket', () => {
+    expect(drawnZoneProblems({ ...drawn, inside: drawn.inside.slice(0, 2) })).toEqual([
+      'the inside outline needs at least 3 points'
+    ])
+    expect(
+      drawnZoneProblems({
+        ...drawn,
+        opening: [
+          { x: 0, y: 0 },
+          { x: 1.2, y: 0 },
+          { x: 1, y: 1 }
+        ]
+      })
+    ).toEqual(['the opening outline has a point outside the picture'])
+    const sliver = [
+      { x: 0.5, y: 0.5 },
+      { x: 0.51, y: 0.5 },
+      { x: 0.5, y: 0.51 }
+    ]
+    expect(drawnZoneProblems({ ...drawn, inside: sliver })).toEqual([
+      'the inside outline is too small to be a basket region'
+    ])
+    expect(() => layoutRegions({ ...drawn, inside: [] })).toThrow(/invalid drawn zones/)
+  })
+
+  it('keys a band layout exactly as before, so the ledger trail does not change', () => {
+    expect(layoutKey({ mode: 'bands', ...DEFAULT_ZONE_PRESET })).toBe('preset:bottom:0.35:0.2')
+    expect(layoutKey(drawn)).toMatch(/^drawn:/)
+    expect(layoutKey(drawn)).toBe(layoutKey({ ...drawn }))
+  })
+
+  it('counts points inside a non-convex outline correctly', () => {
+    // An L shape: the notch is outside even though it sits inside the bounding box.
+    const ell = [
+      { x: 0, y: 0 },
+      { x: 10, y: 0 },
+      { x: 10, y: 4 },
+      { x: 4, y: 4 },
+      { x: 4, y: 10 },
+      { x: 0, y: 10 }
+    ]
+    expect(pointInPolygon({ x: 2, y: 8 }, ell)).toBe(true)
+    expect(pointInPolygon({ x: 8, y: 8 }, ell)).toBe(false)
+  })
+})

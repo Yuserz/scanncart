@@ -242,7 +242,12 @@ export function CameraTuning({
     // Writing a focus value while autofocus is on is meaningless: the device
     // immediately hunts away from it.
     const autofocusOn = settings?.camera_autofocus === true
-    const disabled = unsupported(field.key) || (field.key === 'camera_focus' && autofocusOn)
+    // The same for brightness and exposure under auto exposure, which moves both itself.
+    const autoExposureOn = settings?.camera_auto_exposure === true
+    const disabled =
+      unsupported(field.key) ||
+      (field.key === 'camera_focus' && autofocusOn) ||
+      ((field.key === 'camera_brightness' || field.key === 'camera_exposure') && autoExposureOn)
 
     return (
       <div className="tuning-field" key={field.key}>

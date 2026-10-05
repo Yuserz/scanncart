@@ -90,6 +90,11 @@ These are unresolved and must be answered before a store pilot:
 ---
 
 ## 4. Future Phases (Out-of-Scope for Prototype)
+
+Proposed physical add/remove behavior, temporal data collection, and the weight-sensor decision/BOM
+are in [CART_TRANSFER_SPEC.md](./CART_TRANSFER_SPEC.md). That proposal does not select hardware or
+change the current prototype's scope.
+
 - Weight sensors and ESP32 integration.
 - Cloud synchronization and analytics dashboard.
 - Mobile app control interface (monitor-only prototype may be tested first).
