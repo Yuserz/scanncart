@@ -161,7 +161,7 @@ Basket mode replaces "what is visible" with **confirmed transfers**, which is wh
 - **No change:** showing an item outside, hovering at the opening and pulling back, rearranging inside the cart, an empty hand reaching in, or an item hidden after it was deposited.
 - **Needs review (cart unchanged):** the class changes mid-path, two items cross the opening at once (two in-flight items within 0.5 s of each other — an item merely resting on the rim does not count), an item stops mid-path, an item appears in the opening with no origin, a removal of something the ledger does not hold, a product already in the cart band at Start (its track first seen inside the band in the 3 s after Start — an item carried in through the opening in those seconds is a deposit), an app restart mid-session, or the camera seeing nothing for more than a few seconds. Review is sent to pushcart-web as `pending_review`; staff clear it with **Basket checked** on the Live view.
 
-The ledger runs in counter mode too, as a shadow, so it can be compared with the real basket before switching. Keep `Counter` until a rehearsal (`CART_TRANSFER_SPEC.md` Gate C) shows the shadow matching. The ledger is kept beside `pos.json` as `basket-ledger.json`, keyed to the session.
+The ledger runs in counter mode too, as a shadow, so it can be compared with the real basket before switching. `Counter` is still the configuration default, but the product is the basket: with the camera on the cart, counter mode would drop an item from the bill as soon as other items hide it. Select `Basket` for the cart (and for the defense demo); the acceptance gates in `CART_TRANSFER_SPEC.md` §3 are what would make basket the shipped default. The ledger is kept beside `pos.json` as `basket-ledger.json`, keyed to the session.
 
 ## 4b. Zones and the Basket test screen
 
@@ -178,7 +178,10 @@ Where the camera sits decides how the zones are laid out:
 
 The **Basket test** tab (next to Live and Admin) shows the zones over the live preview, edits and
 saves them, and runs a **practice** basket: it binds the ledger locally, so deposits and removals
-count at a desk with any webcam and no pushcart-web or tablet. Practice is refused while a customer
+count at a desk with any webcam and no pushcart-web or tablet. Each detected box is labelled with its
+product, confidence and track id (`safeguard_pure_white_60g 91% #7`), so a deposit that did not count
+can be read off the picture: the wrong product, a confidence under the threshold, or a track id that
+changed mid-swing. Practice is refused while a customer
 session is bound, and a customer session binding later replaces it. A practice run is the way to try
 a mount, or a zone change, before recording Gate A clips.
 

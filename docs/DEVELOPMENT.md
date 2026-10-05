@@ -149,8 +149,9 @@ SIDECAR_PYTHON=/path/to/sidecar/.venv/Scripts/python.exe SIDECAR_SCRIPT=/path/to
 > Model picker — leave those stock weights where they land, don't move them
 > into `sidecar/models/`.
 
-> **Opening the camera can take ~37 s** on a Logitech StreamCam (about 9.5 s
-> to open plus ~18.7 s to set the 1080p mode). That is the device, not a
+> **Opening the camera can take ~37 s** on a Logitech StreamCam (measured at
+> 1080p: about 9.5 s to open plus ~18.7 s to set the mode; the shipped
+> 1280x720 at 60 fps opens faster). That is the device, not a
 > hang — the sidecar's `/api/health` keeps answering throughout. A frame that
 > never arrives is reported as an `error` status after a 3 s deadline.
 

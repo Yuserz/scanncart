@@ -8,19 +8,27 @@
 
 ## 1. Context — what the system is
 
-Everything runs on **one PC**. No server, no cloud, no network dependency.
+Detection runs on **one PC** with no internet dependency. The one network hop is the
+self-checkout integration: the PC tells **pushcart-web** (the store's checkout, hosted on the shop
+LAN) what is in the customer's basket, and the customer's tablet shows it (§10).
 
 ```mermaid
 flowchart LR
-    U([Store staff / operator])
-    C[/Logitech StreamCam\n1080p USB/]
+    U([Store staff])
+    K([Customer])
+    C[/Logitech StreamCam\n720p60 USB, on the cart/]
     S{{SCANnCART\ndesktop system}}
-    D[(Local SQLite file\ndetection log)]
+    D[(Local SQLite file\ntrack log)]
+    W[(pushcart-web\ncart, stock, orders)]
+    T[/Cart tablet\nbrowser/]
 
     C -- USB video --> S
-    U -- start / stop / settings --> S
+    U -- settings / zones / review --> S
     S -- live feed + item list --> U
     S -- writes --> D
+    S -- cart snapshot over LAN --> W
+    W -- live cart + total --> T
+    K -- Start / Finish --> T
 ```
 
 ASCII equivalent:
@@ -129,7 +137,7 @@ Two algorithms run per frame, not one:
 
 | | Choice | Note |
 |---|---|---|
-| Detector | YOLO11, Ultralytics/PyTorch | Size tier is **configurable**, not hardcoded: `n` / `s` / `m` / `l` / `x`, selected by hardware preset. Default `yolo11n`. |
+| Detector | YOLO11, Ultralytics/PyTorch | The shipped weight is `models/scanncart-grocery-v1.pt`: YOLO11s fine-tuned on the 7 store SKUs (the default). Stock COCO tiers `n`…`x` stay selectable for comparison. |
 | Tracker | BoT-SORT | Ultralytics' default — the code calls `.track(persist=True)` without a `tracker=` argument. ByteTrack would require opting in explicitly. |
 
 **Why the tracker is architecturally load-bearing:** detection alone would emit
@@ -210,9 +218,10 @@ One row per capture cycle in `sessions`; one row per tracked item per session in
   settings.json ──load at startup──► Settings ──► pipeline
 
   Change a setting while capture is RUNNING:
-      hot-reloadable  ─► applies immediately (preview size, frame skip, expiry)
+      hot-reloadable  ─► applies immediately (preview size, frame skip, expiry,
+                          confidence threshold, filters, camera controls, auto exposure)
       restart-required ─► rejected; must stop capture first
-                          (model, device, camera params, threshold)
+                          (model, device, camera index/resolution/fps, backend)
 ```
 
 ```
@@ -253,4 +262,44 @@ from the logs endpoint rather than losing session state.
 
 Not present, by design (see [DEPLOYMENT.md](./DEPLOYMENT.md)):
 centralized/server inference · edge hardware (ESP32-CAM, Pi, Jetson) ·
-weight sensors · cloud sync and analytics · mobile control app · containers.
+weight sensors · cloud sync and analytics · mobile control app · payment capture.
+
+---
+
+## 10. Self-checkout and the basket ledger
+
+The desktop's **main process** (not the renderer) runs the self-checkout loop, because the renderer
+cannot reach pushcart-web and the shared secret must not travel into a page.
+
+```mermaid
+flowchart LR
+    subgraph PC["SCANnCART PC"]
+        SC["Sidecar\nWS frames: fresh boxes + track ids"]
+        BT["BasketTracker\nmain process"]
+        SM["Transfer state machine\noutside → opening → inside"]
+        LG["Basket ledger\n+1 / −1 / review"]
+        OR["POS orchestrator\nbind · sync · backoff"]
+    end
+    subgraph WEB["pushcart-web (shop LAN)"]
+        API["/api/pos/session · /api/pos/sync"]
+        DB[("Supabase\ncarts · stock · orders")]
+    end
+    TAB[/"Cart tablet"/]
+
+    SC --> BT --> SM --> LG --> OR
+    OR -- "poll session (1 s / 5 s)" --> API
+    OR -- "POST full cart on change + 15 s heartbeat" --> API
+    API --> DB --> TAB
+```
+
+| Piece | Rule |
+| --- | --- |
+| Evidence | Only *fresh* (newly analysed), *tracked* detections at or above the scanner's own confidence threshold count. |
+| Deposit / removal | ≥ 2 sightings at the origin, a sighting in the opening, ≥ 2 at the destination, then a 0.4 s hold there. |
+| Fast hands | A new track id of the same product within 0.6 s and 400 units of a lost one continues its path; it never takes over an item still in view. |
+| Review | Ambiguity (product change, jump, two items crossing within 0.5 s, lost > 5 s, no origin, a removal of what is not held, a non-empty basket at Start, camera blind) holds the bill and blocks Finish until staff press **Basket checked**. |
+| Sync | The whole cart is posted as desired state; `pos_reconcile` makes the rows match, so a repeat never duplicates. `409` ends the session; other failures back off up to 30 s. |
+| Modes | `basket` posts the ledger; `counter` posts what is visible (3 s to add, 10 s to drop) and keeps the ledger as a shadow. The basket is the product. |
+
+Details: [POS_INTEGRATION.md](./POS_INTEGRATION.md) (setup and operation) and
+[CART_TRANSFER_SPEC.md](./CART_TRANSFER_SPEC.md) (the transfer rules and their acceptance gates).

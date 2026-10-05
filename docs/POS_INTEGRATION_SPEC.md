@@ -1,6 +1,6 @@
 # Spec: SCANnCART → pushcart-web Automatic Self-Checkout Integration
 
-Status: **Ready for implementation** · Date: 2026-10-01
+Status: **Implemented** (both repos, 2026-10-01 → 2026-10-05) · Date: 2026-10-01 · operation and setup: [POS_INTEGRATION.md](POS_INTEGRATION.md)
 Repos: **SCANnCART** (this checkout, Electron desktop) + **pushcart-web** (`C:\codes\pushcart-web`, Next.js + Supabase POS/inventory).
 Reviewer note: file paths, routes, table/enum names were verified against both checkouts on 2026-10-01. pushcart-web uses `yarn` (its `yarn.lock` is authoritative; there is no `package-lock.json`).
 

@@ -30,9 +30,11 @@ live frame stream, REST for start/stop/health/logs).
 - **[`desktop/`](desktop/README.md)** — Electron + React + TypeScript UI:
   spawns/supervises the sidecar, renders the live view.
 
-The optional **self-checkout integration** adds one hop: a counter tablet runs a
+The optional **self-checkout integration** adds one hop: a cart tablet runs a
 separate checkout (pushcart-web) that owns the cart, the order and the stock,
-and this app feeds it what the camera sees on the counter. It is off until an
+and this app feeds it the basket's contents: in **basket** mode a product
+carried into the basket adds one and one carried out removes one, and anything
+ambiguous waits for a staff check. It is off until an
 admin configures it. [`docs/POS_INTEGRATION.md`](docs/POS_INTEGRATION.md) is the
 setup, the operator-less flow and the troubleshooting table; the ordered run
 through both halves, to do before the shop goes live, is
@@ -147,7 +149,7 @@ Two things worth expecting on first launch:
 - The first capture start downloads the stock `yolo11n.pt` weights into
   `sidecar/`. That is the only download the default path makes; leave those
   weights where they land rather than moving them into `sidecar/models/`.
-- A Logitech StreamCam can take ~37 s to open and set its 1080p mode. That is
+- A Logitech StreamCam can take ~37 s to open and set its capture mode. That is
   the device, not a hang — `/api/health` keeps answering throughout, and a
   frame that never arrives is reported as an `error` status after a 3 s
   deadline.
