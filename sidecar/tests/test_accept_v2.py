@@ -479,6 +479,19 @@ def test_the_sweep_note_says_whether_the_count_is_the_model_or_the_threshold():
     assert "0.9:14" in accept_v2.sweep_note(moved)
 
 
+def test_the_sweep_reads_the_number_the_verdict_reads():
+    """A doubled detection that NMS merges at a lower iou moves the raw report and not the count of
+    truly crowded frames found - so the sweep has to speak about the latter, or it says the row's
+    number moves when it did not."""
+    sweep = {
+        0.5: {"crowded_frames": 3, "crowded_found": 2},
+        0.7: {"crowded_frames": 5, "crowded_found": 2},
+        0.9: {"crowded_frames": 6, "crowded_found": 2},
+    }
+    note = accept_v2.sweep_note(sweep)
+    assert "does not move" in note and "0.5:2" in note
+
+
 def test_the_crowding_claim_is_made_per_distance_and_the_total_cannot_answer_it():
     """The blind spot the per-distance rows exist for: a total that *rises* while the cell the
 dataset was re-shot for falls. `far` loses both its crowded frames and the whole-split rule is

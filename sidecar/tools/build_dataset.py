@@ -404,7 +404,9 @@ def remap_rows(text: str, names: list[str] | None) -> tuple[list[str], list[str]
 NESTED_TOLERANCE = 0.02
 
 
-def drop_nested_rows(rows: list[str], tolerance: float = NESTED_TOLERANCE) -> tuple[list[str], int]:
+def drop_nested_rows(
+    rows: list[str], tolerance: float = NESTED_TOLERANCE
+) -> tuple[list[str], int, list[str]]:
     """The rows with every box that lies inside a larger box *of the same product* removed.
 
     v1-era labels hold a second, partial box around a part of the item - the "555" logo inside a
@@ -416,12 +418,22 @@ def drop_nested_rows(rows: list[str], tolerance: float = NESTED_TOLERANCE) -> tu
 
     Boxes are kept largest first, so of two identical boxes one survives. Rows of different products
     never affect each other: a small item in front of a large one is two items. Returns
-    `(rows, dropped)`, in the input order.
+    `(rows, dropped, problems)`, rows in the input order; a row whose numbers do not parse is a
+    problem rather than an exception, so the caller refuses the frame the way it refuses any other
+    unreadable row instead of the whole build dying on it.
+
+    Applied to v1's side only. The tolerance is absolute, so two of one product at `far` - one
+    standing just behind the other - could read as nested, and the crowded `mid`/`far` frames are
+    v2's captures, labelled one box per item. On the v1 export every one of the 292 boxes it drops
+    was checked against its frame: logo, label panel or picture, never a second item.
     """
     parsed = []
     for index, row in enumerate(rows):
-        cls, cx, cy, w, h = row.split()[:5]
-        cx, cy, w, h = float(cx), float(cy), float(w), float(h)
+        try:
+            cls, cx, cy, w, h = row.split()[:5]
+            cx, cy, w, h = float(cx), float(cy), float(w), float(h)
+        except ValueError:
+            return rows, 0, [f"row is not a readable box: {row[:60]!r}"]
         parsed.append((index, cls, (cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2), w * h))
     kept: list[tuple[int, str, tuple[float, float, float, float]]] = []
     for index, cls, box, _area in sorted(parsed, key=lambda item: (-item[3], item[0])):
@@ -436,7 +448,7 @@ def drop_nested_rows(rows: list[str], tolerance: float = NESTED_TOLERANCE) -> tu
         if not inside:
             kept.append((index, cls, box))
     keep = {index for index, _cls, _box in kept}
-    return [row for index, row in enumerate(rows) if index in keep], len(rows) - len(keep)
+    return [row for index, row in enumerate(rows) if index in keep], len(rows) - len(keep), []
 
 
 def nested_note(side: "Side") -> str:
@@ -527,7 +539,10 @@ def build_v1(v1_dir: Path, out: Path, size: int = SIZE) -> Side:
                 # Not written: a frame whose boxes could not be translated would train as a
                 # background frame, which is a worse outcome than a loud refusal.
                 continue
-            rows, nested = drop_nested_rows(rows)
+            rows, nested, nested_problems = drop_nested_rows(rows)
+            if nested_problems:
+                side.problems.extend(f"{split}/{image.name}: {p}" for p in nested_problems)
+                continue
             side.nested += nested
             write_frame(image, rows, out, split, image.name, size)
             side.placed[image.name] = split
@@ -769,8 +784,6 @@ def build_v2(
             side.problems.append(f"{split}/{frame.name}: {detail}")
         if row_problems:
             continue
-        rows, nested = drop_nested_rows(rows)
-        side.nested += nested
         write_frame(frame.image, rows, out, split, frame.name, size)
         if frame.slug:
             # `frame.slug` is the manifest's `class` - the class the frame was staged as, which is
@@ -790,8 +803,6 @@ def build_v2(
         if frame.machine_only:
             side.machine_only[split] += 1
 
-    if side.nested:
-        side.notes.append(nested_note(side))
     if unassigned:
         message = (
             f"{len(unassigned)} decided frame(s) have no split in {v2_dir / SPLITS_NAME}: "

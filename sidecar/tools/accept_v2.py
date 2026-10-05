@@ -477,7 +477,10 @@ def sweep_note(sweep: dict[float, dict]) -> str:
     only meaningful with the threshold printed beside it; if it does not, the count is the model's,
     and a later change to the detector's NMS cannot rewrite this acceptance.
     """
-    values = {iou: block["crowded_frames"] for iou, block in sorted(sweep.items())}
+    # The verdict's own number when the labels were read (`crowded_found`), so the sweep speaks
+    # about the count in the row above it; the raw report only for a block measured without them.
+    key = "crowded_found" if all("crowded_found" in b for b in sweep.values()) else "crowded_frames"
+    values = {iou: block[key] for iou, block in sorted(sweep.items())}
     spread = ", ".join(f"{iou:g}:{count}" for iou, count in values.items())
     if len(set(values.values())) == 1:
         return (
@@ -1023,7 +1026,8 @@ def main(argv: list[str] | None = None, yolo=None, predict_factory=None) -> int:
                                 group,
                                 args.conf,
                                 value,
-                            )
+                            ),
+                            truth,
                         )
                         for value in IOU_SWEEP
                     }
@@ -1035,7 +1039,8 @@ def main(argv: list[str] | None = None, yolo=None, predict_factory=None) -> int:
                             images,
                             args.conf,
                             value,
-                        )
+                        ),
+                        truth,
                     )
                     for value in IOU_SWEEP
                 }

@@ -1506,15 +1506,15 @@ def test_a_box_inside_a_larger_box_of_the_same_product_is_dropped():
     the box around the whole item stays."""
     whole = "3 0.500000 0.500000 0.600000 0.800000"
     logo = "3 0.450000 0.400000 0.200000 0.150000"
-    rows, dropped = build_dataset.drop_nested_rows([logo, whole])
-    assert rows == [whole] and dropped == 1
+    rows, dropped, problems = build_dataset.drop_nested_rows([logo, whole])
+    assert rows == [whole] and dropped == 1 and problems == []
 
 
 def test_nested_boxes_of_different_products_are_two_items():
     """A small item in front of a large one is two items, so the rule never crosses products."""
     large = "0 0.500000 0.500000 0.600000 0.800000"
     small = "4 0.450000 0.400000 0.200000 0.150000"
-    assert build_dataset.drop_nested_rows([large, small]) == ([large, small], 0)
+    assert build_dataset.drop_nested_rows([large, small]) == ([large, small], 0, [])
 
 
 def test_side_by_side_and_overlapping_boxes_of_one_product_are_kept():
@@ -1525,6 +1525,7 @@ def test_side_by_side_and_overlapping_boxes_of_one_product_are_kept():
     assert build_dataset.drop_nested_rows([left, right, overlapping]) == (
         [left, right, overlapping],
         0,
+        [],
     )
 
 
@@ -1532,13 +1533,31 @@ def test_a_box_sticking_out_within_the_tolerance_still_counts_as_inside():
     whole = "2 0.500000 0.500000 0.400000 0.400000"  # 0.30 .. 0.70
     edge = "2 0.405000 0.500000 0.230000 0.200000"  # left edge 0.29, 1% outside
     past = "2 0.390000 0.500000 0.240000 0.200000"  # left edge 0.27, 3% outside
-    assert build_dataset.drop_nested_rows([whole, edge]) == ([whole], 1)
-    assert build_dataset.drop_nested_rows([whole, past]) == ([whole, past], 0)
+    assert build_dataset.drop_nested_rows([whole, edge]) == ([whole], 1, [])
+    assert build_dataset.drop_nested_rows([whole, past]) == ([whole, past], 0, [])
 
 
 def test_of_two_identical_boxes_one_survives():
     row = "5 0.500000 0.500000 0.300000 0.300000"
-    assert build_dataset.drop_nested_rows([row, row]) == ([row], 1)
+    assert build_dataset.drop_nested_rows([row, row]) == ([row], 1, [])
+
+
+def test_a_box_row_whose_numbers_do_not_parse_refuses_the_frame_instead_of_the_build(tmp_path):
+    """`remap_row` passes a five-field row through without reading its numbers; this rule is the
+    first thing that does, so a bad one has to come back as a problem naming the file."""
+    good = "0 0.5 0.5 0.2 0.2"
+    bad = "0 0.5 0.5 abc 0.2"
+    rows, dropped, problems = build_dataset.drop_nested_rows([good, bad])
+    assert (rows, dropped) == ([good, bad], 0)
+    assert problems and "abc" in problems[0]
+
+    v1 = _export_with_names(
+        tmp_path / "export-v1", {"train": ["a.jpg"], "valid": ["b.jpg"], "test": ["c.jpg"]}
+    )
+    (v1 / "train" / "labels" / "a.txt").write_text(f"{good}\n{bad}\n", encoding="utf-8")
+    side = build_dataset.build_v1(v1, tmp_path / "staging")
+    assert any(p.startswith("train/a.jpg: row is not a readable box") for p in side.problems)
+    assert "a.jpg" not in side.placed
 
 
 def test_the_merge_writes_one_box_per_item_and_reports_the_count(tmp_path):
