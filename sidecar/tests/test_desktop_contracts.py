@@ -214,7 +214,7 @@ NULL_CONTROL_CONTRACT = WordingContract(
         ),
     ),
     (
-        "CLAUDE.md",
+        "sidecar/app/CLAUDE.md",
         (
             "A queued `None` is **not** a skip",
             "the device keeps the last value it was given until something writes it again",
@@ -398,7 +398,7 @@ ROSTER_FINDING_CONTRACT = WordingContract(
         ),
     ),
     (
-        "CLAUDE.md",
+        "sidecar/app/CLAUDE.md",
         (
             "reports as one product under three labels with no error anywhere",
             "Surfaced on `DetectorProbeResponse.class_warnings` from both probe branches",
@@ -547,7 +547,7 @@ RESIZE_REMEDY_CONTRACT = WordingContract(
             ),
         ),
         (
-            "CLAUDE.md",
+            "sidecar/app/CLAUDE.md",
             (
                 "a frozen `ResizeGuess(mode, warning, remedy)`",
                 "It left the flat list to gain a remedy",

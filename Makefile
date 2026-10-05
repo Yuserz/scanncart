@@ -176,7 +176,7 @@ verify-clamp:
 # one population a scene can fail to offer at all, so a run that has to *prove* it was exercised -
 # a release check, or a scene someone has just lit - passes `UNSURE_REQUIRE_BAND=1`.
 # It also fails when the cost it measures stops matching `MEASURED_COST` in `app/acceptance.py`, which
-# is the one place those figures live: the settings comments, the desktop field hints and `CLAUDE.md`
+# is the one place those figures live: the settings comments, the desktop field hints and `sidecar/app/CLAUDE.md`
 # are checked against that record by `tests/test_cost_figures.py`, and only a real measurement can
 # notice it has gone stale - which is why the claim sits here rather than in the suite.
 # Same data needs as `verify-clamp` (an installed weight and the staged negatives), plus a camera -

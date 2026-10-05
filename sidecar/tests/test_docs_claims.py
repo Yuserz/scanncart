@@ -71,6 +71,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # guard was written; covering that file honestly means an arm that reads targets as targets.
 DOCS = (
     "CLAUDE.md",
+    "sidecar/app/CLAUDE.md",
+    "sidecar/tools/CLAUDE.md",
+    "desktop/CLAUDE.md",
+    "sidecar/tests/CLAUDE.md",
     "docs/RUN_SHEET.md",
     "docs/MODEL_TRAINING.md",
     ".claude/skills/run-desktop/SKILL.md",
@@ -122,7 +126,7 @@ EXEMPT: tuple[tuple[str, str, str], ...] = (
         "a UI value the docs say must never appear, not a roster size",
     ),
     (
-        "CLAUDE.md",
+        "desktop/CLAUDE.md",
         "`0 classes` would be a claim",
         "the same UI value, stated in the Live view's paragraph",
     ),

@@ -9,7 +9,7 @@ same-edit contract - was identical, so a third wording contract would have been
 a third copy of it. This module is that copy, taken once: a guard is now a
 `WordingContract` table plus three one-line tests.
 
-The convention (CLAUDE.md's `test_desktop_contracts` paragraph states it too):
+The convention (`sidecar/tests/CLAUDE.md`'s mirror-guard section states it too):
 
 - **Fragments, not sentences.** A surface may be reworded freely; losing the
   fact is what fails. The failure names the file and the missing fragment, so
