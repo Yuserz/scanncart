@@ -43,7 +43,7 @@ unchanged.
 | Area | What is in |
 | --- | --- |
 | Camera | Logitech StreamCam, USB, 1280×720 at 60 fps (MJPG, Media Foundation), app-side auto exposure |
-| Model | YOLO11s fine-tuned on 7 grocery SKUs (`scanncart-grocery-v1`); v2 dataset built, not yet trained |
+| Model | YOLO11s fine-tuned on 7 grocery SKUs: `scanncart-grocery-v2` (running; 96.7% mAP50 on the held-out test split), `scanncart-grocery-v1` kept installed |
 | Detection | Ultralytics `track()` (BoT-SORT), confidence cutoff, three shape filters for phantom boxes |
 | Cart logic | Basket ledger driven by a deposit/removal state machine over three zones (outside / opening / inside) |
 | Customer UI | pushcart-web tablet pages: Start shopping, live read-only cart and total, Finish |

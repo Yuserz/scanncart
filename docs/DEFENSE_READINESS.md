@@ -9,8 +9,9 @@ StreamCam, local pushcart-web on Supabase).
 **Ready to defend as a working, integrated prototype; not ready to claim measured deposit/removal
 accuracy.** Every component is built, wired end to end and covered by automated tests, and the
 live system meets the speed and latency targets. What is missing is evidence on a real cart: the
-cart mount does not exist yet, so the transfer acceptance gates (A–C) have not been run, and the
-retrained v2 model is built as a dataset but not trained.
+cart mount does not exist yet, so the transfer acceptance gates (A–C) have not been run. The app
+runs the retrained **v2** model (trained 2026-10-05/06), which is better than v1 on the same test
+images overall and at distance, with one product (Lucky Me) that regressed.
 
 Say it that way at the defense: the claims below marked **Met** are measured; the ones marked
 **Implemented, unmeasured** are designed, tested on synthetic data and demonstrable at a desk, but
@@ -20,7 +21,7 @@ have no field accuracy number.
 
 | ID | Requirement | Status | Evidence |
 | --- | --- | --- | --- |
-| F1 | ≥ 30 analysed frames/s | **Met** | Live: capture 60–61 fps, analysis 46–59 fps, 14–19 ms per frame (2026-10-05 soak samples) |
+| F1 | ≥ 30 analysed frames/s | **Met** | Live: capture 60–61 fps, analysis 46–59 fps, 14–19 ms per frame (2026-10-05 soak samples, v1); v2: capture 62 fps, analysis ~45 fps (2026-10-06) |
 | F2 | Boxes, names, confidence on screen | **Met** | Live view overlay; Basket test labels each box with product, confidence and track id |
 | F3 | +1 on deposit, −1 on removal, hidden items stay billed | **Implemented, unmeasured** | State machine + ledger; 557+ desktop tests incl. 60 fps fast-hand and id-switch cases; desk practice mode. No cart footage (Gates A–C not run) |
 | F4 | Ambiguity → review, Finish blocked | **Met** (integration) | Desktop review rules; pushcart-web `pos_finish` refuses while `pending_review > 0`; `scripts/pos-e2e.sh` against the local stack; observed live on 2026-10-05 (a desk item produced "removal of … not in the basket", Finish disabled) |
@@ -39,15 +40,33 @@ have no field accuracy number.
 
 ## Model metrics
 
-| Metric | Target | Result | Status |
-| --- | --- | --- | --- |
-| mAP50, v1 test split (200 images) | ≥ 90% | 96.5% (P 98.2%, R 94.3%) | **Met** |
-| Per-class recall ≥ 0.85, v1 test split | every SKU | 6 of 7; 555 Sardines 0.732 | **Not met** (one SKU) |
-| Recall at the app's settings, merged v2 test (272 images) | — | 85.8% at conf 0.50; 77.8% at conf 0.85 | Reported |
-| Recall on **far** items | — | 17.6% at 0.50; 0% at 0.85 (17 items) | **Known weakness** — the reason v2 exists |
+The app runs **`scanncart-grocery-v2`** (YOLO11s, 100 epochs, 640×640 stretched, trained on the
+merged set's 2,210 images). Both models measured by `make accept-v2` on the same 272 held-out test
+images (325 boxes), each in its own class order, at conf 0.5:
 
-Precision is high everywhere (95.5–98.4%): when the model names a product it is almost always right.
-The weakness is items far from the camera and two SKUs (Sardines, Milo).
+| Metric | Target | v1 | **v2 (running)** | Status |
+| --- | --- | --- | --- | --- |
+| mAP50 | ≥ 90% | 90.7% | **96.7%** | **Met** |
+| Precision | — | 96.1% | **99.1%** | — |
+| Recall | — | 88.0% | **94.6%** | — |
+| mAP50–95 | — | 86.5% | **89.7%** | — |
+| Per-class recall ≥ 0.85 | every SKU | 4 of 7 | **6 of 7** — Lucky Me 0.794 | **Not met** (one SKU) |
+| Recall at mid / far distance (`--val`) | ≥ 0.85 | far 17.6% (conf 0.5, earlier probe) | **100% at every distance, every class** (small cells: 14 mid, 17 far) | **Met** (indicative) |
+
+Per class, v1 → v2: Bear Brand 0.92 → 1.00, Milo 0.63 → 1.00, 555 Sardines 0.75 → 0.86, Century
+Tuna 1.00 → 1.00, Safeguard 0.93 → 0.97, Silver Swan 0.99 → 1.00, **Lucky Me 0.95 → 0.79**. v2 gets
+every distance-tagged Lucky Me frame right; its misses are among the older v1-era photos.
+
+**The acceptance gate (`make accept-v2`) did not pass**, for two reasons, and v2 was switched in by
+decision anyway (2026-10-06):
+
+1. **Lucky Me regressed** (above) — real; the fix is more Lucky Me photos and a retrain.
+2. **"Fewer crowded frames found than v1"** — a flaw in the check, not in v2. It counts frames where
+   a model *reports* two or more items without comparing with the labels. The labels hold **0**
+   truly crowded frames at mid (v1 reported 3, v2 0) and **2** at close (v1 6, v2 1), so v1's lead
+   is its own duplicate detections. The check should count only frames that truly hold two items.
+
+v1 stays installed and is one click away in Admin → Model.
 
 ## Open risks for the defense day
 
@@ -59,11 +78,14 @@ The weakness is items far from the camera and two SKUs (Sardines, Milo).
 | The self-checkout config defaults to **Counter** mode | by design | Set **Basket** in Admin → Self-checkout before the demo (done on this machine) |
 | Four leftover test stations in the local database | 2026-10-05 | A `cart-1` station sorts first and is what the desktop is set to |
 | Low light lowers detection confidence | — | Auto exposure holds picture brightness at 60 fps; keep the demo area lit |
+| **Restore Defaults** in Admin puts the model back to v1 (the code default) | by design until the default is changed | Do not press it on the demo machine, or reselect `scanncart-grocery-v2` after |
+| Lucky Me is v2's weakest product (0.79) | 2026-10-06 | Demo with the other six first; more Lucky Me photos + retrain fixes it |
 
 ## Not done (state plainly if asked)
 
 1. **Gates A–C** of the transfer spec: no recorded cart footage, so no deposit/removal accuracy number.
-2. **v2 model**: dataset built (2,210 / 494 / 272 images, distance-tagged), not trained or accepted.
+2. **v2 acceptance**: v2 is trained and running, but it has not passed `make accept-v2` (Lucky Me
+   regressed; the crowding check needs fixing to compare against the labels).
 3. **Physical cart mount**: all transfer testing is at a desk with practice mode.
 4. **Empty-basket negatives** from the cart's view are not in training.
 5. **Payment**: Finish creates the order and deducts stock; no payment is taken.
