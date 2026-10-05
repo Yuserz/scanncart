@@ -335,6 +335,12 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
     type: 'list'
   },
   {
+    key: 'camera_auto_exposure',
+    label: 'Auto exposure',
+    hint: 'Keeps the picture evenly lit as the light changes, without lowering the framerate: it holds the shutter at the longest the capture fps allows and adjusts brightness, shortening the shutter only when the scene is too bright. Turn it off to set brightness and exposure by hand.',
+    type: 'boolean'
+  },
+  {
     key: 'camera_brightness',
     label: 'Brightness',
     hint: 'Post-sensor boost — no framerate cost, but amplifies noise. Try exposure first. Unset means this app imposes no value — the device keeps the last value it was given.',
@@ -412,7 +418,13 @@ export const SETTINGS_GROUPS: FieldGroup[] = [
   {
     label: 'Image',
     home: 'live',
-    keys: ['camera_brightness', 'camera_exposure', 'camera_autofocus', 'camera_focus']
+    keys: [
+      'camera_auto_exposure',
+      'camera_brightness',
+      'camera_exposure',
+      'camera_autofocus',
+      'camera_focus'
+    ]
   },
   {
     label: 'Detection',

@@ -87,6 +87,19 @@ describe('CameraTuning', () => {
     await waitFor(() => expect(screen.getByLabelText('Focus')).toBeDisabled())
   })
 
+  it('locks brightness and exposure while auto exposure adjusts them', async () => {
+    renderCard({ getSettings: async () => baseSettings({ camera_auto_exposure: true }) })
+    await waitFor(() => expect(screen.getByLabelText('Brightness')).toBeDisabled())
+    expect(screen.getByLabelText('Exposure')).toBeDisabled()
+    expect(screen.getByLabelText('Auto exposure')).toBeChecked()
+  })
+
+  it('hands brightness and exposure back when auto exposure is off', async () => {
+    renderCard({ getSettings: async () => baseSettings({ camera_auto_exposure: false }) })
+    await waitFor(() => expect(screen.getByLabelText('Brightness')).toBeEnabled())
+    expect(screen.getByLabelText('Exposure')).toBeEnabled()
+  })
+
   it('shows the live quality readout', async () => {
     renderCard()
     expect(await screen.findByTestId('tuning-quality')).toHaveTextContent('29.4')

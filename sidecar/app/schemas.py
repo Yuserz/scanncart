@@ -209,6 +209,7 @@ class SettingsPayload(BaseModel):
     camera_exposure: float | None
     camera_autofocus: bool | None
     camera_focus: float | None
+    camera_auto_exposure: bool
 
 
 class UnrecordedResizeMode(BaseModel):
@@ -308,6 +309,7 @@ class SettingsUpdateRequest(BaseModel):
     )
     camera_autofocus: bool | None = None
     camera_focus: float | None = Field(default=None, ge=FOCUS_RANGE[0], le=FOCUS_RANGE[1])
+    camera_auto_exposure: bool | None = None
 
     # exclude_none=True means a patch can never send a field back to null, so
     # without this Revert cannot restore "this app imposes no value" — which is

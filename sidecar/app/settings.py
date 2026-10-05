@@ -124,6 +124,12 @@ class Settings:
     camera_exposure: float | None = None
     camera_autofocus: bool | None = None
     camera_focus: float | None = None
+    # The app's own auto-exposure (CameraCapture's AutoExposure): it keeps the shutter at the
+    # longest the capture fps allows and moves brightness to hold the picture's level, so the
+    # view follows the room's light without the framerate loss the camera's built-in automatic
+    # exposure causes (measured 12 fps). While on, camera_brightness/camera_exposure are only
+    # its starting point. Hot-reloadable.
+    camera_auto_exposure: bool = True
 
     # Which detector implementation backs capture. "native" runs the weights in
     # this process (the only backend that satisfies the PRD's offline promise);
