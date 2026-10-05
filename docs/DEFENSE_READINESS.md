@@ -10,8 +10,8 @@ StreamCam, local pushcart-web on Supabase).
 accuracy.** Every component is built, wired end to end and covered by automated tests, and the
 live system meets the speed and latency targets. What is missing is evidence on a real cart: the
 cart mount does not exist yet, so the transfer acceptance gates (A–C) have not been run. The app
-runs the retrained **v2** model (trained 2026-10-05/06), which is better than v1 on the same test
-images overall and at distance, with one product (Lucky Me) that regressed.
+runs the retrained **v2** model (retrained 2026-10-06 on cleaned labels), which beats v1 on the
+same test images overall, per product and at every distance.
 
 Say it that way at the defense: the claims below marked **Met** are measured; the ones marked
 **Implemented, unmeasured** are designed, tested on synthetic data and demonstrable at a desk, but
@@ -40,33 +40,44 @@ have no field accuracy number.
 
 ## Model metrics
 
-The app runs **`scanncart-grocery-v2`** (YOLO11s, 100 epochs, 640×640 stretched, trained on the
-merged set's 2,210 images). Both models measured by `make accept-v2` on the same 272 held-out test
-images (325 boxes), each in its own class order, at conf 0.5:
+The app runs **`scanncart-grocery-v2`** (YOLO11s, 100 epochs, 640×640 stretched), retrained
+2026-10-06 on a rebuilt merged set (2,134 train / 494 valid / 277 test images). The rebuild cleaned
+the labels: the old v1-era photos carried a second, partial box inside the box around an item (the
+"555" logo on a sardines can, the noodle picture on a Lucky Me pouch), which taught the model to
+draw both and scored a correct one-box detection as a miss. The merge now keeps one box per item
+(`build_dataset.drop_nested_rows`, v1 photos only — 292 boxes dropped, every one checked against its
+frame); the labels re-annotated in Roboflow were pulled in and the photos deleted there left out.
 
-| Metric | Target | v1 | **v2 (running)** | Status |
-| --- | --- | --- | --- | --- |
-| mAP50 | ≥ 90% | 90.7% | **96.7%** | **Met** |
-| Precision | — | 96.1% | **99.1%** | — |
-| Recall | — | 88.0% | **94.6%** | — |
-| mAP50–95 | — | 86.5% | **89.7%** | — |
-| Per-class recall ≥ 0.85 | every SKU | 4 of 7 | **6 of 7** — Lucky Me 0.794 | **Not met** (one SKU) |
-| Recall at mid / far distance (`--val`) | ≥ 0.85 | far 17.6% (conf 0.5, earlier probe) | **100% at every distance, every class** (small cells: 14 mid, 17 far) | **Met** (indicative) |
+All three weights measured by `make accept-v2` on the same 277 held-out test images (279 boxes),
+each in its own class order, at conf 0.5:
 
-Per class, v1 → v2: Bear Brand 0.92 → 1.00, Milo 0.63 → 1.00, 555 Sardines 0.75 → 0.86, Century
-Tuna 1.00 → 1.00, Safeguard 0.93 → 0.97, Silver Swan 0.99 → 1.00, **Lucky Me 0.95 → 0.79**. v2 gets
-every distance-tagged Lucky Me frame right; its misses are among the older v1-era photos.
+| Metric | Target | v1 | v2 (first, 10-06) | **v2 (running)** | Status |
+| --- | --- | --- | --- | --- | --- |
+| mAP50 | ≥ 90% | 89.8% | 98.1% | **99.4%** | **Met** |
+| Precision | — | 89.9% | 95.3% | **99.7%** | — |
+| Recall | — | 91.3% | 99.2% | **99.6%** | — |
+| mAP50–95 | — | 85.2% | 91.1% | **93.2%** | — |
+| Per-class recall ≥ 0.85 | every SKU | 6 of 7 (Milo 0.63) | 7 of 7 | **7 of 7** (lowest Safeguard 0.975) | **Met** |
+| Recall at close / mid / far (`--val`) | ≥ 0.85 | — | — | **every class ≥ 0.91 at every distance** (small cells: 46 / 14 / 17 frames) | **Met** (indicative) |
+| Frames with a doubled detection | — | 37 | 33 | **0** | — |
 
-**The acceptance gate (`make accept-v2`) did not pass**, for two reasons, and v2 was switched in by
-decision anyway (2026-10-06):
+These numbers are on the cleaned labels, so they are not comparable with the earlier table that
+had v2 at 96.7% and Lucky Me at 0.794 — that Lucky Me figure was the partial boxes, not the model.
 
-1. **Lucky Me regressed** (above) — real; the fix is more Lucky Me photos and a retrain.
-2. **"Fewer crowded frames found than v1"** — a flaw in the check, not in v2. It counts frames where
-   a model *reports* two or more items without comparing with the labels. The labels hold **0**
-   truly crowded frames at mid (v1 reported 3, v2 0) and **2** at close (v1 6, v2 1), so v1's lead
-   is its own duplicate detections. The check should count only frames that truly hold two items.
+**The acceptance gate still reports "not accepted"**, for a reason that is about the test images,
+not the model: its crowding claim needs test frames holding two or more items at mid and far, and
+there are none (the only two crowded test frames are stacked Safeguard bars at close). With no crowd
+to find it reports "not measured", which the gate treats as a failure. The check itself now scores
+against the labels, so a model is no longer rewarded for doubled detections.
 
-v1 stays installed and is one click away in Admin → Model.
+**Known weakness — phantoms on a blank or empty view.** With no product in frame, the new weight
+often reports one whole-frame box (mostly 555 Sardines): 44 of 50 stored empty-counter photos at
+conf 0.8 (the first v2: 12), and 217 of 227 frames of a live 30 s window with the camera facing a
+blank grey surface. The app's frame-edge filter (on by default) removed every one of them — the item
+log stayed empty — so the app behaves correctly, but it depends on that filter. Training with
+empty-basket photos from the cart's view is the fix.
+
+v1 and the first v2 (`scanncart-grocery-v2-prev`) stay installed, one click away in Admin → Model.
 
 ## Open risks for the defense day
 
@@ -79,22 +90,29 @@ v1 stays installed and is one click away in Admin → Model.
 | Four leftover test stations in the local database | 2026-10-05 | A `cart-1` station sorts first and is what the desktop is set to |
 | Low light lowers detection confidence | — | Auto exposure holds picture brightness at 60 fps; keep the demo area lit |
 | **Restore Defaults** in Admin puts the model back to v1 (the code default) | by design until the default is changed | Do not press it on the demo machine, or reselect `scanncart-grocery-v2` after |
-| Lucky Me is v2's weakest product (0.79) | 2026-10-06 | Demo with the other six first; more Lucky Me photos + retrain fixes it |
+| v2 reports a whole-frame phantom (mostly 555 Sardines) on a blank or empty view; only the frame-edge filter keeps it out of the log | 2026-10-06 | Keep **Drop frame-edge phantoms** on; empty-basket photos from the cart + retrain fixes it |
+| Two items stacked on top of each other (seen with Safeguard bars) are counted as one | 2026-10-06 | Demo with items side by side |
 
 ## Not done (state plainly if asked)
 
 1. **Gates A–C** of the transfer spec: no recorded cart footage, so no deposit/removal accuracy number.
-2. **v2 acceptance**: v2 is trained and running, but it has not passed `make accept-v2` (Lucky Me
-   regressed; the crowding check needs fixing to compare against the labels).
+2. **v2 acceptance**: every per-class and distance number passes, but `make accept-v2` cannot
+   measure crowding at mid/far — the test set has no multi-item frame there. Needs a few test
+   captures with 2+ items at mid and far.
 3. **Physical cart mount**: all transfer testing is at a desk with practice mode.
-4. **Empty-basket negatives** from the cart's view are not in training.
+4. **Empty-basket negatives** from the cart's view are not in training (the cause of the phantom
+   weakness above).
+6. **Dataset clean-up in Roboflow**, in progress: low-quality photos are being removed from
+   `snc-grocery` (Lucky Me 0144 done 2026-10-06; the rest next session). Each removal needs a
+   re-pull (`import_labels.py --force`), a rebuild and a retrain to reach the model.
 5. **Payment**: Finish creates the order and deducts stock; no payment is taken.
 
 ## Demo-day checklist
 
 1. Close NVIDIA Broadcast (and turn off its autostart), Discord and anything else that can hold the camera.
 2. Start Docker Desktop → `npx supabase start` and `npm run dev` in pushcart-web.
-3. Start SCANnCART; on **Live**, confirm Capture fps ≈ 60 and the model is `scanncart-grocery-v1`.
+3. Start SCANnCART; on **Live**, confirm Capture fps ≈ 60 and the model is `scanncart-grocery-v2`
+   with geometry `stretch` (Admin → `resize_mode` on `auto`).
 4. Admin → Self-checkout: station `cart-1`, mode **Basket**, *Test connection* answers 200.
 5. Basket test: zones match the table/basket in the picture; clear products out of the inside zone.
 6. Tablet: open `/customer/guest/scan-start`, tap **Start shopping**; the desktop shows *Customer session open*.
