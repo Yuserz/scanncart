@@ -73,7 +73,7 @@ station per tablet.
 
 | ID | Requirement |
 | --- | --- |
-| F1 | Detect and track the 7 SKUs at ≥ 30 frames analysed per second. |
+| F1 | Detect and track the 7 SKUs at ≥ 30 fps (frames analysed per second). |
 | F2 | Show bounding boxes, product names and confidence on the live view (and on the Basket test screen). |
 | F3 | Add one unit on a confirmed deposit and remove one on a confirmed removal; hidden items stay billed. |
 | F4 | Send ambiguous movements to review (bill unchanged) and block Finish until staff clear it. |
@@ -97,7 +97,7 @@ station per tablet.
 
 | Metric | Target |
 | --- | --- |
-| Analysed frames per second | ≥ 30 |
+| Analysed frames per second | ≥ 30 fps |
 | Camera-to-screen latency | < 150 ms |
 | Per-class recall on held-out images | ≥ 0.85 for every SKU (project floor) |
 | Overall detection accuracy | ≥ 90% (mAP50) |

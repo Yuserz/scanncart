@@ -1,14 +1,23 @@
 # SCANnCART
 
-A capstone prototype for grocery stores: a Logitech StreamCam feeds a Python
-sidecar running YOLO11 (Ultralytics) object detection + tracking, and an
-Electron + React desktop app shows the live annotated feed, per-item stats,
-and a session item log. Everything runs locally on one PC — no server, no
-cloud, no network dependency, except for the optional self-checkout integration
-below, whose one hop is to a checkout you host yourself. See
-[`docs/PRD.md`](docs/PRD.md) for the full product spec and
-[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for out-of-scope future work (edge
-hardware, cloud sync, etc).
+A capstone prototype for grocery stores: **a camera on a shopping cart** that
+recognises products as the customer puts them in or takes them out, and keeps the
+bill on the store's self-checkout tablet in step — no barcode scanning, no cashier.
+
+- A **Logitech StreamCam** on the cart (1280×720 at 60 fps) feeds a **Python
+  sidecar** that runs a YOLO11 model, fine-tuned on 7 grocery products, with
+  object tracking.
+- An **Electron + React desktop app** shows the live annotated feed, decides
+  which movements are deposits (+1) and removals (−1), and keeps the basket's
+  ledger.
+- **pushcart-web** — a separate checkout you host yourself — owns the cart, the
+  prices, the stock and the order, and runs the customer's tablet.
+
+Detection runs locally on one PC with no internet dependency; the only network
+hop is desktop → pushcart-web on the shop LAN. See [`docs/PRD.md`](docs/PRD.md)
+for the product spec, [`docs/DEFENSE_READINESS.md`](docs/DEFENSE_READINESS.md)
+for where every requirement stands, and [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
+for out-of-scope future work (edge hardware, cloud sync, etc).
 
 ## Architecture
 
@@ -30,12 +39,11 @@ live frame stream, REST for start/stop/health/logs).
 - **[`desktop/`](desktop/README.md)** — Electron + React + TypeScript UI:
   spawns/supervises the sidecar, renders the live view.
 
-The optional **self-checkout integration** adds one hop: a cart tablet runs a
-separate checkout (pushcart-web) that owns the cart, the order and the stock,
-and this app feeds it the basket's contents: in **basket** mode a product
-carried into the basket adds one and one carried out removes one, and anything
-ambiguous waits for a staff check. It is off until an
-admin configures it. [`docs/POS_INTEGRATION.md`](docs/POS_INTEGRATION.md) is the
+The **self-checkout integration** adds one hop: a cart tablet runs a separate
+checkout (pushcart-web) that owns the cart, the order and the stock, and this
+app feeds it the basket's contents. In **basket** mode a product carried into
+the basket adds one, one carried out removes one, and anything ambiguous holds
+the cart and waits for a staff check. It is off until an admin configures it. [`docs/POS_INTEGRATION.md`](docs/POS_INTEGRATION.md) is the
 setup, the operator-less flow and the troubleshooting table; the ordered run
 through both halves, to do before the shop goes live, is
 [`docs/POS_SMOKE_TEST.md`](docs/POS_SMOKE_TEST.md).
@@ -146,9 +154,14 @@ model picker, and a **Test connection** button for the detector backend.
 
 Two things worth expecting on first launch:
 
-- The first capture start downloads the stock `yolo11n.pt` weights into
-  `sidecar/`. That is the only download the default path makes; leave those
-  weights where they land rather than moving them into `sidecar/models/`.
+- **The grocery model is not in git.** The default model is
+  `sidecar/models/scanncart-grocery-v1.pt` with its record `scanncart-grocery-v1.json`
+  beside it; weights are gitignored, so copy both into `sidecar/models/` from the
+  team's share, or train them ([`docs/RUN_SHEET.md`](docs/RUN_SHEET.md)). Without them,
+  pick a stock model (e.g. `yolo11n.pt`) in **Admin → Model**: it downloads into
+  `sidecar/` on the first capture start and detects generic objects, not the store's
+  products. Leave stock weights where they land rather than moving them into
+  `sidecar/models/`.
 - A Logitech StreamCam can take ~37 s to open and set its capture mode. That is
   the device, not a hang — `/api/health` keeps answering throughout, and a
   frame that never arrives is reported as an `error` status after a 3 s
@@ -188,6 +201,41 @@ for `curl` checks and the GPU/Roboflow extras.
 | `make docs-check` / `make docs-sync` / `make docs-sync-check` | documentation links and code-owned numbers |
 | `make doctor`, `make accept-v2`, `make verify-clamp`, `make verify-unsure`, `make annotate`, `make human-pass` | dataset/training gates that need local data the repo does not carry |
 | `make verify-live-layout` | draws the built app in Electron and fails if the Live tab needs more than one screen (no local data, but a display) |
+| `make replay-scenarios` | replays recorded deposit/removal clips through the scorer (needs recorded clips) |
+| `make verify-pos-routes` / `make verify-pos-contract` | checks the self-checkout routes against a running pushcart-web / its source checkout |
+
+## Using it
+
+1. **Admin → Self-checkout:** enter the pushcart-web address, the shared secret and
+   this cart's station; choose **Basket**; *Save*; *Test connection*.
+2. **Basket test:** check the zones (outside / opening / inside) match the basket in
+   the picture. Every detected box is labelled with its product, confidence and
+   track id, and a **practice** session counts deposits and removals with no tablet.
+3. **Live:** start capture; confirm *Capture fps* reads about 60. Close NVIDIA
+   Broadcast, Discord or anything else that can hold the camera.
+4. **Tablet:** the customer taps **Start shopping**, puts products in or takes them
+   out, and taps **Finish**. A staff check (*Basket checked* on the desktop's Live
+   view) clears an ambiguous movement; staff can lower a quantity on the tablet with
+   the **staff code**, which an admin sets in pushcart-web's POS Mapping screen.
+
+## Documentation map
+
+| Doc | What it is for |
+| --- | --- |
+| [`docs/PRD.md`](docs/PRD.md) | The product requirements, numbered |
+| [`docs/DEFENSE_READINESS.md`](docs/DEFENSE_READINESS.md) | Each requirement's status and evidence, open risks, demo-day checklist |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | How the pieces fit, with diagrams |
+| [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | The long-form setup and troubleshooting |
+| [`docs/POS_INTEGRATION.md`](docs/POS_INTEGRATION.md) | Self-checkout setup, flow, basket mode, troubleshooting |
+| [`docs/POS_INTEGRATION_SPEC.md`](docs/POS_INTEGRATION_SPEC.md) | The integration spec both repos implement |
+| [`docs/POS_SMOKE_TEST.md`](docs/POS_SMOKE_TEST.md) | The joint go-live run through both halves |
+| [`docs/CART_TRANSFER_SPEC.md`](docs/CART_TRANSFER_SPEC.md) | The deposit/removal rules and their acceptance gates (A–C) |
+| [`docs/GATE_A_RUN_SHEET.md`](docs/GATE_A_RUN_SHEET.md) | The printable Gate A recording protocol |
+| [`docs/MODEL_TRAINING.md`](docs/MODEL_TRAINING.md) | Why the model is trained the way it is |
+| [`docs/RUN_SHEET.md`](docs/RUN_SHEET.md) | The shoot → label → train → validate → install chain, in order |
+| [`docs/CAPTURE_CHECKLIST.md`](docs/CAPTURE_CHECKLIST.md) | What to photograph for the dataset |
+| [`docs/DETECTOR_BACKENDS.md`](docs/DETECTOR_BACKENDS.md) | `native` vs `local_api` vs `cloud_api` |
+| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Out-of-scope future work |
 
 ## For agents
 
