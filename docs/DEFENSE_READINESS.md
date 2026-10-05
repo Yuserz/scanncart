@@ -33,7 +33,7 @@ have no field accuracy number.
 | — | Admin screens closed to customers | **Met** | `scripts/pos-admin-routes-e2e.mjs` (pushcart-web): an anonymous tablet session and a non-admin user are refused (403) on all 11 POS admin calls, an admin is allowed — 29/29 on 2026-10-05 |
 | N1 | Camera-to-screen < 150 ms | **Met (estimate)** | ≤ 17 ms frame wait + 19 ms analysis + 17 ms delivery to a WebSocket client + ~17 ms paint ≈ 70 ms. Component sum, not a photon-to-photon measurement |
 | N2 | Transfer → tablet ≤ 5 s (p95) | **Implemented, unmeasured** | Design: confirmation ~0.5 s after landing, posted immediately (~0.25 s round trip locally). Gate C would measure it |
-| N3 | ≥ 2 h continuous | **Partly measured** | 34 min unbroken before the session ended: scanner up throughout, memory flat, connections 4–11. Capture fell from 60 to ~30 fps at minute 18 — traced to NVIDIA Broadcast relaunching and taking the camera (see Soak result). A clean 2-hour run with Broadcast closed is still owed |
+| N3 | ≥ 2 h continuous | **Partly measured** | 34 min unbroken before the session ended: scanner up throughout, memory flat, connections 4–11. In two runs capture latched from 60 to ~30 fps at minute 18–23 (once with NVIDIA Broadcast closed); the scanner kept running but the camera's cause is unconfirmed (see Soak result) |
 | N4 | Detection with no internet | **Met** | Native backend, local weights; only the pushcart-web hop uses the LAN |
 | N5 | Modular, tested without hardware | **Met** | 560 desktop (Vitest) + 1,717 sidecar (pytest) tests on fakes; CI; POS contract check against pushcart-web's source |
 
@@ -53,7 +53,7 @@ The weakness is items far from the camera and two SKUs (Sardines, Milo).
 
 | Risk | Seen | Mitigation |
 | --- | --- | --- |
-| Capture drops from 60 to ~30 fps when NVIDIA Broadcast relaunches and attaches to the StreamCam (it restarts itself from the tray/autostart) | 2026-10-05, twice; reproduced with the app closed — a fresh process got 27–30 fps and the shutter control stopped changing the picture | Disable NVIDIA Broadcast's autostart; before the demo confirm it is not running and the Capture fps tile reads ≈ 60 |
+| Capture latches from 60 to ~30 fps after ~18–23 min of running; **cause not yet confirmed** | 2026-10-05, twice: once with NVIDIA Broadcast running, once with it closed. In that state a −9 shutter still gives ~30 fps (so it is not exposure), the camera ignores some exposure writes, and a stream reopen — even by a separate process — inherits it | Test the suspects: Logitech Options+ (its agent runs and can set the camera's low-light compensation), the camera's firmware low-light mode, USB power/bandwidth (another port; unplug/replug). Keep Broadcast's autostart off. Before the demo, check the Capture fps tile reads ≈ 60 |
 | The scanner refused requests (“Exceeded concurrency limit”, > 64 open connections) once, then the app closed | 2026-10-05, during repeated dev-mode reloads of the Basket test screen; idle connection count is 4–8 | The soak watches the connection count; avoid hot-reloading during the demo (run a normal build) |
 | Products on the desk inside the *inside* zone trigger review | 2026-10-05 | Clear the inside zone before Start; press **Basket checked** if it fires |
 | The self-checkout config defaults to **Counter** mode | by design | Set **Basket** in Admin → Self-checkout before the demo (done on this machine) |
@@ -91,8 +91,11 @@ sample, the scanner's memory and its open connections); stopped at 34 min when t
 | 18–34 min | 27–30 | 29–32 | 16.3–20.0 | 8.2–18.2 | 1,450–1,497 MB | 6–11 |
 
 The scanner never stopped answering, memory did not grow, and connections did not pile up. The
-drop at minute 18 was not the scanner: with the app closed, a bare OpenCV capture of the same
-camera also got 27–30 fps, the exposure control no longer changed the picture (it had, earlier
-the same day), and NVIDIA Broadcast was found running again. A capture-only test writing
-brightness five times a second ruled out the app's auto exposure (30 fps with and without the
-writes, in that state). **Owed:** a full 2-hour run with Broadcast closed and its autostart off.
+drop at minute 18 was not the scanner process: with the app closed, a bare OpenCV capture of the
+same camera also got 27–30 fps, and a capture-only test writing brightness five times a second
+ruled out the app's auto exposure (30 fps with and without the writes). NVIDIA Broadcast was
+running and was first suspected, but a **second run with Broadcast closed** (started 2026-10-05
+20:55) dropped the same way at minute 23, and a −9 shutter still gave ~30 fps — so the camera
+latches into a ~30 fps mode for a reason not yet found (see the risk table). In both runs the
+scanner's processes never restarted and connections stayed at 4–15. **Owed:** the cause, then a
+clean 2-hour run.
