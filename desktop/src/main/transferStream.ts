@@ -239,9 +239,27 @@ export class BasketTracker {
     }
     this.lastFreshT = t
 
+    const liveIds = new Set<number>()
+    for (const d of msg.detections) if (d.track_id !== null) liveIds.add(d.track_id)
+
     for (const d of msg.detections) {
       if (d.track_id === null) continue
       const box = frameBox(d.box, msg.mirrored === true)
+      const observation = {
+        seq: msg.seq,
+        t,
+        trackId: d.track_id,
+        className: d.cls,
+        conf: d.conf,
+        box
+      }
+      // A fresh id for an item the tracker just lost (fast motion) carries on its path, and its
+      // first region with it, so the baseline does not mistake it for a leftover either.
+      const replaced = this.machine.stitch(observation, liveIds)
+      if (replaced !== null) {
+        const entry = this.firstRegion.get(replaced)
+        if (entry) this.firstRegion.set(d.track_id, entry)
+      }
       const first = this.noteRegion(d.track_id, regionOf(this.machine.getRegions(), box), t)
 
       if (this.baselineUntil !== null && t <= this.baselineUntil && !this.baselineFlagged) {
@@ -252,14 +270,7 @@ export class BasketTracker {
         }
       }
 
-      const out = this.machine.observe({
-        seq: msg.seq,
-        t,
-        trackId: d.track_id,
-        className: d.cls,
-        conf: d.conf,
-        box
-      })
+      const out = this.machine.observe(observation)
       for (const e of out.events) {
         this.ledger.apply(e, this.zones)
         dirty = true

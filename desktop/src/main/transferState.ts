@@ -97,10 +97,26 @@ export interface TransferStateConfig {
    */
   confThreshold: number
   /**
-   * Maximum box displacement between consecutive observations *within one region*
-   * before the association is judged broken (in the caller's coordinate units).
+   * Box displacement allowed between consecutive observations *within one region* before the
+   * association is judged broken (in the caller's coordinate units), on top of `slopPerS`.
    */
   maxSideSlop: number
+  /**
+   * How far a box may additionally travel per second between two observations of one track. A
+   * fixed slop judged a hand moving at ordinary speed across a dropped frame or two as a broken
+   * identity; scaling with the gap keeps a teleport between consecutive frames suspicious while
+   * letting real motion through.
+   */
+  slopPerS: number
+  /**
+   * A track the sidecar's tracker lost and a *new* id of the same class appearing near it within
+   * this many seconds are the same item: fast hand motion blurs a product and the tracker hands
+   * out a fresh id mid-path, which sent a brisk deposit to review ("appeared in the opening") or
+   * expired it ("stopped being seen"). 0 disables stitching.
+   */
+  stitchGapS: number
+  /** The farthest (centre to centre) a stitched id may be from where the lost track was last seen. */
+  stitchMaxDist: number
   /**
    * Spec §2's endpoint hold: after reaching the destination the candidate must stay
    * there, still observed, for this many seconds before the transfer completes. This is
@@ -109,9 +125,10 @@ export interface TransferStateConfig {
    */
   endpointHoldS: number
   /**
-   * Two different tracks in the opening within this many seconds of each other are a
-   * simultaneous exchange or bundle — excluded from automatic commits (spec §2), so the
-   * completing candidate goes to review instead.
+   * Two different tracks *moving through* the opening within this many seconds of each other are
+   * a simultaneous exchange or bundle — excluded from automatic commits (spec §2), so the
+   * completing candidate goes to review instead. Only in-flight candidates count: an item resting
+   * with its centre on the rim is not a bundle, and must not send every later deposit to review.
    */
   concurrentOpeningS: number
 }
@@ -122,8 +139,14 @@ export const DEFAULT_TRANSFER_CONFIG: TransferStateConfig = {
   // The sidecar's default `conf_threshold` (`settings.py`), until the live value is read.
   confThreshold: 0.5,
   maxSideSlop: 150,
-  endpointHoldS: 1.0,
-  concurrentOpeningS: 1.0
+  slopPerS: 2000,
+  stitchGapS: 0.6,
+  stitchMaxDist: 400,
+  // Tuned down from the spec's provisional 1 s: at the 50–60 inferences a second the sidecar now
+  // delivers, 0.4 s is ~20 fresh sightings at the destination, and the full second the customer
+  // spent waiting for the cart to react was most of what made it feel slow.
+  endpointHoldS: 0.4,
+  concurrentOpeningS: 0.5
 }
 
 // ---------------------------------------------------------------------------
@@ -223,12 +246,29 @@ interface TrackHistory {
   lastOpeningT: number | null
   /** Last time the track was observed at all, for forgetting abandoned tracks. */
   lastT: number
+  /** What and where it was last seen, so a lost track can be stitched to the id that replaced it. */
+  className: string
+  lastBox: Box
 }
 
-function historyAt(region: Region, count: number, t: number): TrackHistory {
+function historyAt(region: Region, count: number, obs: Observation): TrackHistory {
   const counts: Record<Region, number> = { outside: 0, opening: 0, inside: 0 }
   counts[region] = count
-  return { visited: [region], counts, destSince: null, lastOpeningT: null, lastT: t }
+  return {
+    visited: [region],
+    counts,
+    destSince: null,
+    lastOpeningT: null,
+    lastT: obs.t,
+    className: obs.className,
+    lastBox: obs.box
+  }
+}
+
+function centreDistance(a: Box, b: Box): number {
+  const ca = center(a)
+  const cb = center(b)
+  return Math.hypot(ca.x - cb.x, ca.y - cb.y)
 }
 
 type Expired = { trackId: number; className: string; phase: TransferPhase; review: boolean }
@@ -279,13 +319,51 @@ export class TransferStateMachine {
     return [...this.candidates.values()]
   }
 
-  /** Another track seen in the opening close to `t` — a simultaneous exchange. */
+  /** Another in-flight track crossed the opening close to `t` — a simultaneous exchange. */
   private otherInOpening(trackId: number, t: number): boolean {
     for (const [id, h] of this.history) {
       if (id === trackId || h.lastOpeningT === null) continue
+      const phase = this.candidates.get(id)?.phase
+      if (phase !== 'inbound_pending' && phase !== 'outbound_pending') continue
       if (Math.abs(t - h.lastOpeningT) <= this.cfg.concurrentOpeningS) return true
     }
     return false
+  }
+
+  /**
+   * Re-key a lost track's history onto a new tracker id for the same item. Call it before
+   * `observe` with every id the current frame carries (`liveIds`): a track still in frame is a
+   * different item, however close. Picks the nearest same-class track last seen within
+   * `stitchGapS` and `stitchMaxDist`; returns the id it replaced, or null when nothing fits or the
+   * id is already known (the normal case).
+   */
+  stitch(obs: Observation, liveIds: ReadonlySet<number>): number | null {
+    if (this.cfg.stitchGapS <= 0 || this.history.has(obs.trackId)) return null
+    if (obs.conf < this.cfg.confThreshold) return null
+    let best: { id: number; dist: number } | null = null
+    for (const [id, h] of this.history) {
+      if (liveIds.has(id) || h.className !== obs.className) continue
+      const gap = obs.t - h.lastT
+      if (gap <= 0 || gap > this.cfg.stitchGapS) continue
+      const dist = centreDistance(h.lastBox, obs.box)
+      if (dist > Math.min(this.slop(gap), this.cfg.stitchMaxDist)) continue
+      if (best === null || dist < best.dist) best = { id, dist }
+    }
+    if (best === null) return null
+    const h = this.history.get(best.id) as TrackHistory
+    this.history.delete(best.id)
+    this.history.set(obs.trackId, h)
+    const cand = this.candidates.get(best.id)
+    if (cand) {
+      this.candidates.delete(best.id)
+      this.candidates.set(obs.trackId, { ...cand, trackId: obs.trackId })
+    }
+    return best.id
+  }
+
+  /** Displacement a track may cover in `dt` seconds without its identity being doubted. */
+  private slop(dt: number): number {
+    return this.cfg.maxSideSlop + this.cfg.slopPerS * Math.max(0, dt)
   }
 
   private remember(
@@ -325,7 +403,7 @@ export class TransferStateMachine {
       restart: boolean
     ): MachineOutput => {
       this.candidates.delete(obs.trackId)
-      if (restart) this.history.set(obs.trackId, historyAt(region, 1, obs.t))
+      if (restart) this.history.set(obs.trackId, historyAt(region, 1, obs))
       else this.history.delete(obs.trackId)
       return {
         events: [],
@@ -353,14 +431,17 @@ export class TransferStateMachine {
           false
         )
       }
-      if (region === regionOf(this.regions, existing.lastBox) && drift > this.cfg.maxSideSlop) {
+      const allowed = this.slop(obs.t - existing.lastT)
+      if (region === regionOf(this.regions, existing.lastBox) && drift > allowed) {
         return drop('uncertain', true, `box jumped ${Math.round(drift)}px within ${region}`, false)
       }
     }
 
-    const h = this.history.get(obs.trackId) ?? historyAt(region, 0, obs.t)
+    const h = this.history.get(obs.trackId) ?? historyAt(region, 0, obs)
     this.history.set(obs.trackId, h)
     h.lastT = obs.t
+    h.className = obs.className
+    h.lastBox = obs.box
     if (h.visited[h.visited.length - 1] !== region) h.visited.push(region)
     // Counted over observations, not region changes: two sightings in the origin count even
     // when the candidate never left that region between them.
@@ -373,7 +454,7 @@ export class TransferStateMachine {
     if (h.visited[0] === 'opening' && region !== 'opening') {
       const phase = existing?.phase ?? 'observed'
       this.candidates.delete(obs.trackId)
-      this.history.set(obs.trackId, historyAt(region, 1, obs.t))
+      this.history.set(obs.trackId, historyAt(region, 1, obs))
       return {
         events: [],
         removed: {
@@ -423,7 +504,7 @@ export class TransferStateMachine {
       // a track the tracker keeps following — and the same direction cannot re-fire, because
       // its origin is the side the item has just left.
       this.candidates.delete(obs.trackId)
-      this.history.set(obs.trackId, historyAt(destRegion, destObs, obs.t))
+      this.history.set(obs.trackId, historyAt(destRegion, destObs, obs))
       return {
         events: [
           {

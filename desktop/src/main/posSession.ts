@@ -263,12 +263,34 @@ export class PosSessionOrchestrator {
    * one already going.
    */
   private looping = false
+  /** A basket change arrived while a tick was in flight: run the next one straight away. */
+  private syncSoon = false
 
   constructor(private readonly deps: PosSessionDeps) {}
 
-  /** The basket tracker's readout changed: push it, without waiting for a POS transition. */
+  /**
+   * The basket tracker's readout changed: push it, without waiting for a POS transition — and when
+   * the ledger itself moved in basket mode, post it now rather than at the next poll tick, so the
+   * tablet shows a deposit as soon as it is confirmed instead of up to a whole `logsPollMs` later.
+   * A tick already in flight finishes first (one request at a time) and the next runs at once.
+   */
   notifyBasketChanged(): void {
     this.emit()
+    const basket = this.deps.basket
+    if (!basket || !this.basketMode() || !this.bound || this.stopped || !this.looping) return
+    // A failing webapp is on its backoff; a ledger change is not a reason to hammer it.
+    if (this.consecutiveFailures > 0) return
+    const changed =
+      !sameSnapshot(basket.snapshot(), this.lastSent) ||
+      basket.pendingReview().length !== this.lastReviewSent
+    if (!changed) return
+    if (this.timer !== null) {
+      clearTimeout(this.timer)
+      this.timer = null
+      this.schedule(0)
+    } else {
+      this.syncSoon = true
+    }
   }
 
   private basketMode(): boolean {
@@ -364,7 +386,9 @@ export class PosSessionOrchestrator {
     // 409 from the webapp is a session that is over rather than a retry.
     const wasBackingOff = this.retryAtMs !== null
     this.consecutiveFailures = this.tickFailed ? this.consecutiveFailures + 1 : 0
-    const delay = this.retryDelay()
+    const kick = this.syncSoon && this.consecutiveFailures === 0
+    this.syncSoon = false
+    const delay = kick ? 0 : this.retryDelay()
     this.retryAtMs = this.consecutiveFailures > 0 ? Date.now() + delay : null
     // Emits are transitions, and this one is: the backoff began, or it ended (possibly having
     // moved when a still-failing tick pushes the deadline out again).

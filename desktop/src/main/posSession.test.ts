@@ -795,6 +795,31 @@ describe('PosSessionOrchestrator — basket mode', () => {
     orch.stop()
   })
 
+  it('posts a confirmed transfer at once instead of at the next poll tick', async () => {
+    const b = await withBasket('basket')
+    const orch = new PosSessionOrchestrator(b.h.deps)
+    await orch.start()
+    await vi.advanceTimersByTimeAsync(1_500)
+    const before = b.h.calls.syncs.length
+
+    // A ledger change nobody announces waits for the tick ...
+    b.deposit('soda', BASE_S + 1)
+    await vi.advanceTimersByTimeAsync(20)
+    expect(b.h.calls.syncs.length).toBe(before)
+
+    // ... and the tracker's notification posts it straight away.
+    orch.notifyBasketChanged()
+    await vi.advanceTimersByTimeAsync(20)
+    expect(b.h.calls.syncs.length).toBe(before + 1)
+    expect(b.h.calls.syncs.at(-1)?.items[0].quantity).toBe(1)
+
+    // A notification with nothing new to post does not send a duplicate.
+    orch.notifyBasketChanged()
+    await vi.advanceTimersByTimeAsync(20)
+    expect(b.h.calls.syncs.length).toBe(before + 1)
+    orch.stop()
+  })
+
   it('carries review in the payload, and a review change alone is posted', async () => {
     const b = await withBasket('basket')
     const orch = new PosSessionOrchestrator(b.h.deps)

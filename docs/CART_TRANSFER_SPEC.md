@@ -35,7 +35,7 @@ A 2D region crossing is not proof of crossing the basket rim in depth. The selec
 | Removal | Identified product travels inside → opening → outside, clears the basket, and stays wholly outside in the presentation area |
 | No transfer | Hovering, outside presentation, empty-hand reach, internal rearrangement, temporary occlusion or reversal before either endpoint |
 
-Use a **provisional one-second endpoint hold** during capture/rehearsal: after release for deposit, after clearance for removal. Completion time is the end of that hold. Tune on development footage if necessary, then freeze it before acceptance. A product held inside without visible release is not a completed deposit. Retrieval may remain in the customer's hand; it need not be released outside. Returning an item after completed retrieval is a new deposit, not an aborted removal.
+Use a **provisional one-second endpoint hold** during capture/rehearsal: after release for deposit, after clearance for removal. Completion time is the end of that hold. Tune on development footage if necessary, then freeze it before acceptance. (Development value: 0.4 s since the sidecar reached 50–60 fresh inferences a second — `DEFAULT_TRANSFER_CONFIG` — not yet frozen.) A product held inside without visible release is not a completed deposit. Retrieval may remain in the customer's hand; it need not be released outside. Returning an item after completed retrieval is a new deposit, not an aborted removal.
 
 Missing/ambiguous endpoint evidence means no automatic commit. These rules require neither a particular hand model nor a claim that YOLO currently detects release: Gate B must demonstrate that the chosen visual cues can be implemented reliably.
 

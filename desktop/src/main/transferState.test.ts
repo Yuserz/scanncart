@@ -29,7 +29,7 @@ import {
 } from './transferGeometry'
 
 const regions = presetRegions(DEFAULT_ZONE_PRESET)
-const cfg = { ...DEFAULT_TRANSFER_CONFIG } // 2 per side, 1 s hold, scanner threshold 0.5, slop 150
+const cfg = { ...DEFAULT_TRANSFER_CONFIG } // 2 per side, 0.4 s hold, scanner threshold 0.5
 
 // Box centres for each band (box height 60, so y is the centre minus 30).
 const OUT = 200
@@ -126,7 +126,7 @@ describe('zone preset', () => {
 })
 
 describe('#1 deposit', () => {
-  it('commits after outside×2 → opening → inside held for 1 s', () => {
+  it('commits after outside×2 → opening → inside held for the endpoint hold', () => {
     const m = new TransferStateMachine(regions, cfg)
     const { events } = feed(m, deposit())
     expect(events).toHaveLength(1)
@@ -135,7 +135,7 @@ describe('#1 deposit', () => {
 
   it('does not commit before the endpoint hold has elapsed', () => {
     const m = new TransferStateMachine(regions, cfg)
-    const { events } = feed(m, [...at(OUT, 2), ...at(OPEN, 1), ...at(IN, 4)]) // 0.6 s inside
+    const { events } = feed(m, [...at(OUT, 2), ...at(OPEN, 1), ...at(IN, 2)]) // 0.2 s inside
     expect(events).toEqual([])
     expect(m.snapshot()[0]?.phase).toBe('inbound_pending')
   })
@@ -154,7 +154,7 @@ describe('#1 deposit', () => {
 })
 
 describe('#2 removal', () => {
-  it('commits after inside×2 → opening → outside held clear for 1 s', () => {
+  it('commits after inside×2 → opening → outside held clear for the endpoint hold', () => {
     const m = new TransferStateMachine(regions, cfg)
     const { events } = feed(m, removal())
     expect(events).toHaveLength(1)
@@ -227,13 +227,14 @@ describe('a dip back over the opening (review finding)', () => {
 
   it('the hold restarts after the dip, so it cannot complete early', () => {
     const m = new TransferStateMachine(regions, cfg)
-    // 0.8 s inside, dip, then only 0.6 s back inside: neither stretch is a full 1 s hold.
+    // 0.2 s inside, dip, then 0.2 s back inside: neither stretch is a full 0.4 s hold, though
+    // the two together span more than one.
     const { events } = feed(m, [
       ...at(OUT, 2),
       ...at(OPEN, 1),
-      ...at(IN, 5),
+      ...at(IN, 2),
       ...at(OPEN, 1),
-      ...at(IN, 4)
+      ...at(IN, 2)
     ])
     expect(events).toEqual([])
   })
@@ -303,6 +304,132 @@ describe('#12 two items at once', () => {
     const { events, removed } = feed(m, at(IN, 6, { trackId: 1 }))
     expect(events).toEqual([])
     expect(removed[0]?.reason).toContain('two items')
+  })
+})
+
+describe('#12 what is not two items at once', () => {
+  it('an item resting with its centre on the rim does not send later deposits to review', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    feed(m, at(OPEN, 3, { trackId: 9, className: 'rice' })) // parked on the rim
+    const path = [...at(OUT, 2), ...at(OPEN, 1), ...at(IN, 4)].flatMap((o) => [
+      o,
+      obs({ cy: OPEN, trackId: 9, className: 'rice' }) // still there, every frame
+    ])
+    const { events, removed } = feed(m, path)
+    expect(events.map((e) => e.kind)).toEqual(['inbound'])
+    expect(removed.filter((r) => r.review)).toEqual([])
+  })
+
+  it('a second item handed in just after the first is two deposits, not a bundle', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    const first = feed(m, deposit({ trackId: 1 })).events
+    const second = feed(m, deposit({ trackId: 2 })).events
+    expect([...first, ...second].map((e) => e.kind)).toEqual(['inbound', 'inbound'])
+  })
+})
+
+/** Observations at 60 fresh inferences a second — the sidecar's real rate on the StreamCam. */
+function sweepPath(
+  from: number,
+  to: number,
+  frames: number,
+  extra: Partial<Observation> = {}
+): Observation[] {
+  return Array.from({ length: frames }, (_, i) => {
+    seq += 1
+    t += 1 / 60
+    const cy = from + ((to - from) * (i + 1)) / frames
+    return {
+      seq,
+      t,
+      trackId: 7,
+      className: 'soda',
+      conf: 0.9,
+      box: { x: 460, y: cy - 30, w: 80, h: 60 },
+      ...extra
+    }
+  })
+}
+
+describe('fast hands at 60 fps', () => {
+  it('a brisk deposit confirms within half a second of reaching the basket', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    feed(m, sweepPath(150, 250, 6)) // picked up outside
+    feed(m, sweepPath(250, 820, 9)) // a quarter-second swing over the rim
+    const arrived = t
+    let confirmedAt: number | null = null
+    for (const o of sweepPath(820, 830, 60)) {
+      if (m.observe(o).events.length > 0 && confirmedAt === null) confirmedAt = o.t
+    }
+    expect(confirmedAt).not.toBeNull()
+    expect((confirmedAt as number) - arrived).toBeLessThanOrEqual(0.5)
+  })
+
+  it('a few dropped frames during a fast swing are motion, not a broken identity', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    feed(m, sweepPath(150, 200, 4))
+    // 6 frames lost (0.1 s) while the hand moves 180 units within the outside band.
+    t += 0.1
+    const { removed } = feed(m, sweepPath(380, 390, 1))
+    expect(removed).toEqual([])
+  })
+
+  it('a teleport between consecutive frames is still a broken identity', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    const { removed } = feed(m, [
+      ...sweepPath(100, 100, 1, { box: { x: 0, y: 70, w: 80, h: 60 } }),
+      ...sweepPath(100, 100, 1, { box: { x: 700, y: 70, w: 80, h: 60 } })
+    ])
+    expect(removed[0]?.reason).toContain('box jumped')
+  })
+})
+
+describe('a tracker id switch mid-path (stitching)', () => {
+  const live = (...ids: number[]): Set<number> => new Set(ids)
+
+  it('a new id that picks up where a lost one left off finishes the same deposit', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    feed(m, [...at(OUT, 2), ...at(OPEN, 1)]) // track 7 reaches the rim, then is lost
+    const next = obs({ cy: IN, trackId: 8 })
+    expect(m.stitch(next, live(8))).toBe(7)
+    const { events, removed } = feed(m, [next, ...at(IN, 3, { trackId: 8 })])
+    expect(events).toEqual([expect.objectContaining({ kind: 'inbound', trackId: 8 })])
+    expect(removed).toEqual([])
+  })
+
+  it('a removal whose id switches as it is lifted out is still one −1', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    feed(m, at(IN, 3)) // resting in the basket as track 7
+    const next = obs({ cy: OPEN, trackId: 8 })
+    expect(m.stitch(next, live(8))).toBe(7)
+    const { events, removed } = feed(m, [next, ...at(OUT, 4, { trackId: 8 })])
+    expect(events.map((e) => e.kind)).toEqual(['outbound'])
+    expect(removed.filter((r) => r.review)).toEqual([])
+  })
+
+  it('never stitches onto a track that is still in the frame', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    feed(m, at(OUT, 2))
+    expect(m.stitch(obs({ cy: OUT + 40, trackId: 8 }), live(7, 8))).toBeNull()
+  })
+
+  it('never stitches across products, distance or a long gap', () => {
+    const m = new TransferStateMachine(regions, cfg)
+    feed(m, at(OUT, 2))
+    expect(m.stitch(obs({ cy: OUT, trackId: 8, className: 'water' }), live(8))).toBeNull()
+    expect(m.stitch(obs({ cy: IN, x: 900, trackId: 8 }), live(8))).toBeNull()
+    t += 1
+    expect(m.stitch(obs({ cy: OUT, trackId: 8 }), live(8))).toBeNull()
+  })
+
+  it('without stitching the same id switch is reviewed (the behaviour it replaces)', () => {
+    const m = new TransferStateMachine(regions, { ...cfg, stitchGapS: 0 })
+    feed(m, [...at(OUT, 2), ...at(OPEN, 1)])
+    const next = obs({ cy: OPEN, trackId: 8 })
+    expect(m.stitch(next, live(8))).toBeNull()
+    const { events, removed } = feed(m, [next, ...at(IN, 4, { trackId: 8 })])
+    expect(events).toEqual([])
+    expect(removed[0]?.reason).toContain('without origin evidence')
   })
 })
 

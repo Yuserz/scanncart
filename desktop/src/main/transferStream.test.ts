@@ -188,6 +188,32 @@ describe('basket tracker', () => {
     expect(h.tracker.pendingReview()[0].reason).toContain('not in the basket')
   })
 
+  it('a tracker id switch mid-swing finishes the same deposit, with nothing to review', async () => {
+    const h = harness()
+    await h.tracker.bind('s1')
+    h.advance(4)
+    h.run(OUT, 2)
+    h.run(OPEN, 1)
+    h.run(IN, 4, { track: 8 }) // the tracker lost 7 over the rim and handed out 8
+    expect(h.qty()).toEqual({ soda: 1 })
+    expect(h.tracker.pendingReview()).toEqual([])
+  })
+
+  it('does not stitch onto an item that is still in view', async () => {
+    const h = harness()
+    await h.tracker.bind('s1')
+    h.advance(4)
+    h.run(OUT, 2)
+    h.run(OPEN, 1)
+    // 7 stays visible outside while a *different* soda, 8, is first seen inside.
+    for (let i = 0; i < 4; i++) {
+      const f = h.frame(IN, { track: 8 })
+      f.detections.push({ track_id: 7, cls: 'soda', conf: 0.9, box: [0.45, 0.17, 0.55, 0.23] })
+      h.tracker.onFrame(f)
+    }
+    expect(h.qty()).toEqual({})
+  })
+
   it('infers nothing under the scanner threshold it was given', async () => {
     const h = harness()
     h.tracker.setConfThreshold(0.9)
