@@ -617,6 +617,83 @@ def build_v1(v1_dir: Path, out: Path, size: int = SIZE, geometry: str = "stretch
     return side
 
 
+def build_synthetic(
+    synthetic_dir: Path,
+    out: Path,
+    v2_side: Side,
+    size: int = SIZE,
+    geometry: str = "stretch",
+) -> Side:
+    """Images *made* from frames already in the set, admitted to `train` and nowhere else.
+
+    The case it exists for (2026-10-06): Century Tuna "mid" and "far" images generated from close-ups
+    already staged - the photo shrunk onto a white canvas and rotated. They are augmentation, not
+    evidence about distance: a copy of a `test` close-up in `train` would score the model on a
+    picture it trained on, and a copy anywhere but `train` would make the per-distance numbers
+    describe edited photos. So the folder carries `sources.json` (image -> the frame it was made
+    from), and every image is refused unless that frame is in *this build's* `train` - read off the
+    v2 side that was just placed, so a split plan that moves a close-up moves its copies' verdict
+    with it. Nothing here records a distance, so the per-distance grid never counts them; the tag is
+    the source frame's, so the doctor still checks the drawing against the product it was made from.
+
+    The folder is YOLO-shaped (`images/`, `labels/`) with a `data.yaml` naming the class order its
+    rows index; rows are translated by name like v1's. Any problem is fatal: a half-admitted set of
+    copies is the leak this function exists to refuse.
+    """
+    import json
+
+    side = Side(name="synthetic")
+    names = read_export_names(synthetic_dir)
+    if names is None:
+        side.problems.append(f"no usable data.yaml in {synthetic_dir}, so its rows cannot be translated")
+        return side
+    problem = translation_problem(names, source="synthetic")
+    if problem:
+        side.problems.append(problem)
+        return side
+    try:
+        sources = json.loads((synthetic_dir / "sources.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        side.problems.append(
+            f"no readable sources.json in {synthetic_dir} - without it nothing says which frame each "
+            "image was made from, so nothing can keep a copy of a test frame out of train"
+        )
+        return side
+    admitted: list[tuple[Path, list[str], str]] = []
+    for image in list_images(synthetic_dir / "images"):
+        source = sources.get(image.name)
+        placed = v2_side.placed.get(source) if source else None
+        if placed != "train":
+            side.problems.append(
+                f"{image.name}: made from {source or 'an unnamed frame'}, which this build puts in "
+                f"{placed or 'no split'} - only copies of train frames may enter, and only train"
+            )
+            continue
+        label = synthetic_dir / "labels" / f"{image.stem}.txt"
+        if not label.is_file():
+            side.problems.append(f"{image.name}: no label file beside it")
+            continue
+        rows, row_problems, _ = remap_rows(label.read_text(encoding="utf-8"), names)
+        if row_problems or not rows:
+            side.problems.append(f"{image.name}: {row_problems[0] if row_problems else 'no boxes'}")
+            continue
+        admitted.append((image, rows, source))
+    if side.problems:
+        return side
+    for image, rows, source in admitted:
+        write_frame(image, rows, out, "train", image.name, size, geometry)
+        side.placed[image.name] = "train"
+        if source in v2_side.tags:
+            side.tags[image.name] = v2_side.tags[source]
+        for row in rows:
+            side.classes["train"][CANONICAL_NAMES[int(row.split()[0])]] += 1
+    side.notes.append(
+        f"[synthetic] {len(admitted)} image(s) made from train frames, admitted to train only - "
+        "augmentation, never counted as a distance"
+    )
+    return side
+
+
 def v2_set_problem(v2_dir: Path, frames: list) -> str | None:
     """Why `v2_dir` cannot be the staged set `--v2` names, given the frames the store read from it.
 
@@ -1495,6 +1572,12 @@ def main(argv: list[str] | None = None) -> int:
         help=f"where the v2 labels live (default: <v2>/../{ANNOTATIONS_DIRNAME}, as `make annotate` uses)",
     )
     ap.add_argument(
+        "--synthetic",
+        default="",
+        help="a folder of images made from frames already in the set (images/, labels/, data.yaml, "
+        "sources.json): admitted to train only, and refused unless every source frame is in train",
+    )
+    ap.add_argument(
         "--extras",
         action="append",
         default=[],
@@ -1614,6 +1697,12 @@ def main(argv: list[str] | None = None) -> int:
                 args.geometry,
             )
         )
+        if args.synthetic:
+            sides.append(
+                build_synthetic(
+                    Path(args.synthetic).expanduser(), staging, sides[-1], args.size, args.geometry
+                )
+            )
 
         problems = [(side.name, p) for side in sides for p in side.problems]
         if problems:

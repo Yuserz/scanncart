@@ -1581,6 +1581,56 @@ def test_the_merge_writes_one_box_per_item_and_reports_the_count(tmp_path):
     assert build_dataset.CANONICAL_NAMES[int(written[0].split()[0])] == names[0]
 
 
+def _synthetic_dir(root, sources):
+    import json
+
+    import yaml
+    from PIL import Image
+
+    (root / "images").mkdir(parents=True)
+    (root / "labels").mkdir()
+    for name in sources:
+        Image.new("RGB", (64, 48), (200, 200, 200)).save(root / "images" / name)
+        (root / "labels" / name.replace(".jpg", ".txt")).write_text("0 0.5 0.5 0.3 0.3\n", encoding="utf-8")
+    (root / "data.yaml").write_text(yaml.safe_dump({"names": list(build_dataset.CANONICAL_NAMES)}))
+    (root / "sources.json").write_text(json.dumps(sources))
+    return root
+
+
+def test_synthetic_copies_of_train_frames_enter_train_only(tmp_path):
+    v2 = build_dataset.Side(name="v2")
+    v2.placed = {"tuna_0001.jpg": "train"}
+    v2.tags = {"tuna_0001.jpg": "century-tuna"}
+    folder = _synthetic_dir(tmp_path / "synthetic", {"tuna_0001_far.jpg": "tuna_0001.jpg"})
+    side = build_dataset.build_synthetic(folder, tmp_path / "staging", v2)
+
+    assert side.problems == []
+    assert side.placed == {"tuna_0001_far.jpg": "train"}
+    assert side.tags == {"tuna_0001_far.jpg": "century-tuna"}
+    assert side.distances == {}  # never counted as a distance
+    assert (tmp_path / "staging" / "train" / "images" / "tuna_0001_far.jpg").is_file()
+
+
+def test_a_copy_of_a_test_frame_is_refused_and_nothing_enters(tmp_path):
+    """A shrunk copy of a test close-up in train would score the model on a picture it trained on."""
+    v2 = build_dataset.Side(name="v2")
+    v2.placed = {"tuna_0001.jpg": "train", "tuna_0002.jpg": "test"}
+    folder = _synthetic_dir(
+        tmp_path / "synthetic", {"tuna_0001_far.jpg": "tuna_0001.jpg", "tuna_0002_far.jpg": "tuna_0002.jpg"}
+    )
+    side = build_dataset.build_synthetic(folder, tmp_path / "staging", v2)
+
+    assert any("tuna_0002.jpg, which this build puts in test" in p for p in side.problems)
+    assert side.placed == {} and not (tmp_path / "staging").exists()
+
+
+def test_a_synthetic_folder_without_its_sources_is_refused(tmp_path):
+    folder = _synthetic_dir(tmp_path / "synthetic", {"a.jpg": "b.jpg"})
+    (folder / "sources.json").unlink()
+    side = build_dataset.build_synthetic(folder, tmp_path / "staging", build_dataset.Side(name="v2"))
+    assert any("sources.json" in p for p in side.problems)
+
+
 def test_a_v1_frame_with_an_empty_label_file_is_left_out_not_trained_as_background(tmp_path):
     """v1's empty label files are products nobody boxed (all 17 were looked at), so they must not
     enter as 'nothing here'."""
