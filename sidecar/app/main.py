@@ -301,6 +301,8 @@ def _default_detector_factory(settings: Settings, device: str):
                 settings.active_model,
                 requirement_for(settings.active_model),
             ),
+            # Keep a shown item shown through a weak frame (see `inference.KEEP_CONF`).
+            hold_tracks=True,
         )
     api_key = load_api_key()
     if api_key is None and settings.detector_backend == "cloud_api":

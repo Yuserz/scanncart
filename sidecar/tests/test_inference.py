@@ -352,7 +352,81 @@ def test_yolo_detector_conf_is_settable_without_rebuilding():
     det.set_conf(0.8)
     det.infer(np.zeros((8, 8, 3), dtype=np.uint8))
 
-    assert calls == [0.5, 0.8]
+    # The tracker always sees the weak boxes; the threshold is applied after it (see the
+    # hysteresis tests below), so a changed threshold is a changed filter, not a changed call.
+    assert calls == [0.1, 0.1]
+    assert det._conf == 0.8
+
+
+class _ScriptedBoxes:
+    def __init__(self, conf, track_id):
+        self.xyxy = np.array([[10.0, 10.0, 20.0, 20.0]])
+        self.conf = np.array([conf])
+        self.cls = np.array([0.0])
+        self.id = np.array([float(track_id)])
+
+    def __len__(self):
+        return 1
+
+
+class _ScriptedModel:
+    """One box per call, with the scores (and track ids) a test scripts."""
+
+    names = {0: "milo"}
+
+    def __init__(self, script):
+        self.script = list(script)
+        self.confs_asked = []
+
+    def track(self, frame, **kwargs):
+        self.confs_asked.append(kwargs["conf"])
+        conf, track_id = self.script.pop(0)
+
+        class _R:
+            names = {0: "milo"}
+            boxes = _ScriptedBoxes(conf, track_id)
+
+        return [_R()]
+
+
+def _run(script, conf=0.75, hold=True):
+    model = _ScriptedModel(script)
+    det = YoloDetector("m.pt", "cpu", conf=conf, model_factory=lambda p: model, hold_tracks=hold)
+    frame = np.zeros((40, 40, 3), dtype=np.uint8)
+    return [bool(det.infer(frame)) for _ in script], model
+
+
+def test_the_tracker_is_fed_the_weak_boxes_it_bridges_dips_with():
+    """Passing the operator's 0.75 to track() starved ByteTrack's second stage, so one weak frame
+    lost the track and the item came back under a new id."""
+    _, model = _run([(0.9, 1)])
+    assert model.confs_asked == [0.1]
+
+
+def test_a_shown_track_stays_shown_through_a_dip_but_a_new_one_needs_the_threshold():
+    shown, _ = _run([(0.6, 1), (0.9, 1), (0.5, 1), (0.3, 1), (0.2, 1), (0.6, 1)])
+    # 0.6 before it was ever shown: no. 0.9: shown. 0.5 and 0.3: held. 0.2: under KEEP_CONF.
+    # 0.6 again: held, because the track is still remembered.
+    assert shown == [False, True, True, True, False, True]
+
+
+def test_the_hold_is_per_track_so_a_new_id_starts_from_the_threshold():
+    shown, _ = _run([(0.9, 1), (0.5, 2)])
+    assert shown == [True, False]
+
+
+def test_without_the_hold_the_threshold_is_the_whole_rule():
+    """The measuring tools' setting: unrelated photos must not inherit a score."""
+    shown, _ = _run([(0.9, 1), (0.5, 1)], hold=False)
+    assert shown == [True, False]
+
+
+def test_a_forgotten_track_is_not_held():
+    from app.inference import KEEP_FRAMES
+
+    script = [(0.9, 1)] + [(0.9, 2)] * (KEEP_FRAMES + 1) + [(0.5, 1)]
+    shown, _ = _run(script)
+    assert shown[-1] is False
 
 
 def test_remote_detector_conf_is_settable_without_rebuilding():
