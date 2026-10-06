@@ -354,3 +354,8 @@
 .tuning-field input[type='range'].is-unset {
   opacity: 0.45;
 }
+
+/* A manual shutter that costs frame rate - the amber the stats strip uses for a warning. */
+.tuning-field .field-hint-warn {
+  color: #ffb020;
+}

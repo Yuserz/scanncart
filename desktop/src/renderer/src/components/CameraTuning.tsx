@@ -237,6 +237,11 @@ export function CameraTuning({
 
   const midpoint = (field: FieldMeta): number => ((field.min ?? 0) + (field.max ?? 0)) / 2
 
+  // The longest shutter (log2 seconds) that still delivers the capture rate - the sidecar's
+  // `exposure_cap_for`, the same arithmetic: a 2^e s shutter caps delivery at 2^-e frames a second.
+  const captureFps = Number(settings?.capture_fps ?? 60)
+  const exposureCap = captureFps > 0 ? Math.floor(-Math.log2(captureFps)) : 0
+
   const renderField = (field: FieldMeta): JSX.Element => {
     const numeric = numericOf(field.key)
     // Writing a focus value while autofocus is on is meaningless: the device
@@ -342,6 +347,18 @@ export function CameraTuning({
             Ignored during calibration.
           </p>
         )}
+        {/* A manual shutter longer than the frame interval caps the frame rate: one stop of
+            exposure is a doubling of shutter time, and -6 is the longest that keeps 60 fps
+            (`exposure_cap_for` in the sidecar). Measured: a saved 0 here held capture near 12 fps
+            with nothing on screen saying why. */}
+        {field.key === 'camera_exposure' &&
+          !autoExposureOn &&
+          numeric !== null &&
+          numeric > exposureCap && (
+            <p className="field-hint field-hint-warn" data-testid="exposure-slows-capture">
+              Longer than {exposureCap} — capture will run below {captureFps} fps.
+            </p>
+          )}
       </div>
     )
   }
