@@ -15,12 +15,16 @@ export const CUSTOM_MODEL = 'models/scanncart-grocery-v1.pt'
 // The locally trained successor (MODEL_TRAINING.md §8.2). Named here only for its label and
 // hint; the picker *discovers* the file from GET /api/models, so this entry is optional and
 // its absence would not hide the model — a future v3 needs no entry at all to be selectable.
-export const CUSTOM_MODEL_V2 = 'models/scanncart-grocery-v2.pt'
+export const CUSTOM_MODEL_V2 = 'models/scanncart-grocery-v2-stretch.pt'
+// The same generation trained on the same frames at their own shape (`build_dataset.py --geometry
+// fit`, imgsz 960), kept beside the stretch weights so the two can be compared on one camera.
+export const CUSTOM_MODEL_V2_LETTERBOX = 'models/scanncart-grocery-v2-letterbox.pt'
 
 // A raw path is not a label. Anything not listed falls back to its own name.
 export const MODEL_LABELS: Record<string, string> = {
   [CUSTOM_MODEL]: 'SCANnCART grocery v1 (custom, 7 SKUs)',
-  [CUSTOM_MODEL_V2]: 'SCANnCART grocery v2 (custom, 7 SKUs)',
+  [CUSTOM_MODEL_V2]: 'SCANnCART grocery v2 · stretch (custom, 7 SKUs)',
+  [CUSTOM_MODEL_V2_LETTERBOX]: 'SCANnCART grocery v2 · letterbox (custom, 7 SKUs)',
   'models/scanncart-grocery.onnx': 'SCANnCART grocery (Roboflow export)'
 }
 
@@ -101,7 +105,9 @@ export const MODEL_SPEC_HINTS: Record<string, string> = {
   // Model field flags a mismatch for *any* installed weight rather than only this filename.
   // What is left is what a record cannot carry - what these weights are and what they cost.
   [CUSTOM_MODEL_V2]:
-    'Locally trained v2 (7 SKUs) — see the requirement recorded beside it below. Runs on torch, so a CUDA GPU is the fast path.',
+    'Locally trained v2 (7 SKUs), frames squashed to a 640 square — see the requirement recorded beside it below. Runs on torch, so a CUDA GPU is the fast path.',
+  [CUSTOM_MODEL_V2_LETTERBOX]:
+    'Locally trained v2 (7 SKUs), frames kept at their own shape and padded at 960 — see the requirement recorded beside it below. Larger input than the stretch weights, so each frame costs more GPU time.',
   'yolo26n.pt':
     'Experimental — lightest YOLO26. Needs roughly yolo11n-class hardware: a modern 4-core CPU and 8 GB RAM. Its NMS-free design typically runs faster than yolo11n on CPU. Weights auto-download on first capture start (internet needed once).',
   'yolo26s.pt':

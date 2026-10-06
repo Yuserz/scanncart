@@ -370,7 +370,7 @@ export const ROSTER_NAMES = [
 // contradict the weights, which is the state both the Admin field and the Live banner warn about.
 export function installedV2(overrides: Partial<InstalledModel> = {}): InstalledModel {
   return {
-    value: 'models/scanncart-grocery-v2.pt',
+    value: 'models/scanncart-grocery-v2-stretch.pt',
     resize_mode: 'stretch',
     // The size the run trained at, recorded beside the weight with the geometry: `--install`
     // writes both or neither, so a record that has a mode has an `imgsz`.

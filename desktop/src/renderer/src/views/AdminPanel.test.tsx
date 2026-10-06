@@ -813,13 +813,13 @@ describe('AdminPanel', () => {
 
       const select = (await screen.findByLabelText(/Model/i)) as HTMLSelectElement
       const values = Array.from(select.options).map((o) => o.value)
-      expect(values).toContain('models/scanncart-grocery-v2.pt')
+      expect(values).toContain('models/scanncart-grocery-v2-stretch.pt')
       expect(values).toContain('yolo11n.pt')
       // Labelled for a person, and with the count of the generation it names: v2 declares the same
       // seven as v1 (Palmolive, its one addition, was dropped), so a label promising eight names a
       // model the operator cannot install.
       const label = Array.from(select.options).find(
-        (o) => o.value === 'models/scanncart-grocery-v2.pt'
+        (o) => o.value === 'models/scanncart-grocery-v2-stretch.pt'
       )?.textContent
       expect(label).toContain('v2')
       expect(label).toContain('7 SKUs')
@@ -839,7 +839,7 @@ describe('AdminPanel', () => {
       render(<AdminPanel port={8765} deps={deps} />)
 
       const list = await screen.findByTestId('installed-models')
-      expect(list).toHaveTextContent('models/scanncart-grocery-v2.pt')
+      expect(list).toHaveTextContent('models/scanncart-grocery-v2-stretch.pt')
       expect(list).toHaveTextContent('resize_mode: stretch')
       expect(list).toHaveTextContent('snc-grocery version 2')
       // Two unknowns are not one: nothing recorded is said out loud, because `auto` is not a
@@ -870,7 +870,7 @@ describe('AdminPanel', () => {
       render(<AdminPanel port={8765} deps={deps} />)
 
       const warning = await screen.findByTestId(
-        'installed-model-class-warning-models/scanncart-grocery-v2.pt'
+        'installed-model-class-warning-models/scanncart-grocery-v2-stretch.pt'
       )
       // The sidecar's own sentence, rendered rather than re-worded: it is the process holding
       // the roster, and a second phrasing here could tell a different story about one list.
@@ -889,7 +889,7 @@ describe('AdminPanel', () => {
       const { deps } = makeDeps('idle', {
         getSettings: vi.fn(async () =>
           baseSettings({
-            active_model: 'models/scanncart-grocery-v2.pt',
+            active_model: 'models/scanncart-grocery-v2-stretch.pt',
             resize_mode: 'auto'
           })
         ),
@@ -913,7 +913,7 @@ describe('AdminPanel', () => {
       const { deps } = makeDeps('idle', {
         getSettings: vi.fn(async () =>
           baseSettings({
-            active_model: 'models/scanncart-grocery-v2.pt',
+            active_model: 'models/scanncart-grocery-v2-stretch.pt',
             resize_mode: 'auto'
           })
         ),
@@ -944,7 +944,7 @@ describe('AdminPanel', () => {
       // what is missing is captures *in this split*. The two are opposite instructions.
       const { deps } = makeDeps('idle', {
         getSettings: vi.fn(async () =>
-          baseSettings({ active_model: 'models/scanncart-grocery-v2.pt' })
+          baseSettings({ active_model: 'models/scanncart-grocery-v2-stretch.pt' })
         ),
         getModels: vi.fn(async () => ({
           stock: [],
@@ -970,7 +970,7 @@ describe('AdminPanel', () => {
       // that cannot say so. `far` is the bucket this dataset exists to fix.
       const { deps } = makeDeps('idle', {
         getSettings: vi.fn(async () =>
-          baseSettings({ active_model: 'models/scanncart-grocery-v2.pt' })
+          baseSettings({ active_model: 'models/scanncart-grocery-v2-stretch.pt' })
         ),
         getModels: vi.fn(async () => ({
           stock: [],
@@ -1007,7 +1007,7 @@ describe('AdminPanel', () => {
       // what is missing is captures at that distance.
       const { deps } = makeDeps('idle', {
         getSettings: vi.fn(async () =>
-          baseSettings({ active_model: 'models/scanncart-grocery-v2.pt' })
+          baseSettings({ active_model: 'models/scanncart-grocery-v2-stretch.pt' })
         ),
         getModels: vi.fn(async () => ({
           stock: [],
@@ -1046,7 +1046,7 @@ describe('AdminPanel', () => {
       }
       const { deps } = makeDeps('idle', {
         getSettings: vi.fn(async () =>
-          baseSettings({ active_model: 'models/scanncart-grocery-v2.pt' })
+          baseSettings({ active_model: 'models/scanncart-grocery-v2-stretch.pt' })
         ),
         getModels: vi.fn(async () => ({
           stock: [],
@@ -1068,7 +1068,7 @@ describe('AdminPanel', () => {
       // still render in full: the breakdown is extra detail, not a precondition for the score.
       const { deps } = makeDeps('idle', {
         getSettings: vi.fn(async () =>
-          baseSettings({ active_model: 'models/scanncart-grocery-v2.pt' })
+          baseSettings({ active_model: 'models/scanncart-grocery-v2-stretch.pt' })
         ),
         getModels: vi.fn(async () => ({
           stock: [],
@@ -1090,7 +1090,7 @@ describe('AdminPanel', () => {
       // from a panel that failed to render the numbers, and there is a command that fixes it.
       const { deps } = makeDeps('idle', {
         getSettings: vi.fn(async () =>
-          baseSettings({ active_model: 'models/scanncart-grocery-v2.pt' })
+          baseSettings({ active_model: 'models/scanncart-grocery-v2-stretch.pt' })
         ),
         getModels: vi.fn(async () => ({
           stock: [],
@@ -1277,7 +1277,10 @@ describe('AdminPanel', () => {
       // weights and a remote backend all render nothing rather than an action with no object.
       const { deps } = makeDeps('idle', {
         getSettings: vi.fn(async () =>
-          baseSettings({ active_model: 'models/scanncart-grocery-v2.pt', resize_mode: 'auto' })
+          baseSettings({
+            active_model: 'models/scanncart-grocery-v2-stretch.pt',
+            resize_mode: 'auto'
+          })
         ),
         getModels: vi.fn(async () => ({
           stock: [],
@@ -1296,7 +1299,7 @@ describe('AdminPanel', () => {
       const { deps } = makeDeps('idle', {
         getSettings: vi.fn(async () =>
           baseSettings({
-            active_model: 'models/scanncart-grocery-v2.pt',
+            active_model: 'models/scanncart-grocery-v2-stretch.pt',
             resize_mode: 'letterbox'
           })
         ),
@@ -1318,7 +1321,7 @@ describe('AdminPanel', () => {
       const pending = makeDeps('idle', {
         getSettings: vi.fn(async () =>
           baseSettings({
-            active_model: 'models/scanncart-grocery-v2.pt',
+            active_model: 'models/scanncart-grocery-v2-stretch.pt',
             resize_mode: 'letterbox'
           })
         ),

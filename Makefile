@@ -251,7 +251,7 @@ doctor:
 # set), so it fails loudly rather than skipping - and it is a *verdict*: exit 1 with the reasons.
 # `ACCEPT_BASELINE`/`ACCEPT_CANDIDATE` point it at other generations.
 ACCEPT_BASELINE ?= models/scanncart-grocery-v1.pt
-ACCEPT_CANDIDATE ?= models/scanncart-grocery-v2.pt
+ACCEPT_CANDIDATE ?= models/scanncart-grocery-v2-stretch.pt
 ACCEPT_SPLIT ?= test
 
 accept-v2:

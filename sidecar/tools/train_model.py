@@ -392,6 +392,20 @@ def yaml_bodies(export_dir: Path):
             yield body
 
 
+def read_export_resize_mode(export_dir: Path) -> str | None:
+    """The `resize_mode` a built set declares for the weights trained on it, or None.
+
+    `build_dataset.py` writes it (`--geometry fit` -> letterbox, the default -> stretch), because
+    the geometry is a fact about the frames it wrote. A Roboflow export declares none, and then the
+    generation's own requirement stands.
+    """
+    for body in yaml_bodies(export_dir):
+        mode = body.get("resize_mode")
+        if mode in ("stretch", "letterbox"):
+            return str(mode)
+    return None
+
+
 def read_export_names(export_dir: Path) -> list[str] | None:
     """The class names the export declares, in the order it indexes them.
 
@@ -487,6 +501,11 @@ def frame_geometry(splits: dict[str, Path], sample: int = 12) -> list[str]:
             f"{len(padded)} with a constant border ({'; '.join(padded[:2])}) - that is *fitting* "
             "with padding, which is not what a `stretch` requirement assumes. Check this "
             "generation's resize_mode against how the version was actually generated"
+        )
+    elif any(w != h for (w, h) in sizes):
+        note += (
+            "frames keep their own shape (not square), i.e. a `fit` build - the trainer "
+            "letterboxes each one, so these weights need resize_mode letterbox"
         )
     else:
         note += "no constant border, i.e. stretched - consistent with the recorded requirement"
@@ -1533,6 +1552,7 @@ def weight_record(
     validation: list[dict] | None = None,
     class_names: list[str] | None = None,
     imgsz: int = 0,
+    resize_mode: str | None = None,
     augmentation: dict[str, float] | None = None,
 ) -> dict:
     """What travels with the weights, as a dict. Written beside them by `install()`.
@@ -1596,7 +1616,9 @@ already-generated version was made with (the measurement is in `generations.py`)
     """
     record = {
         "generation": generation.name,
-        "resize_mode": generation.resize_mode,
+        # The set's own declaration when it has one (a local `fit` build is letterbox whatever the
+        # generation's default is), else the generation's requirement.
+        "resize_mode": resize_mode or generation.resize_mode,
         # Where it came from, so the panel can say which dataset produced these weights
         # rather than only what they need.
         "source": f"{project} version {source_version}" if source_version else "",
@@ -1767,6 +1789,12 @@ def main(argv: list[str] | None = None, yolo=None) -> int:
     )
     ap.add_argument("--format", default=EXPORT_FORMAT)
     ap.add_argument("--run-project", default=str(DEFAULT_RUN_PROJECT))
+    ap.add_argument(
+        "--name",
+        default="",
+        help="--install under models/<NAME>.pt instead of the generation's own name - for keeping "
+        "two weights of one generation side by side (e.g. scanncart-grocery-v2-letterbox)",
+    )
     ap.add_argument("--models-dir", default=str(DEFAULT_MODELS_DIR))
     ap.add_argument("--run-dir", default="", help="install from this run instead of training")
     ap.add_argument("--yes", action="store_true", help="actually train")
@@ -2226,9 +2254,14 @@ def main(argv: list[str] | None = None, yolo=None) -> int:
             class_names=read_export_names(export_dir),
             imgsz=trained_imgsz,
             augmentation=augmentation,
+            resize_mode=read_export_resize_mode(export_dir),
         )
         target = install(
-            best, models_dir, name=generation.weight_name, force=args.force, record=record
+            best,
+            models_dir,
+            name=f"{args.name}.pt" if args.name else generation.weight_name,
+            force=args.force,
+            record=record,
         )
         print(f"installed: {target}")
         summary["installed"] = str(target)

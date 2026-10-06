@@ -680,3 +680,18 @@ def test_train_model_does_not_import_ultralytics_at_module_level():
     assert re.search(r"^\s+from ultralytics import", source, re.MULTILINE)
 
 
+
+
+def test_the_record_carries_the_sets_own_geometry_when_it_declares_one():
+    """A local `fit` build is letterbox whatever the generation's default is - and a set that
+    declares nothing keeps the generation's requirement."""
+    assert train_model.weight_record(generations.V2, resize_mode="letterbox")["resize_mode"] == "letterbox"
+    assert train_model.weight_record(generations.V2)["resize_mode"] == generations.V2.resize_mode
+
+
+def test_install_can_name_a_second_weight_of_one_generation(tmp_path):
+    source = tmp_path / "best.pt"
+    source.write_bytes(b"w")
+    first = train_model.install(source, tmp_path / "models", name="scanncart-grocery-v2-stretch.pt")
+    second = train_model.install(source, tmp_path / "models", name="scanncart-grocery-v2-letterbox.pt")
+    assert first.name != second.name and first.exists() and second.exists()
