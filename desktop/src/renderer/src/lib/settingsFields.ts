@@ -19,12 +19,17 @@ export const CUSTOM_MODEL_V2 = 'models/scanncart-grocery-v2-stretch.pt'
 // The same generation trained on the same frames at their own shape (`build_dataset.py --geometry
 // fit`, imgsz 960), kept beside the stretch weights so the two can be compared on one camera.
 export const CUSTOM_MODEL_V2_LETTERBOX = 'models/scanncart-grocery-v2-letterbox.pt'
+// The letterbox weights retrained with 50 train-only Century Tuna images made from close-ups
+// (`build_dataset.py --synthetic`), kept beside them for the side-by-side.
+export const CUSTOM_MODEL_V2_LETTERBOX_SYNTH = 'models/scanncart-grocery-v2-letterbox-synth.pt'
 
 // A raw path is not a label. Anything not listed falls back to its own name.
 export const MODEL_LABELS: Record<string, string> = {
   [CUSTOM_MODEL]: 'SCANnCART grocery v1 (custom, 7 SKUs)',
   [CUSTOM_MODEL_V2]: 'SCANnCART grocery v2 · stretch (custom, 7 SKUs)',
   [CUSTOM_MODEL_V2_LETTERBOX]: 'SCANnCART grocery v2 · letterbox (custom, 7 SKUs)',
+  [CUSTOM_MODEL_V2_LETTERBOX_SYNTH]:
+    'SCANnCART grocery v2 · letterbox + Tuna extras (custom, 7 SKUs)',
   'models/scanncart-grocery.onnx': 'SCANnCART grocery (Roboflow export)'
 }
 
