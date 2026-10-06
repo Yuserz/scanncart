@@ -71,7 +71,7 @@ from pathlib import Path
 import resources  # must precede numpy/torch: sets OMP/MKL thread limits
 
 import audit_recall
-from train_model import require_labels_order
+from train_model import default_weights, require_labels_order
 from generations import DEFAULT, GENERATIONS, Generation
 from generations import get as generation_for
 from workspace import SIDECAR_ROOT
@@ -642,7 +642,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     generation = generation_for(args.generation)
-    weights = args.weights or str(SIDECAR_ROOT / "models" / generation.weight_name)
+    weights = args.weights or str(
+        default_weights(generation, SIDECAR_ROOT / "models", SIDECAR_ROOT / "data" / "settings.json")
+    )
     if not Path(weights).exists():
         raise SystemExit(f"no such weight: {weights}")
     # Two of the three populations are read out of this generation's export - the control frames and

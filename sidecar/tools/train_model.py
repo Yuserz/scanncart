@@ -1637,6 +1637,49 @@ already-generated version was made with (the measurement is in `generations.py`)
     return record
 
 
+def default_weights(generation: Generation, models_dir: Path, settings_path: Path | None = None) -> Path:
+    """The installed weight a measuring tool means by `--generation X` with no `--weights`.
+
+    `models/<generation weight name>` when it exists - the one name `--install` used to give every
+    weight. Since `--name` lets one generation keep two weights side by side (v2 stretch and v2
+    letterbox), that file may not exist, and then the weight is found by its *record*: the installed
+    weights whose `generation` is this one, and of those the app's own `active_model` when it is one
+    of them (that is the weight the operator is running), else the only one. Two or more with no way
+    to choose is a refusal naming them, because measuring the wrong one silently is the failure.
+    """
+    plain = models_dir / generation.weight_name
+    if plain.is_file():
+        return plain
+    candidates = []
+    for record_path in sorted(models_dir.glob("*.json")):
+        try:
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        weight = record_path.with_suffix(".pt")
+        if isinstance(record, dict) and record.get("generation") == generation.name and weight.is_file():
+            candidates.append(weight)
+    if settings_path is not None and settings_path.is_file():
+        try:
+            active = json.loads(settings_path.read_text(encoding="utf-8")).get("active_model", "")
+        except (OSError, ValueError):
+            active = ""
+        for weight in candidates:
+            if active and Path(active).name == weight.name:
+                return weight
+    if len(candidates) == 1:
+        return candidates[0]
+    if not candidates:
+        raise SystemExit(
+            f"no installed {generation.name} weight in {models_dir} - install one, or pass --weights"
+        )
+    raise SystemExit(
+        f"{len(candidates)} installed {generation.name} weights and the app runs none of them: "
+        + ", ".join(w.name for w in candidates)
+        + " - pass --weights to say which to measure"
+    )
+
+
 def install(
     source: Path,
     models_dir: Path,

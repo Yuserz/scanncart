@@ -98,7 +98,7 @@ import resources  # must precede numpy/torch: sets OMP/MKL thread limits
 
 import audit_recall
 from audit_recall import FrameRecord, match_instances
-from train_model import require_labels_order
+from train_model import default_weights, require_labels_order
 from clamp_probe import (
     NEGATIVES_DIR,
     REAL_SAMPLE,
@@ -1073,7 +1073,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     generation = generation_for(args.generation)
-    weights = args.weights or str(SIDECAR_ROOT / "models" / generation.weight_name)
+    weights = args.weights or str(
+        default_weights(generation, SIDECAR_ROOT / "models", SIDECAR_ROOT / "data" / "settings.json")
+    )
     if not Path(weights).exists():
         raise SystemExit(f"no such weight: {weights}")
     # The export census names every priced detection through the generation's class list, and the
