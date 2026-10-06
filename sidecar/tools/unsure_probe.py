@@ -1211,6 +1211,9 @@ def main(argv: list[str] | None = None) -> int:
                 settings.resize_mode, settings.active_model,
                 requirement_for(settings.active_model),
             ),
+            # The live window is the app's own capture, so it holds tracks as the app does: a
+            # phantom that clears the threshold once is then kept, and this window must count it.
+            hold_tracks=True,
         )
         recorder = Recorded(live_detector)
         live_pipeline = Pipeline(camera, recorder, settings, on_message=lambda _m: None)

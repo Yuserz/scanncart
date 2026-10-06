@@ -631,6 +631,9 @@ def main(argv: list[str] | None = None) -> int:
             detector = YoloDetector(
                 weights, device=device, conf=settings.conf_threshold, imgsz=settings.imgsz,
                 resize_mode=resize_mode,
+                # A video is consecutive frames, as the app's capture is, so it holds a shown track
+                # through a weak frame exactly as `_default_detector_factory`'s detector does.
+                hold_tracks=True,
             )
             try:
                 events, frames, duration_s, stream = replay(

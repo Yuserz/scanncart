@@ -23,7 +23,7 @@ have no field accuracy number.
 | --- | --- | --- | --- |
 | F1 | ≥ 30 analysed frames/s | **Met** | Live: capture 60–61 fps, analysis 46–59 fps, 14–19 ms per frame (2026-10-05 soak samples, v1); v2: capture 62 fps, analysis ~45 fps (2026-10-06) |
 | F2 | Boxes, names, confidence on screen | **Met** | Live view overlay; Basket test labels each box with product, confidence and track id |
-| F3 | +1 on deposit, −1 on removal, hidden items stay billed | **Implemented, unmeasured** | State machine + ledger; 557+ desktop tests incl. 60 fps fast-hand and id-switch cases; desk practice mode. No cart footage (Gates A–C not run) |
+| F3 | +1 on deposit, −1 on removal, hidden items stay billed | **Implemented, unmeasured** | State machine + ledger; 564+ desktop tests incl. 60 fps fast-hand and id-switch cases; desk practice mode. No cart footage (Gates A–C not run) |
 | F4 | Ambiguity → review, Finish blocked | **Met** (integration) | Desktop review rules; pushcart-web `pos_finish` refuses while `pending_review > 0`; `scripts/pos-e2e.sh` against the local stack; observed live on 2026-10-05 (a desk item produced "removal of … not in the basket", Finish disabled) |
 | F5 | Auto-bind on Start, unbind on Finish | **Met** | Live run 2026-10-05: tablet *Start shopping* → desktop bound to `cart-1` within the 1 s poll |
 | F6 | Sync on change + heartbeat, no duplicates on retry | **Met** | Immediate post after a confirmed change (orchestrator test); `pos_reconcile` idempotency (stand-in + e2e); 409/backoff tests |
@@ -36,7 +36,7 @@ have no field accuracy number.
 | N2 | Transfer → tablet ≤ 5 s (p95) | **Implemented, unmeasured** | Design: confirmation ~0.5 s after landing, posted immediately (~0.25 s round trip locally). Gate C would measure it |
 | N3 | ≥ 2 h continuous | **Partly measured** | Two runs (34 and 80+ min): scanner up throughout, never restarted, memory flat, connections 4–15. In two runs capture latched from 60 to ~30 fps at minute 18–23 (once with NVIDIA Broadcast closed); the scanner kept running but the camera's cause is unconfirmed (see Soak result) |
 | N4 | Detection with no internet | **Met** | Native backend, local weights; only the pushcart-web hop uses the LAN |
-| N5 | Modular, tested without hardware | **Met** | 560 desktop (Vitest) + 1,717 sidecar (pytest) tests on fakes; CI; POS contract check against pushcart-web's source |
+| N5 | Modular, tested without hardware | **Met** | 564 desktop (Vitest) + 1,756 sidecar (pytest) tests (2026-10-06) on fakes; CI; POS contract check against pushcart-web's source |
 
 ## Model metrics
 
