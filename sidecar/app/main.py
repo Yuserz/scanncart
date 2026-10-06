@@ -682,6 +682,15 @@ def _apply_settings_patch(
                 status_code=409,
                 detail=f"Cannot change {sorted(locked)} while capture is running; stop capture first.",
             )
+    if "active_model" in patch and "imgsz" not in patch:
+        # A model switch brings the size those weights were trained at (`imgsz_for`, the record
+        # `--install` writes), because `imgsz` is a separate setting: switching to weights trained
+        # at 960 while the field still said 640 ran them at the wrong size with no error, and the
+        # mismatch warning only appeared after the save. A patch that names `imgsz` itself is the
+        # operator's decision and wins; a weight with no record leaves the field alone.
+        trained = imgsz_for(patch["active_model"])
+        if trained is not None and trained != state.settings.imgsz:
+            patch = {**patch, "imgsz": trained}
     for key, value in patch.items():
         setattr(state.settings, key, value)
     if "device" in patch:
