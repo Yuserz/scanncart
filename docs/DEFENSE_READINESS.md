@@ -40,7 +40,7 @@ have no field accuracy number.
 
 ## Model metrics
 
-The app runs **`scanncart-grocery-v2`** (YOLO11s, 100 epochs, 640×640 stretched), retrained
+The app runs **`scanncart-grocery-v2-stretch`** (YOLO11s, 100 epochs, 640×640 stretched), retrained
 2026-10-06 on a rebuilt merged set (2,134 train / 494 valid / 277 test images). The rebuild cleaned
 the labels: the old v1-era photos carried a second, partial box inside the box around an item (the
 "555" logo on a sardines can, the noodle picture on a Lucky Me pouch), which taught the model to
@@ -79,6 +79,30 @@ empty-basket photos from the cart's view is the fix.
 
 v1 stays installed, one click away in Admin → Model. The first v2 is kept out of the picker, with its record, in `sidecar/data/datasets/runs/scanncart-grocery-v2/installed-record/` — copy both files back into `sidecar/models/` to offer it again.
 
+### Stretch or letterbox: an experiment in progress (2026-10-06)
+
+The stretched v2 squashes each frame to a square; the phone photos it learned from are 4:3 and the
+camera is 16:9, so a product is squashed by a different amount live than in training. A second v2,
+**`scanncart-grocery-v2-letterbox`**, is trained on the same frames kept at their own shape (v1's
+originals re-fetched from Roboflow, plus 261 Safeguard originals matched from the raw capture zips),
+at `imgsz` 960 and run letterboxed. The two are compared on the same test frames and, because no
+test frame comes from the StreamCam, on the same recorded camera clips (`tools/ab_live.py`); the
+winner becomes the shipped model. On held-out photos cropped to 16:9 the stretch weights still
+scored above 0.85 on every frame, so the geometry did not explain the live tracking drops by itself.
+
+### Fixes from the same day
+
+- **Tracking dropped on weak frames.** The operator's threshold was passed to the tracker, which
+  then never saw the weak boxes it uses to carry a track through a dip, so one frame under the
+  threshold ended a track and the item returned with a new id. The tracker now sees boxes down to
+  0.1 and the display holds a shown item down to 0.25 (it needs the threshold to appear).
+- **Grey picture and low fps in a dark room.** Auto exposure now reports "too dark for the camera
+  at this frame rate" instead of painting the picture grey; an opt-in *Allow 30 fps when dark*
+  trades frame rate for light; the Exposure slider warns when a manual value costs frame rate.
+- **`imgsz` follows the model**: switching weights in Admin sets the size they were trained at.
+- **v1 frames with an empty label file are left out of the build**: all 17 were products nobody
+  boxed, which trained the model that the back of a pack is nothing.
+
 ## Open risks for the defense day
 
 | Risk | Seen | Mitigation |
@@ -111,7 +135,7 @@ v1 stays installed, one click away in Admin → Model. The first v2 is kept out 
 
 1. Close NVIDIA Broadcast (and turn off its autostart), Discord and anything else that can hold the camera.
 2. Start Docker Desktop → `npx supabase start` and `npm run dev` in pushcart-web.
-3. Start SCANnCART; on **Live**, confirm Capture fps ≈ 60 and the model is `scanncart-grocery-v2`
+3. Start SCANnCART; on **Live**, confirm Capture fps ≈ 60 and the model is `scanncart-grocery-v2-stretch`
    with geometry `stretch` (Admin → `resize_mode` on `auto`).
 4. Admin → Self-checkout: station `cart-1`, mode **Basket**, *Test connection* answers 200.
 5. Basket test: zones match the table/basket in the picture; clear products out of the inside zone.

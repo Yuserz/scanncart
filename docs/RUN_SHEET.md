@@ -384,7 +384,9 @@ recorded distances says the breakdown was *skipped* rather than reporting nothin
 ./sidecar/.venv/Scripts/python.exe sidecar/tools/train_model.py --install
 ```
 
-Writes `sidecar/models/scanncart-grocery-v2.pt` **plus** `scanncart-grocery-v2.json` beside it,
+Writes `sidecar/models/scanncart-grocery-v2.pt` **plus** `scanncart-grocery-v2.json` beside it
+(or `--name <stem>` for a second weight of the same generation — the two on this machine are
+`scanncart-grocery-v2-stretch` and `scanncart-grocery-v2-letterbox`),
 carrying everything `--val` and the run's own `args.yaml` know and nothing else does:
 `resize_mode` (`stretch`), `class_names` (the label set), `imgsz` (the size the app must feed it)
 and the `augmentation` table. Refuses to overwrite an existing weight without `--force`, because
@@ -394,7 +396,7 @@ the picker is keyed by filename.
 |---|---|
 | the Admin Panel's Model field | the weight listed, with `requirement (recorded): stretch` and the measured score |
 | `resize_mode` | leave it on **`auto`** — it honours the record. An explicit `letterbox` overrides it and is the one value worth warning about |
-| `imgsz` | set `Settings.imgsz` to the recorded value if the run used a non-default one — the record is a readout, not an input, so nothing changes it for you |
+| `imgsz` | follows the weight: switching `active_model` in Admin sets `imgsz` to the size the record names (a save that names `imgsz` itself wins). Check it reads the run's size after the switch |
 | Test connection | `7 classes`, and no class warning. A distance-split weight would read `21 classes` with the distance problem named |
 
 ```bash
