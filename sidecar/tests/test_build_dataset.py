@@ -1579,3 +1579,51 @@ def test_the_merge_writes_one_box_per_item_and_reports_the_count(tmp_path):
     written = (staging / "train" / "labels" / "a.txt").read_text(encoding="utf-8").splitlines()
     assert len(written) == 1
     assert build_dataset.CANONICAL_NAMES[int(written[0].split()[0])] == names[0]
+
+
+def test_a_v1_frame_with_an_empty_label_file_is_left_out_not_trained_as_background(tmp_path):
+    """v1's empty label files are products nobody boxed (all 17 were looked at), so they must not
+    enter as 'nothing here'."""
+    v1 = _export_with_names(
+        tmp_path / "export-v1", {"train": ["a.jpg", "b.jpg"], "valid": ["c.jpg"], "test": ["d.jpg"]}
+    )
+    (v1 / "train" / "labels" / "b.txt").write_text("", encoding="utf-8")
+    staging = tmp_path / "staging"
+    side = build_dataset.build_v1(v1, staging)
+
+    assert side.problems == []
+    assert side.unlabeled == 1 and "b.jpg" not in side.placed and "a.jpg" in side.placed
+    assert not (staging / "train" / "images" / "b.jpg").exists()
+    assert side.background["train"] == 0
+    assert any(note.startswith("[unlabeled] 1 frame(s)") for note in side.notes)
+
+
+def test_a_fit_build_keeps_each_frames_shape_and_declares_letterbox(tmp_path):
+    """`--geometry fit`: the frame keeps its aspect (long side = size), the label rows are untouched
+    - they are fractions of the frame, which a resize of either kind leaves alone - and the set says
+    which runtime geometry its weights need."""
+    import yaml
+    from PIL import Image
+
+    v1 = _export_with_names(
+        tmp_path / "export-v1", {"train": ["a.jpg"], "valid": ["b.jpg"], "test": ["c.jpg"]}
+    )
+    Image.new("RGB", (400, 300), (90, 120, 150)).save(v1 / "train" / "images" / "a.jpg")
+    row = "0 0.5 0.5 0.4 0.4"
+    (v1 / "train" / "labels" / "a.txt").write_text(row + "\n", encoding="utf-8")
+
+    staging = tmp_path / "staging"
+    side = build_dataset.build_v1(v1, staging, size=200, geometry="fit")
+    assert side.problems == []
+    with Image.open(staging / "train" / "images" / "a.jpg") as written:
+        assert written.size == (200, 150)
+    assert (staging / "train" / "labels" / "a.txt").read_text(encoding="utf-8").split() == row.split()
+
+    stretched = tmp_path / "stretched"
+    build_dataset.build_v1(v1, stretched, size=200)
+    with Image.open(stretched / "train" / "images" / "a.jpg") as written:
+        assert written.size == (200, 200)
+
+    target = build_dataset.write_names_yaml(staging, {}, resize_mode=build_dataset.GEOMETRIES["fit"])
+    assert yaml.safe_load(target.read_text(encoding="utf-8"))["resize_mode"] == "letterbox"
+    assert train_model.read_export_resize_mode(staging) == "letterbox"
