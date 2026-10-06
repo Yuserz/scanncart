@@ -87,8 +87,11 @@ class AutoExposure:
 
     `allow_slow` (`camera_auto_exposure_slow`, off by default) is the one trade it may make first:
     one stop of shutter past the cap, `slow_cap` - 30 fps at a 60 fps setting, which tracking still
-    handles - before giving up. It comes back to the cap only once the picture would still reach the
-    target with half the light (`_SLOW_EXIT`), so it cannot ring between the two rates.
+    handles - before giving up. It comes back to the cap as soon as a reading would still reach the
+    target with half the light (`_SLOW_EXIT`) - and, because the brightness loop holds the picture
+    near the target and so hides returning light from that test, it also *tries* the cap every
+    `SLOW_RETRY_S`: a room that is still dark goes flat at the short shutter and the rule above
+    takes the stop back within a second, while a room that has light again simply stays at 60.
 
     Pure: it is handed a luminance (and, when the caller has it, a contrast) and returns the writes
     to make, so it is tested without a device. The capture thread owns the device and does the
@@ -125,6 +128,7 @@ class AutoExposure:
         self.slow_cap = exposure_cap_for(fps / 2) if fps > 0 else self.cap
         self.allow_slow = allow_slow
         self.too_dark = False
+        self._slow_retry_at = 0.0
         self.brightness = 128.0 if brightness is None else float(brightness)
         self.exposure = float(self.cap if exposure is None else min(exposure, self.cap))
         self._next_t = 0.0
@@ -139,6 +143,8 @@ class AutoExposure:
 
     # Back to the cap only when half the light would still reach the target (one stop halves it).
     _SLOW_EXIT = 2 * (TARGET - DEADBAND)
+    # How often a lengthened shutter tries the framerate's own again (see the class docstring).
+    SLOW_RETRY_S = 15.0
 
     def set_allow_slow(self, allow: bool) -> dict:
         """Switch the 30 fps trade on or off; off puts a lengthened shutter straight back."""
@@ -158,16 +164,21 @@ class AutoExposure:
             return {}
         self._next_t = now + self.INTERVAL_S
         err = self.TARGET - luminance
-        if self.exposure > self.cap and luminance >= self._SLOW_EXIT:
-            # Light enough again for the framerate's own shutter, with room to spare.
+        if self.exposure > self.cap and (
+            luminance >= self._SLOW_EXIT or now >= self._slow_retry_at
+        ):
+            # Light enough again for the framerate's own shutter - or time to find out.
             self.exposure -= 1
             self._next_t = now + self.SETTLE_S
+            self._slow_retry_at = now + self.SLOW_RETRY_S
             return {"exposure": self.exposure}
         if err > self.DEADBAND and contrast is not None and contrast < self.CONTRAST_FLOOR:
             # Too dark *and* flat: brightness would only lift black to grey.
             if self.exposure < self.longest:
                 self.exposure += 1
                 self._next_t = now + self.SETTLE_S
+                if self.exposure > self.cap:
+                    self._slow_retry_at = now + self.SLOW_RETRY_S
                 return {"exposure": self.exposure}
             self.too_dark = True
             if self.brightness > self.BRIGHTNESS_NEUTRAL:
@@ -412,11 +423,16 @@ class CameraCapture:
             writes.update(self._ae.start_writes())
         elif ae_switch is False and self._ae is not None:
             # Hand the two controls back to the operator's own values, where there are any.
-            self._ae = None
+            ae, self._ae = self._ae, None
             for name in ("brightness", "exposure"):
                 value = getattr(self, f"_{name}")
                 if value is not None:
                     writes[name] = value
+            if self._exposure is None and ae.exposure > ae.cap:
+                # The 30 fps trade is the loop's, not the operator's: with no manual exposure to
+                # hand back, leaving it would keep capture at half rate with nothing on screen
+                # saying why (the too-dark notice goes with auto exposure).
+                writes["exposure"] = float(ae.cap)
         elif self._ae is not None:
             # A manual drag while auto is on is its next starting point, not a write.
             writes.pop("brightness", None)

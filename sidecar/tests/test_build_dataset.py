@@ -1598,6 +1598,19 @@ def test_a_v1_frame_with_an_empty_label_file_is_left_out_not_trained_as_backgrou
     assert any(note.startswith("[unlabeled] 1 frame(s)") for note in side.notes)
 
 
+def test_a_fit_build_refuses_a_v1_side_that_is_a_stretched_export(tmp_path):
+    """Fitting cannot unsquash a 'Stretch to 640' export, so a letterbox set built from one would
+    train a third of itself on squashed products under a letterbox label."""
+    v1 = _export_with_names(
+        tmp_path / "export-v1", {"train": ["a.jpg"], "valid": ["b.jpg"], "test": ["c.jpg"]}
+    )
+    side = build_dataset.build_v1(v1, tmp_path / "staging", size=200, geometry="fit")
+    with __import__("PIL.Image").Image.open(v1 / "train" / "images" / "a.jpg") as im:
+        assert im.width == im.height  # the fixture's frames are square, as an export's are
+    assert any("stretched export" in p for p in side.problems)
+    assert build_dataset.build_v1(v1, tmp_path / "staging2", size=200).problems == []
+
+
 def test_a_fit_build_keeps_each_frames_shape_and_declares_letterbox(tmp_path):
     """`--geometry fit`: the frame keeps its aspect (long side = size), the label rows are untouched
     - they are fractions of the frame, which a resize of either kind leaves alone - and the set says

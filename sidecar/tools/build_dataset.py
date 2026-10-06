@@ -529,6 +529,7 @@ def build_v1(v1_dir: Path, out: Path, size: int = SIZE, geometry: str = "stretch
     """
     side = Side(name="v1")
     names: list[str] | None = None
+    square = written = 0
     for split in SPLIT_NAMES:
         images, labels = split_dirs(v1_dir, split)
         if not images.is_dir():
@@ -581,6 +582,10 @@ def build_v1(v1_dir: Path, out: Path, size: int = SIZE, geometry: str = "stretch
                 side.problems.extend(f"{split}/{image.name}: {p}" for p in nested_problems)
                 continue
             side.nested += nested
+            if geometry == "fit":
+                with Image.open(image) as probe:
+                    square += probe.width == probe.height
+                written += 1
             write_frame(image, rows, out, split, image.name, size, geometry)
             side.placed[image.name] = split
             if rows:
@@ -595,6 +600,15 @@ def build_v1(v1_dir: Path, out: Path, size: int = SIZE, geometry: str = "stretch
         )
     if side.nested:
         side.notes.append(nested_note(side))
+    if geometry == "fit" and written and square == written:
+        # Every v1 frame square is a "Stretch to" export: its products are already squashed, and a
+        # fit build cannot unsquash them - the set would be labelled letterbox while a third of it
+        # trains on stretched products. Point --v1 at the originals instead (the v1 fit set is
+        # built from the project's original images).
+        side.problems.append(
+            f"--geometry fit, but all {written} v1 frame(s) are square - {v1_dir} is a stretched "
+            "export, and fitting cannot undo a stretch. Use v1's original images (or --no-v1)"
+        )
     if side.unlabeled:
         side.notes.append(
             f"[unlabeled] {side.unlabeled} frame(s) with an empty label file left out - in v1's "

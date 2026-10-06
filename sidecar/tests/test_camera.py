@@ -698,6 +698,47 @@ def test_the_slow_trade_comes_back_to_the_cap_only_with_light_to_spare():
     assert _tick(ae, 240, LIT, t) == {"exposure": -6}
 
 
+def test_the_slow_trade_tries_the_cap_again_when_light_returns_gradually():
+    """At 30 fps the brightness loop holds the picture near the target, so the 'twice the target'
+    reading that proves there is light to spare never appears in an ordinarily lit room. The loop
+    tries the cap on a timer instead: with light back it stays there."""
+    ae = AutoExposure(60, brightness=128, exposure=-6, allow_slow=True)
+    t = [0.0]
+    _tick(ae, 1, 2.4, t)
+    assert ae.exposure == -5
+    # Light comes back gradually: on target at 30 fps, never near 236.
+    for _ in range(int(AutoExposure.SLOW_RETRY_S)):
+        _tick(ae, AutoExposure.TARGET, LIT, t)
+    assert ae.exposure == -6  # tried the cap
+    _tick(ae, AutoExposure.TARGET - 5, LIT, t)  # lit and in the deadband at 60 fps
+    assert ae.exposure == -6
+
+
+def test_the_slow_trade_steps_back_if_the_room_is_still_dark_at_the_retry():
+    ae = AutoExposure(60, brightness=128, exposure=-6, allow_slow=True)
+    t = [0.0]
+    _tick(ae, 1, 2.4, t)
+    for _ in range(int(AutoExposure.SLOW_RETRY_S)):
+        _tick(ae, 3, 5.0, t)
+    assert ae.exposure == -6  # the retry
+    assert _tick(ae, 1, 2.4, t) == {"exposure": -5}  # still dark: back to 30 fps
+
+
+def test_switching_auto_exposure_off_takes_the_slow_shutter_back_when_none_was_set():
+    cap = _DarkCap()
+    src = CameraCapture(0, 16, 16, 60, cap_factory=lambda i: cap, auto_exposure=True,
+                        auto_exposure_slow=True)
+    src.open()
+    try:
+        assert _wait_for(lambda: _wrote(cap, cv2.CAP_PROP_EXPOSURE, -5.0), 5.0)
+        src.set_controls(auto_exposure=False)
+        assert _wait_for(
+            lambda: [v for p, v, _ in cap.sets if p == cv2.CAP_PROP_EXPOSURE][-1] == -6.0, 5.0
+        )
+    finally:
+        src.release()
+
+
 def test_turning_the_slow_trade_off_puts_the_shutter_straight_back():
     ae = AutoExposure(60, brightness=128, exposure=-6, allow_slow=True)
     t = [0.0]

@@ -145,7 +145,9 @@ def compare(frames: Path, weights: list[str], conf: float, device: str) -> int:
         for segment in segments:
             # A fresh detector per segment: the tracker's memory of one product must not carry
             # into the next segment's first frames.
-            detector = YoloDetector(weight, device=device, conf=conf, imgsz=imgsz, resize_mode=mode)
+            detector = YoloDetector(
+                weight, device=device, conf=conf, imgsz=imgsz, resize_mode=mode, hold_tracks=True
+            )
             files = sorted((frames / segment).glob("*.jpg"))
             found = wrong = any_shown = 0
             confs: list[float] = []
@@ -230,12 +232,22 @@ def main(argv: list[str] | None = None) -> int:
     cmp_.add_argument("--frames", default="data/ab-live")
     cmp_.add_argument("--a", required=True)
     cmp_.add_argument("--b", required=True)
-    cmp_.add_argument("--conf", type=float, default=0.8)
+    cmp_.add_argument(
+        "--conf",
+        type=float,
+        default=None,
+        help="display threshold (default: the app's saved conf_threshold)",
+    )
     cmp_.add_argument("--device", default="cuda")
     args = ap.parse_args(argv)
     if args.verb == "record":
         return record(Path(args.out), args.seconds, args.width, args.height, args.fps, args.camera)
-    return compare(Path(args.frames), [args.a, args.b], args.conf, args.device)
+    conf = args.conf
+    if conf is None:
+        from app.settings_store import load_settings
+
+        conf = load_settings(str(SIDECAR / "data" / "settings.json")).conf_threshold
+    return compare(Path(args.frames), [args.a, args.b], conf, args.device)
 
 
 if __name__ == "__main__":
