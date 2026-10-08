@@ -37,7 +37,7 @@ the shop goes live, the ordered run is [POS_SMOKE_TEST.md](./POS_SMOKE_TEST.md).
 2. Put two variables in the environment pushcart-web runs with (its README documents both):
 
    ```json
-   { "POS_INGEST_SECRET": "<32+ hex>", "POS_IDLE_CANCEL_MINUTES": 5, "POS_STAFF_PIN": "<digits>" }
+   { "POS_INGEST_SECRET": "<32+ hex>", "POS_IDLE_CANCEL_MINUTES": 15, "POS_STAFF_PIN": "<digits>" }
    ```
 
    The **staff code** turns on the one manual correction left: staff lowering a quantity on the
@@ -50,8 +50,10 @@ the shop goes live, the ordered run is [POS_SMOKE_TEST.md](./POS_SMOKE_TEST.md).
    `20261003120000_pos_basket_automation.sql`).
 
    `POS_INGEST_SECRET` is what the desktop sends as the `x-pos-token` header; `POS_IDLE_CANCEL_MINUTES`
-   is how long an abandoned session blocks the counter before the next customer's *Start* cancels it
-   (default 5).
+   is how long an abandoned session stays open before it is cancelled (default 15). The desktop's own
+   session poll does the cancelling — within one poll of the window expiring, the tablet's cart stops
+   being live and the desktop unbinds — so an abandoned counter clears itself without waiting for the
+   next customer's *Start* (which sweeps too, as a backstop).
 3. In the admin screen at `/admin/<userId>/pos-mapping`, **register a station per counter** and
    **map every class slug the model can predict to a product**. Both matter:
 
@@ -141,7 +143,8 @@ running rather than the default.
    minute.
 7. **Finish.** Refused while the scanner reports review (`review_pending`, `409`): the tablet shows
    *Staff check needed* with the reasons, and Finish is disabled until staff press **Basket checked**
-   on the desktop and the next sync clears it. Then the tablet creates the order in one
+   — on the desktop's Live view, or on the admin POS screen's open-sessions list (no walk to the
+   desktop) — and the next sync clears it. Then the tablet creates the order in one
    transaction: stock is checked first (an order for
    more than is in stock is refused, naming the items, and staff resolve it), then the order, the VAT
    and the stock deduction that pushcart-web's trigger performs. The session becomes `completed`, the
@@ -165,7 +168,7 @@ Basket mode replaces "what is visible" with **confirmed transfers**, which is wh
 - **Posted at once:** a confirmed deposit or removal is sent to pushcart-web as soon as it is confirmed, not at the next poll, so the tablet changes within a fraction of a second of the hold.
 - **Fast hands:** the tracker sometimes hands an item a new id mid-swing (motion blur). A new id of the same product appearing near where a track was lost within 0.6 s carries on that track's path, so a brisk deposit is still a deposit rather than review. It never takes over an item still in view. How far a box may move between sightings grows with the time between them, so a dropped frame or two during a swing is motion, not a broken identity.
 - **No change:** showing an item outside, hovering at the opening and pulling back, rearranging inside the cart, an empty hand reaching in, or an item hidden after it was deposited.
-- **Needs review (cart unchanged):** the class changes mid-path, two items cross the opening at once (two in-flight items within 0.5 s of each other — an item merely resting on the rim does not count), an item stops mid-path, an item appears in the opening with no origin, a removal of something the ledger does not hold, a product already in the cart band at Start (its track first seen inside the band in the 3 s after Start — an item carried in through the opening in those seconds is a deposit), an app restart mid-session, or the camera seeing nothing for more than a few seconds. Review is sent to pushcart-web as `pending_review`; staff clear it with **Basket checked** on the Live view.
+- **Needs review (cart unchanged):** the class changes mid-path, two items cross the opening at once (two in-flight items within 0.5 s of each other — an item merely resting on the rim does not count), an item stops mid-path, an item appears in the opening with no origin, a removal of something the ledger does not hold, a product already in the cart band at Start (its track first seen inside the band in the 3 s after Start — an item carried in through the opening in those seconds is a deposit), an app restart mid-session, or the camera seeing nothing for more than a few seconds. Review is sent to pushcart-web as `pending_review`; staff clear it with **Basket checked** on the Live view or on the admin POS screen. Each review sync carries `review_as_of` — the moment of the newest interaction it counts — so the admin screen's clear (stamped `review_cleared_at`) outranks a desktop re-post of interactions the human already checked, while a newer interaction still raises the review.
 
 The ledger runs in counter mode too, as a shadow, so it can be compared with the real basket before switching. `Counter` is still the configuration default, but the product is the basket: with the camera on the cart, counter mode would drop an item from the bill as soon as other items hide it. Select `Basket` for the cart (and for the defense demo); the acceptance gates in `CART_TRANSFER_SPEC.md` §3 are what would make basket the shipped default. The ledger is kept beside `pos.json` as `basket-ledger.json`, keyed to the session.
 
