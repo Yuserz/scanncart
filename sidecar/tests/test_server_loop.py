@@ -166,6 +166,29 @@ def test_run_py_serves_the_config_carrying_that_setting():
     assert config.port == 1234
 
 
+def test_run_py_does_not_deflate_the_frame_stream():
+    """The serving loop must never zlib the preview JPEGs.
+
+    Measured during the playtest this test came from: a ~900 KB base64 JPEG frame deflated on the
+    serving loop costs ~60 ms of CPU per message per client for a 0.76 ratio (the source is already
+    ~0.14), and through programs that do not stop - 70 msg/s to a renderer and the transfer client
+    together - the loop stays in `permessage_deflate.encode` for whole samples (`py-spy`), a grown
+    `/api/health` read outlives a 10 s timeout, and a new websocket handshake times out. The shape
+    "process alive, nothing answering" is otherwise the proactor accept bug one module over, and its
+    third appearance reads as a server to restart rather than a config to change, which is why the
+    choice is asserted beside the loop it was found beside.
+
+    Asserted on the object uvicorn reads rather than the source text, so a rename of the keyword
+    through a future uvicorn upgrade fails here instead of quietly reintroducing the cost. The two
+    sibling servers are deliberately not covered: neither carries a websocket (checked by the scan
+    above covering their call sites and nothing forcing the field there), and reducing bytes is a
+    service a non-localhost deployment might legitimately buy, which this decision does not make for
+    them.
+    """
+    config = server_config(None, 1234)
+    assert config.ws_per_message_deflate is False
+
+
 # --- and every *other* uvicorn server in this repo ---------------------------------------------
 
 CALL = re.compile(r"uvicorn\.(?:run|Config)\(")

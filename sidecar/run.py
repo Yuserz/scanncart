@@ -34,6 +34,18 @@ def server_config(app, port: int):
     `limit_concurrency` is the second half of that module's contract, and the reason it is here as
     well as on the other two servers: past the bound uvicorn answers 503 and closes the connection
     instead of working on it, so a flood of requests is shed rather than queued.
+
+    `ws_per_message_deflate=False` is the third choice, and it is the one this app measured the hard
+    way. uvicorn negotiates permessage-deflate on websockets by default, and every frame message here
+    is a ~900 KB base64 JPEG (`preview_height=720`): deflating that on the serving loop costs ~60 ms
+    of pure CPU per message per client for a 0.76 ratio — the source ratio is ~0.14, so ~30% of the
+    time the frame path spent did nothing but re-compress pixels. During a playtest the loop sat in
+    `permessage_deflate.encode` three samples in a row (py-spy), a `/api/health` read took >10 s while
+    the process was alive, and a new WS handshake timed out — the "healthy process, unreachable API"
+    shape, driven from inside the app instead of by a flood. JPEG is already entropy-coded, so the
+    client pays to decompress what it could have had for free. Off, because no consumer of this
+    stream asks for smaller bytes at that price: it is localhost on one machine, so the wire is not
+    the resource being protected.
     """
     import uvicorn
 
@@ -43,6 +55,7 @@ def server_config(app, port: int):
         port=port,
         loop=SERVER_LOOP_SETTING,
         limit_concurrency=SERVER_CONCURRENCY_LIMIT,
+        ws_per_message_deflate=False,
     )
 
 
