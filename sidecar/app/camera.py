@@ -345,6 +345,15 @@ class CameraCapture:
         self.failure: str | None = None
         self._consecutive_failures = 0
         self._failing_since: float | None = None
+        # The other unplug shape: on MSMF/Windows a vanished device's read() keeps
+        # *succeeding* with one stale (black) frame at ~1 fps instead of failing, so the
+        # failed-read deadline above never fires. Measured 2026-10-07 by disabling the
+        # StreamCam's USB video interface mid-session: health said `running` for 5+ minutes
+        # while the preview re-encoded a frozen black frame 57x/s. Judged by delivery rate
+        # instead: a sustained rate below STALL_MIN_FPS past STALL_GRACE_S is the same
+        # failure. The 60->30 fps latch (see DEFENSE_READINESS) and ordinary hitches sit
+        # far above the threshold and outlast nothing near the grace window.
+        self._stall_since: float | None = None
         # Timestamps of recent successful reads, for the measured rate. The
         # requested fps is a request; this is what arrived.
         self._read_times: deque[float] = deque(maxlen=120)
@@ -487,12 +496,18 @@ class CameraCapture:
     # time a user stares at a frozen image does not depend on the backoff.
     FAILURE_TIMEOUT_S = 3.0
     MAX_FAILURE_BACKOFF_S = 0.2
+    # The delivered-rate stall guard (see the `_stall_since` note): fewer than
+    # STALL_MIN_FPS deliveries per second, sustained for STALL_GRACE_S, is a
+    # dead device even when every read() reports success.
+    STALL_MIN_FPS = 5.0
+    STALL_GRACE_S = 5.0
+    STALL_WINDOW_S = 5.0
 
     def _loop(self) -> None:
         while self._running:
             ok, frame = self._cap.read()
+            now = time.monotonic()
             if not ok:
-                now = time.monotonic()
                 if self._failing_since is None:
                     self._failing_since = now
                 self._consecutive_failures += 1
@@ -515,9 +530,29 @@ class CameraCapture:
             if self._ae is not None:
                 level, contrast = frame_levels(frame)
                 self._write_safely(self._ae.update(level, time.monotonic(), contrast))
-            self._read_times.append(time.monotonic())
+            self._read_times.append(now)
             self._seq += 1
             self._buffer.put(self._seq, frame)
+            # Delivered-rate stall guard: runs on the success path, because the
+            # unplug shape this catches keeps read() succeeding (see the
+            # `_stall_since` note). Judged over a fixed window against the
+            # deliveries actually counted, so it cannot trip on startup — the
+            # window cannot be full until the camera has been delivering.
+            recent = sum(1 for t in self._read_times if now - t <= self.STALL_WINDOW_S)
+            if recent < self.STALL_MIN_FPS * self.STALL_WINDOW_S:
+                if self._stall_since is None:
+                    self._stall_since = now
+                elif now - self._stall_since >= self.STALL_GRACE_S:
+                    self.failure = (
+                        f"Camera {self.index} has delivered only {recent / self.STALL_WINDOW_S:.0f} fps "
+                        f"for {now - self._stall_since:.0f}s — the image is frozen. It may have been "
+                        "unplugged, suspended, or taken by another program; restore the camera and "
+                        "restart capture (or the app)."
+                    )
+                    self._running = False
+                    return
+            else:
+                self._stall_since = None
 
     MEASURED_FPS_WINDOW_S = 1.0
 
