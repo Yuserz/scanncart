@@ -752,6 +752,7 @@ describe('PosSessionOrchestrator — basket mode', () => {
       },
       snapshot: () => ledger.snapshot(),
       pendingReview: () => ledger.pendingReview(),
+      resolveReviewBefore: (ms) => ledger.resolveReviewBefore(ms),
       readout: () => ({
         candidates: 0,
         itemCount: [...ledger.snapshot().values()].reduce((n, e) => n + e.quantity, 0),
@@ -835,6 +836,51 @@ describe('PosSessionOrchestrator — basket mode', () => {
       pending_review: 1,
       review_reasons: ['two items crossed the opening at once']
     })
+    // As-of the newest interaction the count includes — the server's staff-clear guard
+    // compares against this to let an admin clear outrank a stale re-post.
+    expect(b.h.calls.syncs.at(-1)?.review_as_of).toBe(new Date((BASE_S + 1) * 1000).toISOString())
+    orch.stop()
+  })
+
+  it('resolves the ledger when the admin screen clears the review, and newer interactions survive', async () => {
+    const b = await withBasket('basket')
+    const orch = new PosSessionOrchestrator(b.h.deps)
+    await orch.start()
+    await vi.advanceTimersByTimeAsync(1_500)
+
+    b.ledger.flag('soda', 'two items crossed the opening at once', BASE_S + 1)
+    b.ledger.flag('tuna', 'the app restarted during this session; check the basket', BASE_S + 2)
+    await vi.advanceTimersByTimeAsync(1_500)
+    expect(b.h.calls.syncs.at(-1)?.pending_review).toBe(2)
+
+    // Staff checked the basket from the admin screen at BASE_S + 2.5: the poll carries the
+    // clear, the ledger resolves the interactions up to that moment, and the next sync
+    // posts the honest count — zero, without waiting for the desktop's own button.
+    b.h.state.remote = {
+      ...SESSION,
+      reviewClearedAt: new Date((BASE_S + 2.5) * 1000).toISOString()
+    }
+    await vi.advanceTimersByTimeAsync(6_000)
+    expect(b.h.calls.syncs.at(-1)?.pending_review).toBe(0)
+
+    // A NEWER interaction (after the human looked) still raises the review.
+    b.ledger.flag('soda', 'two items crossed the opening at once', BASE_S + 20)
+    await vi.advanceTimersByTimeAsync(1_500)
+    expect(b.h.calls.syncs.at(-1)?.pending_review).toBe(1)
+    orch.stop()
+  })
+
+  it('a re-post of interactions the admin clear predates loses to the clear (as-of guard)', async () => {
+    // Server-side behavior the desktop relies on, asserted at the payload level: a stale
+    // snapshot's as-of stamp is older than the staff clear, so the guard ignores it.
+    const b = await withBasket('basket')
+    const orch = new PosSessionOrchestrator(b.h.deps)
+    await orch.start()
+    await vi.advanceTimersByTimeAsync(1_500)
+    b.ledger.flag('soda', 'two items crossed the opening at once', BASE_S + 1)
+    await vi.advanceTimersByTimeAsync(1_500)
+    const staleAsOf = b.h.calls.syncs.at(-1)?.review_as_of
+    expect(staleAsOf).toBe(new Date((BASE_S + 1) * 1000).toISOString())
     orch.stop()
   })
 

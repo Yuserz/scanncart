@@ -65,6 +65,8 @@ export interface BasketPort {
   unbind(): void
   snapshot(): Map<string, CartEntry>
   pendingReview(): ReviewItem[]
+  /** Drop every interaction the ledger saw up to the staff clear's moment (admin screen). */
+  resolveReviewBefore(clearedAtS: number): void
   readout(): BasketReadout
 }
 
@@ -89,6 +91,12 @@ export interface RemoteSession {
   /** The daily display label; optional because the fixture-heavy tests build sessions without it. */
   shopperCode?: string | null
   cartStatus: string
+  /**
+   * When staff last cleared the basket review from the admin POS screen. The orchestrator
+   * resolves its ledger interactions up to this moment, so a human's check wins over the
+   * camera's remembered confusion.
+   */
+  reviewClearedAt?: string | null
 }
 
 export interface PosSyncItem {
@@ -129,6 +137,12 @@ export interface PosSyncPayload {
    */
   pending_review?: number
   review_reasons?: string[]
+  /**
+   * The moment of the newest interaction `pending_review` counts. The server's staff-clear
+   * guard uses it: a re-post of interactions that predate the admin screen's clear loses to
+   * the clear; a genuinely newer interaction wins.
+   */
+  review_as_of?: string
 }
 
 export interface PosSyncResponse {
@@ -210,6 +224,8 @@ export class PosSessionOrchestrator {
   private sessionRef: string | null = null
   private cartCode: string | null = null
   private shopperCode: string | null = null
+  /** The newest staff clear this orchestrator has already honored (admin POS screen). */
+  private reviewClearedSeenAt: string | null = null
   private bindAt = 0
 
   /** Sidecar-session-scoped track cache, keyed `${sessionId}:${trackId}`. */
@@ -479,8 +495,26 @@ export class PosSessionOrchestrator {
       return
     }
 
+    this.applyReviewClear(remote)
     // Bound to the same session and healthy.
     this.clearTransportError()
+  }
+
+  /**
+   * Staff cleared the basket review from the admin POS screen: resolve the ledger
+   * interactions up to that moment. Newer interactions survive and re-raise the review,
+   * so this cannot silence a problem that happened after the human looked. The resolved
+   * ledger changes the next sync's pending count, which is what lifts the tablet's block.
+   */
+  private applyReviewClear(remote: RemoteSession): void {
+    if (!remote.reviewClearedAt || remote.reviewClearedAt === this.reviewClearedSeenAt) {
+      return
+    }
+    this.reviewClearedSeenAt = remote.reviewClearedAt
+    const clearedAtMs = Date.parse(remote.reviewClearedAt)
+    if (!Number.isFinite(clearedAtMs)) return
+    // The ledger's clock is seconds, not ms.
+    this.deps.basket?.resolveReviewBefore(clearedAtMs / 1000)
   }
 
   private async bind(remote: RemoteSession): Promise<void> {
@@ -488,6 +522,14 @@ export class PosSessionOrchestrator {
     this.sessionRef = remote.sessionRef
     this.cartCode = remote.cartCode
     this.shopperCode = remote.shopperCode ?? null
+    // A staff clear that predates this bind still counts: the ledger restored from disk
+    // may hold interactions the admin screen resolved while the app was down.
+    this.reviewClearedSeenAt = remote.reviewClearedAt ?? null
+    const clearedAtMs = remote.reviewClearedAt ? Date.parse(remote.reviewClearedAt) : NaN
+    if (Number.isFinite(clearedAtMs)) {
+      // The ledger's clock is seconds, not ms.
+      this.deps.basket?.resolveReviewBefore(clearedAtMs / 1000)
+    }
     this.bindAt = nowSeconds()
     this.cache.clear()
     this.lastSent.clear()
@@ -532,6 +574,7 @@ export class PosSessionOrchestrator {
     this.sessionRef = null
     this.cartCode = null
     this.shopperCode = null
+    this.reviewClearedSeenAt = null
     this.cache.clear()
     this.lastSent.clear()
     this.cumulative.clear()
@@ -712,6 +755,12 @@ export class PosSessionOrchestrator {
     if (review !== undefined) {
       payload.pending_review = review.length
       payload.review_reasons = review.map((r) => r.reason)
+      // As-of the newest interaction the count includes, so the server's staff-clear guard
+      // can tell a stale re-post from a genuinely newer interaction.
+      if (review.length > 0) {
+        // ReviewItem.at is ledger seconds; the wire takes an ISO stamp.
+        payload.review_as_of = new Date(Math.max(...review.map((r) => r.at)) * 1000).toISOString()
+      }
     }
 
     try {

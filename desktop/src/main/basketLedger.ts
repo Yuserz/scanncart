@@ -206,6 +206,20 @@ export class BasketLedger {
     this.persist()
   }
 
+  /**
+   * Resolve every interaction the ledger saw up to `clearedAtS` — the admin screen's
+   * staff clear, learned through the session poll. Interactions that happened after the
+   * clear survive and keep raising the review, which is the point: the human checked the
+   * basket at a moment, not the basket forever. `at` and the argument are ledger
+   * seconds (the ledger clock is `Date.now() / 1000`).
+   */
+  resolveReviewBefore(clearedAtS: number): void {
+    const s = this.state
+    if (!s) return
+    s.review = s.review.filter((r) => r.at > clearedAtS)
+    this.persist()
+  }
+
   pendingReview(): ReviewItem[] {
     return [...(this.state?.review ?? [])]
   }

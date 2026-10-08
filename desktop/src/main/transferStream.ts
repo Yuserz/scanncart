@@ -208,6 +208,11 @@ export class BasketTracker {
     this.changed()
   }
 
+  resolveReviewBefore(clearedAtS: number): void {
+    this.ledger.resolveReviewBefore(clearedAtS)
+    this.changed()
+  }
+
   readout(): BasketReadout {
     const items = [...this.ledger.snapshot()].map(([className, e]) => ({
       className,
