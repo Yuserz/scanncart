@@ -209,6 +209,7 @@ describe('PosAdminSection', () => {
     const base: PosState = {
       phase: 'unbound',
       cartCode: null,
+      shopperCode: null,
       syncedItemCount: 0,
       lastSyncAgeS: null,
       error: null,

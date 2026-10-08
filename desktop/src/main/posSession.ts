@@ -23,6 +23,11 @@ export type PosPhase = 'unbound' | 'warming_up' | 'bound' | 'error'
 export interface PosState {
   phase: PosPhase
   cartCode: string | null
+  /**
+   * The daily human label ("Shopper_0007") the webapp assigned at Start — display only; the
+   * machine key stays `cartCode`/`cartId`. Null when the session predates the feature.
+   */
+  shopperCode: string | null
   syncedItemCount: number
   lastSyncAgeS: number | null
   error: string | null
@@ -81,6 +86,8 @@ export interface RemoteSession {
   sessionRef: string
   cartId: string
   cartCode: string
+  /** The daily display label; optional because the fixture-heavy tests build sessions without it. */
+  shopperCode?: string | null
   cartStatus: string
 }
 
@@ -202,6 +209,7 @@ export class PosSessionOrchestrator {
   private bound = false
   private sessionRef: string | null = null
   private cartCode: string | null = null
+  private shopperCode: string | null = null
   private bindAt = 0
 
   /** Sidecar-session-scoped track cache, keyed `${sessionId}:${trackId}`. */
@@ -479,6 +487,7 @@ export class PosSessionOrchestrator {
     this.bound = true
     this.sessionRef = remote.sessionRef
     this.cartCode = remote.cartCode
+    this.shopperCode = remote.shopperCode ?? null
     this.bindAt = nowSeconds()
     this.cache.clear()
     this.lastSent.clear()
@@ -522,6 +531,7 @@ export class PosSessionOrchestrator {
     this.bound = false
     this.sessionRef = null
     this.cartCode = null
+    this.shopperCode = null
     this.cache.clear()
     this.lastSent.clear()
     this.cumulative.clear()
@@ -778,6 +788,7 @@ export class PosSessionOrchestrator {
     this.deps.emit({
       phase: this.currentPhase(),
       cartCode: this.cartCode,
+      shopperCode: this.shopperCode,
       syncedItemCount: this.syncedItemCount,
       lastSyncAgeS: this.lastSyncAtMs ? (Date.now() - this.lastSyncAtMs) / 1000 : null,
       error: this.error,

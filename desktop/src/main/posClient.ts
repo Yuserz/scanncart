@@ -132,6 +132,7 @@ export async function fetchRemoteSession(
     sessionRef: String(data.session_ref),
     cartId: String(data.cart_id),
     cartCode: String(data.cart_code ?? ''),
+    shopperCode: data.shopper_code == null ? null : String(data.shopper_code),
     cartStatus: String(data.cart_status ?? '')
   }
 }

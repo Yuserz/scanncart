@@ -6,6 +6,7 @@ import type { PosState } from '../../../main/posSession'
 const BOUND: PosState = {
   phase: 'bound',
   cartCode: 'abcdef1234567890',
+  shopperCode: null,
   syncedItemCount: 3,
   lastSyncAgeS: 12,
   error: null,
@@ -60,6 +61,13 @@ describe('PosPanel', () => {
     expect(screen.getByTestId('pos-items')).toHaveTextContent('3')
     expect(screen.getByTestId('pos-age')).toHaveTextContent('12s ago')
     expect(screen.queryByTestId('pos-error')).toBeNull()
+  })
+
+  it('prefers the daily shopper label over the raw code slice', async () => {
+    stubBridge({ ...BOUND, shopperCode: 'Shopper_0007' })
+    render(<PosPanel />)
+
+    await waitFor(() => expect(screen.getByTestId('pos-cart')).toHaveTextContent('Shopper_0007'))
   })
 
   it('says a sync has never happened rather than showing a zero age', async () => {

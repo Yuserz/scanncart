@@ -6,6 +6,7 @@ import type { PosState } from '../../../main/posSession'
 const STATE: PosState = {
   phase: 'bound',
   cartCode: 'CODE-1',
+  shopperCode: 'Shopper_0001',
   syncedItemCount: 2,
   lastSyncAgeS: 1,
   error: null,

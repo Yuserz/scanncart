@@ -59,10 +59,11 @@ export function PosPanel(): JSX.Element | null {
           <small>status</small>
           <b data-testid="pos-phase">{PHASE_LABELS[state.phase] ?? state.phase}</b>
         </div>
-        {state.cartCode && (
+        {(state.shopperCode || state.cartCode) && (
           <div className="pos-row">
             <small>cart</small>
-            <b data-testid="pos-cart">{state.cartCode.slice(0, 8)}</b>
+            {/* The daily label when the webapp assigned one; the code slice for older carts. */}
+            <b data-testid="pos-cart">{state.shopperCode ?? state.cartCode!.slice(0, 8)}</b>
           </div>
         )}
         <div className="pos-row">
