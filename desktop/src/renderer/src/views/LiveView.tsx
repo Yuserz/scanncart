@@ -2,6 +2,7 @@ import { useEffect, useState, type CSSProperties, type JSX } from 'react'
 import type { Detection, FrameMessage, InferenceMessage } from '../lib/ws'
 import { useSidecarStream, type StreamDeps } from '../hooks/useSidecarStream'
 import { useActiveWeights } from '../hooks/useActiveWeights'
+import { describeQuietS, useAimWatch } from '../hooks/useAimWatch'
 import type { ClassRecall, UnrecordedResizeMode, ValidationRecord } from '../lib/api'
 import { boxToPercent } from '../lib/overlay'
 import { recordedConfirmation } from '../lib/resizeMode'
@@ -250,6 +251,10 @@ export function LiveView({ port, deps }: LiveViewProps): JSX.Element {
   // Absent on an older sidecar, and false whenever auto exposure is off - the operator owns the
   // controls then, and nothing is judging the picture.
   const tooDark = stats?.too_dark ?? false
+  // The aim pre-flight: has this capture ever produced a box, and how long has it run without
+  // one. The banner below turns the second answer into the one question an empty counter and a
+  // curtain cannot both answer.
+  const aim = useAimWatch(running, frame)
   // Real decoded frame size, read on img load — drives the wrapper's
   // aspect-ratio and fit-to-column sizing in CSS (falls back to 16/9
   // while idle). Same-value updates bail out, so per-frame loads are free.
@@ -339,6 +344,25 @@ export function LiveView({ port, deps }: LiveViewProps): JSX.Element {
             <b>Too dark for the camera at this frame rate.</b> Add light over the basket — auto
             exposure has stopped brightening the picture, because more brightness would only turn it
             grey. Or switch on <i>Allow 30 fps when dark</i> in Camera tuning.
+          </span>
+        </div>
+      )}
+      {/* The aim pre-flight (docs/POS_SMOKE_TEST.md §0 "Aim"). A capture that has produced no
+          box at all cannot tell an empty counter from a camera pointed at a wall — the two are
+          identical to every filter this app runs, because they are identical to the detector. So
+          after the twenty seconds the smoke test already grants an empty counter, this banner
+          asks the one question that separates the cases: wave a hand and watch. It is a latch on
+          evidence rather than an opinion — it clears on the first box this capture produces and
+          re-arms on every capture start, so a restart re-runs the check a rig that moved
+          deserves. Not dismissible, and the dismissal would be worthless anyway: an operator's
+          click cannot distinguish "empty counter" from "curtain", but the camera can. */}
+      {running && aim.warn && (
+        <div className="live-warning" role="status" data-testid="live-aim-unverified">
+          <span>
+            <b>No box has appeared in {describeQuietS(aim.quietS)} of live video.</b> If the counter
+            is empty that is normal — but prove the aim before the next customer: wave a hand where
+            items go. A box should appear within a couple of seconds; nothing appearing as you wave
+            means the camera is not looking at the counter. Re-aim it, then wave again.
           </span>
         </div>
       )}

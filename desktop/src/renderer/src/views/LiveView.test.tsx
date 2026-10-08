@@ -211,6 +211,64 @@ describe('LiveView', () => {
     expect(screen.queryByTestId('live-too-dark')).not.toBeInTheDocument()
   })
 
+  it('asks for the hand-wave after a boxless capture, and clears on the first box', () => {
+    // The aim pre-flight: an empty counter and a curtain look identical to every filter, so the
+    // banner cannot say which one it is — it can only say "no box ever" and ask the one question
+    // that separates them. Twenty seconds in, the smoke test's own empty-counter window.
+    vi.useFakeTimers()
+    try {
+      const h = makeHarness()
+      render(<LiveView port={8765} deps={h.deps} />)
+      act(() => {
+        h.opts().onOpen?.()
+        h.opts().onStatus?.({ type: 'status', state: 'running' })
+        h.opts().onFrame?.(frameWith([]))
+      })
+      act(() => {
+        vi.advanceTimersByTime(19_000)
+      })
+      expect(screen.queryByTestId('live-aim-unverified')).not.toBeInTheDocument()
+
+      act(() => {
+        vi.advanceTimersByTime(2_000)
+      })
+      expect(screen.getByTestId('live-aim-unverified')).toHaveTextContent('wave a hand')
+      // 19s + 2s advanced: the banner quotes the real elapsed time, not the threshold.
+      expect(screen.getByTestId('live-aim-unverified')).toHaveTextContent('21s')
+
+      // The one box the wave produces is the whole check: evidence, not an operator's assertion.
+      act(() => {
+        h.opts().onFrame?.(
+          frameWith([{ track_id: 3, cls: 'century_tuna', conf: 0.9, box: [0.2, 0.2, 0.4, 0.4] }])
+        )
+      })
+      expect(screen.queryByTestId('live-aim-unverified')).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('stays quiet while boxes flow, whatever the capture has been running through', () => {
+    vi.useFakeTimers()
+    try {
+      const h = makeHarness()
+      render(<LiveView port={8765} deps={h.deps} />)
+      act(() => {
+        h.opts().onOpen?.()
+        h.opts().onStatus?.({ type: 'status', state: 'running' })
+        h.opts().onFrame?.(
+          frameWith([{ track_id: 1, cls: 'banana', conf: 0.9, box: [0.1, 0.2, 0.3, 0.4] }])
+        )
+      })
+      act(() => {
+        vi.advanceTimersByTime(10 * 20_000)
+      })
+      expect(screen.queryByTestId('live-aim-unverified')).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('leaves the shed tile off on an ordinary frame', () => {
     const h = makeHarness()
     render(<LiveView port={8765} deps={h.deps} />)
