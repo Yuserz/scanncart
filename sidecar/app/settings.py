@@ -124,6 +124,10 @@ class Settings:
     camera_exposure: float | None = None
     camera_autofocus: bool | None = None
     camera_focus: float | None = None
+    # A/B instrument for the model, never a worker control: the detector reads
+    # saturation as texture, so a sliding value answers "was that a class or a
+    # colour?" faster than re-running on another item. None = no write.
+    camera_saturation: float | None = None
     # The app's own auto-exposure (CameraCapture's AutoExposure): it keeps the shutter at the
     # longest the capture fps allows and moves brightness to hold the picture's level, so the
     # view follows the room's light without the framerate loss the camera's built-in automatic

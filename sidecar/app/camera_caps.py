@@ -357,11 +357,18 @@ def calibrate(
     from app.camera_quality import measure_fps
 
     def _open_and_prime():
-        # Mirrors camera.py's _default_capture: MSMF delivers the full
-        # framerate on Windows but some devices refuse to open under it;
-        # fall back to OpenCV's auto backend rather than handing back an
-        # unopened handle that then fails far away, inside a getter/setter,
-        # with no indication the device was never open in the first place.
+        # Same open sequence as the runtime capture's `CameraCapture.open`
+        # (camera.py): MJPG first, then the size, then the fps. MSMF picks its
+        # media type when the size is set, so opening without the MJPG request
+        # calibrated the device in the uncompressed mode the runtime never
+        # runs — measured here, that media mode delivered 15 fps at 720p where
+        # the same settings live deliver 61, and the fps rows of the stored
+        # profile described a camera the app does not have.
+        # MSMF delivers the full framerate on Windows but some devices refuse
+        # to open under it; fall back to OpenCV's auto backend rather than
+        # handing back an unopened handle that then fails far away, inside a
+        # getter/setter, with no indication the device was never open in the
+        # first place.
         opened = open_device(index, cv2.CAP_MSMF)
         if not opened.isOpened():
             release = getattr(opened, "release", None)
@@ -370,8 +377,17 @@ def calibrate(
             opened = open_device(index, cv2.CAP_ANY)
         if not opened.isOpened():
             return None
+        opened.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
         opened.set(cv2.CAP_PROP_FRAME_WIDTH, width)
         opened.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+        # Same reason as the runtime's open(): leaving the rate at MSMF's
+        # default measured 15 fps for this mode, so every fps row of the
+        # profile described a slower camera than the app runs. `target_fps`
+        # is the rate the operator configured - the same number the runtime
+        # writes - so the sweep measures the mode the app actually asked for.
+        # None (no target given) leaves the device's default, as before.
+        if target_fps is not None:
+            opened.set(cv2.CAP_PROP_FPS, float(target_fps))
         for _ in range(10):
             opened.read()
         return opened

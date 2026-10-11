@@ -44,6 +44,7 @@ export const DEFAULT_SETTINGS: SettingsPayload = {
   camera_exposure: null,
   camera_autofocus: null,
   camera_focus: null,
+  camera_saturation: null,
   camera_auto_exposure: true,
   camera_auto_exposure_slow: false
 }

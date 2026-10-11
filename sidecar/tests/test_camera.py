@@ -345,6 +345,79 @@ def test_controls_set_live_survive_a_reopen():
     assert _wrote(caps[1], cv2.CAP_PROP_BRIGHTNESS, 140.0)
 
 
+def test_a_saturation_value_is_written_live():
+    """The A/B instrument: the tuning card slides saturation against detection
+    confidence, so the patch must become a CAP_PROP_SATURATION write without
+    anything exposure-related in between."""
+    cap = _RecordingCap()
+    src = CameraCapture(0, 4, 4, 30, cap_factory=lambda i: cap)
+    src.open()
+    try:
+        src.set_controls(saturation=0.0)
+        assert _wait_for(lambda: _wrote(cap, cv2.CAP_PROP_SATURATION, 0.0))
+    finally:
+        src.release()
+
+
+def test_saturation_set_live_survives_a_reopen():
+    """Same contract as every other live control: values tuned live must come
+    back when the handle is rebuilt, not silently revert."""
+    caps = []
+
+    def factory(index):
+        cap = _RecordingCap()
+        caps.append(cap)
+        return cap
+
+    src = CameraCapture(0, 4, 4, 30, cap_factory=factory)
+    src.open()
+    src.set_controls(saturation=20.0)
+    assert _wait_for(lambda: _wrote(caps[0], cv2.CAP_PROP_SATURATION, 20.0))
+    src.release()
+
+    src.open()
+    src.release()
+    assert _wrote(caps[1], cv2.CAP_PROP_SATURATION, 20.0)
+
+
+def test_a_reset_of_saturation_does_not_write_the_device():
+    """Saturation has no automatic mode the app can name (unlike autofocus, whose
+    undo is a real write), so a reset only stops this app writing it — no
+    device call, no invented restore value."""
+    cap = _RecordingCap()
+    src = CameraCapture(0, 4, 4, 30, cap_factory=lambda i: cap)
+    src.open()
+    try:
+        src.set_controls(saturation=40.0)
+        assert _wait_for(lambda: _wrote(cap, cv2.CAP_PROP_SATURATION, 40.0))
+
+        src.set_controls(saturation=None)
+
+        def _wrote_saturation_twice() -> bool:
+            return len([p for p, _, _ in cap.sets if p == cv2.CAP_PROP_SATURATION]) > 1
+
+        assert not _wait_for(_wrote_saturation_twice, timeout=0.2)
+        assert src._thread.is_alive()
+        assert src.failure is None
+    finally:
+        src.release()
+
+
+def test_saturation_is_written_while_auto_exposure_owns_exposure():
+    """AutoExposure adjusts brightness and exposure only; saturation is outside
+    its loop, so a saturation drag while auto is on must go to the device
+    rather than being swallowed as the loop's next starting point (the rule
+    that _correctly_ swallows brightness/exposure drags)."""
+    cap = _RecordingCap()
+    src = CameraCapture(0, 4, 4, 30, cap_factory=lambda i: cap, auto_exposure=True)
+    src.open()
+    try:
+        src.set_controls(saturation=10.0)
+        assert _wait_for(lambda: _wrote(cap, cv2.CAP_PROP_SATURATION, 10.0))
+    finally:
+        src.release()
+
+
 def test_autofocus_is_written_before_focus_when_set_live():
     """Same ordering open() has always used: a focus value written while
     autofocus is on is immediately hunted away from."""

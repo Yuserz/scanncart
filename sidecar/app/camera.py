@@ -300,6 +300,7 @@ class CameraCapture:
         self, index, width, height, fps, cap_factory=_default_capture,
         brightness: float | None = None, exposure: float | None = None,
         autofocus: bool | None = None, focus: float | None = None,
+        saturation: float | None = None,
         auto_exposure: bool = False,
         auto_exposure_slow: bool = False,
     ):
@@ -315,6 +316,7 @@ class CameraCapture:
         # counter never has, so locked manual values suit this app.
         self._brightness = brightness
         self._exposure = exposure
+        self._saturation = saturation
         self._autofocus = autofocus
         self._focus = focus
         # While on, `AutoExposure` owns brightness and exposure: the manual values are only its
@@ -364,6 +366,7 @@ class CameraCapture:
             "focus": self._focus,
             "brightness": self._brightness,
             "exposure": self._exposure,
+            "saturation": self._saturation,
         }
 
     @staticmethod
@@ -383,11 +386,13 @@ class CameraCapture:
             cap.set(cv2.CAP_PROP_BRIGHTNESS, controls["brightness"])
         if controls.get("exposure") is not None:
             cap.set(cv2.CAP_PROP_EXPOSURE, controls["exposure"])
+        if controls.get("saturation") is not None:
+            cap.set(cv2.CAP_PROP_SATURATION, controls["saturation"])
 
     def set_controls(self, **changes) -> None:
         """Queue control changes for the capture thread.
 
-        Accepts brightness/exposure/autofocus/focus. Updating a dict rather
+        Accepts brightness/exposure/autofocus/focus/saturation. Updating a dict rather
         than appending to a queue coalesces a fast slider drag to its newest
         value, so the capture thread never works through a backlog.
 

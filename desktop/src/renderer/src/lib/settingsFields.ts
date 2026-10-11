@@ -392,6 +392,15 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
     min: 0,
     max: 1023,
     step: 5
+  },
+  {
+    key: 'camera_saturation',
+    label: 'Saturation',
+    hint: 'Colour strength: 0 is greyscale, the device default is its own middle. Slide it against the confidence readout to see how much of what the model relies on is colour rather than shape — an A/B instrument, not a picture-quality fix. Unset stops the app writing it — the device keeps the last value it was given.',
+    type: 'number',
+    min: 0,
+    max: 255,
+    step: 5
   }
 ]
 
@@ -441,7 +450,8 @@ export const SETTINGS_GROUPS: FieldGroup[] = [
       'camera_brightness',
       'camera_exposure',
       'camera_autofocus',
-      'camera_focus'
+      'camera_focus',
+      'camera_saturation'
     ]
   },
   {

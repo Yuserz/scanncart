@@ -204,6 +204,7 @@ export function baseSettings(overrides: Partial<SettingsResponse> = {}): Setting
     camera_exposure: null,
     camera_autofocus: null,
     camera_focus: null,
+    camera_saturation: null,
     camera_auto_exposure: false,
     camera_auto_exposure_slow: false,
     hot_reloadable_fields: ['infer_frame_skip', 'preview_height', 'track_expiry_s'],

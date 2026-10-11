@@ -74,6 +74,7 @@ LIVE_FIELDS = {
     "camera_exposure",
     "camera_autofocus",
     "camera_focus",
+    "camera_saturation",
 }
 
 
@@ -323,3 +324,35 @@ def test_camera_control_bounds_are_enforced(tmp_path):
         assert client.patch("/api/settings", json={"camera_brightness": 999}).status_code == 422
         assert client.patch("/api/settings", json={"camera_exposure": 5}).status_code == 422
         assert client.patch("/api/settings", json={"camera_focus": -1}).status_code == 422
+        assert client.patch("/api/settings", json={"camera_saturation": -1}).status_code == 422
+
+
+def test_a_saturation_patch_reaches_the_open_device(running):
+    client, _, src, _ = running
+    r = client.patch("/api/settings", json={"camera_saturation": 0})
+
+    assert r.status_code == 200
+    assert src.controls["saturation"] == 0
+
+
+def test_resetting_saturation_stops_writing_it(running):
+    """A reset is 'this app imposes no value'; saturation has no auto mode of
+    its own to hand back to (unlike autofocus, which _undo_for writes), so the
+    null must reach the camera as a bare None — the device keeps the last
+    value, and the card reads the field as unset."""
+    client, _, src, _ = running
+    client.patch("/api/settings", json={"camera_saturation": 40})
+    client.patch("/api/settings", json={"reset_fields": ["camera_saturation"]})
+
+    assert src.controls == {"saturation": None}
+
+
+def test_saturation_survives_the_settings_response_round_trip(tmp_path):
+    """The tuning card reads its sliders off GET /api/settings; a field the
+    response drops would render unset with the camera still holding a value."""
+    state = AppState(settings_path=str(tmp_path / "settings.json"), db_path=":memory:")
+    with TestClient(build_app(lambda: state)) as client:
+        client.patch("/api/settings", json={"camera_saturation": 12.5})
+        r = client.get("/api/settings")
+
+    assert r.json()["camera_saturation"] == 12.5

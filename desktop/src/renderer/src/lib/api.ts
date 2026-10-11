@@ -95,6 +95,7 @@ export interface SettingsPayload {
   camera_exposure: number | null
   camera_autofocus: boolean | null
   camera_focus: number | null
+  camera_saturation: number | null
   /** The app's own auto-exposure: while on it moves brightness (and, in bright light, shortens
    *  the shutter) itself, so the two fields above are only its starting point. */
   camera_auto_exposure: boolean

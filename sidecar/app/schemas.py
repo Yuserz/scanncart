@@ -216,6 +216,7 @@ class SettingsPayload(BaseModel):
     camera_exposure: float | None
     camera_autofocus: bool | None
     camera_focus: float | None
+    camera_saturation: float | None
     camera_auto_exposure: bool
     camera_auto_exposure_slow: bool
 
@@ -317,6 +318,7 @@ class SettingsUpdateRequest(BaseModel):
     )
     camera_autofocus: bool | None = None
     camera_focus: float | None = Field(default=None, ge=FOCUS_RANGE[0], le=FOCUS_RANGE[1])
+    camera_saturation: float | None = Field(default=None, ge=0.0, le=255.0)
     camera_auto_exposure: bool | None = None
     camera_auto_exposure_slow: bool | None = None
 

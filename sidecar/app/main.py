@@ -101,6 +101,7 @@ def _default_source_factory(settings: Settings):
         exposure=settings.camera_exposure,
         autofocus=settings.camera_autofocus,
         focus=settings.camera_focus,
+        saturation=settings.camera_saturation,
         auto_exposure=settings.camera_auto_exposure,
         auto_exposure_slow=settings.camera_auto_exposure_slow,
     )
@@ -618,6 +619,7 @@ def _settings_response(state: "AppState") -> SettingsResponse:
         camera_exposure=state.settings.camera_exposure,
         camera_autofocus=state.settings.camera_autofocus,
         camera_focus=state.settings.camera_focus,
+        camera_saturation=state.settings.camera_saturation,
         camera_auto_exposure=state.settings.camera_auto_exposure,
         camera_auto_exposure_slow=state.settings.camera_auto_exposure_slow,
         hot_reloadable_fields=sorted(HOT_RELOADABLE_FIELDS),
@@ -645,6 +647,7 @@ _CAMERA_CONTROL_KEYS = {
     "camera_exposure": "exposure",
     "camera_autofocus": "autofocus",
     "camera_focus": "focus",
+    "camera_saturation": "saturation",
     "camera_auto_exposure": "auto_exposure",
     "camera_auto_exposure_slow": "auto_exposure_slow",
 }

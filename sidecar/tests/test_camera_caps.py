@@ -661,3 +661,60 @@ def test_the_capped_fps_is_measured_at_the_exposure_actually_chosen():
     profile = calibrate(0, 1280, 720, open_device=open_device, sample_seconds=0.01)
 
     assert cap.exposure == profile.measured["camera_exposure"]["value"]
+
+
+def test_calibrate_opens_the_media_mode_the_runtime_runs():
+    """calibrate() must mirror the runtime capture's open sequence (MJPG fourcc,
+    then the size, then the fps): MSMF picks its media type when the size is
+    set, and leaves the rate at its own default when the fps is never written,
+    so opening without them calibrated the device in a slower mode than the
+    app runs — measured live, that mode delivered 15 fps at 720p where the
+    same settings deliver 60+, so the stored profile's fps rows described a
+    camera the app does not have and a recommendation derived from them could
+    not be trusted either."""
+    props = []
+
+    class _PropRecordingCap(_ReopenCap):
+        def set(self, prop, value):
+            props.append(prop)
+            return True
+
+    calibrate(1, 1280, 720, open_device=lambda i, b: _PropRecordingCap(),
+              device_name="Fake Cam", sample_seconds=0.01)
+
+    assert cv2.CAP_PROP_FOURCC in props
+    assert props.index(cv2.CAP_PROP_FOURCC) < props.index(cv2.CAP_PROP_FRAME_WIDTH)
+
+
+def test_calibrate_writes_the_configured_fps_when_it_has_one():
+    """target_fps is the rate the operator configured — the same number the
+    runtime writes at open. Without the write MSMF serves its default rate
+    (measured 15 fps at 720p), so the sweep's fps rows and its exposure
+    ceiling were computed for a mode the app never runs."""
+    props = {}
+
+    class _PropRecordingCap(_ReopenCap):
+        def set(self, prop, value):
+            props[prop] = value
+            return True
+
+    calibrate(1, 1280, 720, open_device=lambda i, b: _PropRecordingCap(),
+              device_name="Fake Cam", sample_seconds=0.01, target_fps=60)
+
+    assert props.get(cv2.CAP_PROP_FPS) == 60.0
+
+
+def test_calibrate_leaves_the_rate_alone_without_a_target():
+    """No target_fps configured means no opinion about the device's rate:
+    writing one would assert a preference the caller did not state."""
+    props = {}
+
+    class _PropRecordingCap(_ReopenCap):
+        def set(self, prop, value):
+            props[prop] = value
+            return True
+
+    calibrate(1, 1280, 720, open_device=lambda i, b: _PropRecordingCap(),
+              device_name="Fake Cam", sample_seconds=0.01)
+
+    assert cv2.CAP_PROP_FPS not in props
