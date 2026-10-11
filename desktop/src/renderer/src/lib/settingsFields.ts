@@ -11,16 +11,25 @@ import type { SettingsPayload } from './api'
 // .onnx/.pt under sidecar/models/ is valid, this is just the one we ship with. (The
 // Roboflow-exported ONNX, models/scanncart-grocery.onnx, is the same architecture pre-retrain
 // and remains selectable.)
-export const CUSTOM_MODEL = 'models/scanncart-grocery.pt'
+export const CUSTOM_MODEL = 'models/scanncart-grocery-v1.pt'
 // The locally trained successor (MODEL_TRAINING.md §8.2). Named here only for its label and
 // hint; the picker *discovers* the file from GET /api/models, so this entry is optional and
 // its absence would not hide the model — a future v3 needs no entry at all to be selectable.
-export const CUSTOM_MODEL_V2 = 'models/scanncart-grocery-v2.pt'
+export const CUSTOM_MODEL_V2 = 'models/scanncart-grocery-v2-stretch.pt'
+// The same generation trained on the same frames at their own shape (`build_dataset.py --geometry
+// fit`, imgsz 960), kept beside the stretch weights so the two can be compared on one camera.
+export const CUSTOM_MODEL_V2_LETTERBOX = 'models/scanncart-grocery-v2-letterbox.pt'
+// The letterbox weights retrained with 50 train-only Century Tuna images made from close-ups
+// (`build_dataset.py --synthetic`), kept beside them for the side-by-side.
+export const CUSTOM_MODEL_V2_LETTERBOX_SYNTH = 'models/scanncart-grocery-v2-letterbox-synth.pt'
 
 // A raw path is not a label. Anything not listed falls back to its own name.
 export const MODEL_LABELS: Record<string, string> = {
   [CUSTOM_MODEL]: 'SCANnCART grocery v1 (custom, 7 SKUs)',
-  [CUSTOM_MODEL_V2]: 'SCANnCART grocery v2 (custom, 7 SKUs)',
+  [CUSTOM_MODEL_V2]: 'SCANnCART grocery v2 · stretch (custom, 7 SKUs)',
+  [CUSTOM_MODEL_V2_LETTERBOX]: 'SCANnCART grocery v2 · letterbox (custom, 7 SKUs)',
+  [CUSTOM_MODEL_V2_LETTERBOX_SYNTH]:
+    'SCANnCART grocery v2 · letterbox + Tuna extras (custom, 7 SKUs)',
   'models/scanncart-grocery.onnx': 'SCANnCART grocery (Roboflow export)'
 }
 
@@ -101,7 +110,9 @@ export const MODEL_SPEC_HINTS: Record<string, string> = {
   // Model field flags a mismatch for *any* installed weight rather than only this filename.
   // What is left is what a record cannot carry - what these weights are and what they cost.
   [CUSTOM_MODEL_V2]:
-    'Locally trained v2 (7 SKUs) — see the requirement recorded beside it below. Runs on torch, so a CUDA GPU is the fast path.',
+    'Locally trained v2 (7 SKUs), frames squashed to a 640 square — see the requirement recorded beside it below. Runs on torch, so a CUDA GPU is the fast path.',
+  [CUSTOM_MODEL_V2_LETTERBOX]:
+    'Locally trained v2 (7 SKUs), frames kept at their own shape and padded at 960 — see the requirement recorded beside it below. Larger input than the stretch weights, so each frame costs more GPU time.',
   'yolo26n.pt':
     'Experimental — lightest YOLO26. Needs roughly yolo11n-class hardware: a modern 4-core CPU and 8 GB RAM. Its NMS-free design typically runs faster than yolo11n on CPU. Weights auto-download on first capture start (internet needed once).',
   'yolo26s.pt':
@@ -335,6 +346,18 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
     type: 'list'
   },
   {
+    key: 'camera_auto_exposure',
+    label: 'Auto exposure',
+    hint: 'Keeps the picture evenly lit as the light changes, without lowering the framerate: it holds the shutter at the longest the capture fps allows and adjusts brightness, shortening the shutter only when the scene is too bright. In a room too dark for that shutter it stops brightening (brightness would only turn the picture grey) and the Live view says to add light. Turn it off to set brightness and exposure by hand.',
+    type: 'boolean'
+  },
+  {
+    key: 'camera_auto_exposure_slow',
+    label: 'Allow 30 fps when dark',
+    hint: 'When the room is too dark for the full frame rate, let auto exposure use a shutter one stop longer — half the frame rate (30 at a 60 fps setting) — before it gives up. It returns to the full rate by itself once there is light to spare. Off keeps the full frame rate; more light is the better fix.',
+    type: 'boolean'
+  },
+  {
     key: 'camera_brightness',
     label: 'Brightness',
     hint: 'Post-sensor boost — no framerate cost, but amplifies noise. Try exposure first. Unset means this app imposes no value — the device keeps the last value it was given.',
@@ -368,6 +391,15 @@ export const SETTINGS_FIELDS: FieldMeta[] = [
     type: 'number',
     min: 0,
     max: 1023,
+    step: 5
+  },
+  {
+    key: 'camera_saturation',
+    label: 'Saturation',
+    hint: 'Colour strength: 0 is greyscale, the device default is its own middle. Slide it against the confidence readout to see how much of what the model relies on is colour rather than shape — an A/B instrument, not a picture-quality fix. Unset stops the app writing it — the device keeps the last value it was given.',
+    type: 'number',
+    min: 0,
+    max: 255,
     step: 5
   }
 ]
@@ -412,7 +444,15 @@ export const SETTINGS_GROUPS: FieldGroup[] = [
   {
     label: 'Image',
     home: 'live',
-    keys: ['camera_brightness', 'camera_exposure', 'camera_autofocus', 'camera_focus']
+    keys: [
+      'camera_auto_exposure',
+      'camera_auto_exposure_slow',
+      'camera_brightness',
+      'camera_exposure',
+      'camera_autofocus',
+      'camera_focus',
+      'camera_saturation'
+    ]
   },
   {
     label: 'Detection',

@@ -28,7 +28,7 @@ describe('useSidecarSettings', () => {
         stock: ['yolo11n.pt'],
         installed: [
           {
-            value: 'models/scanncart-grocery-v2.pt',
+            value: 'models/scanncart-grocery-v2-stretch.pt',
             resize_mode: 'stretch',
             imgsz: 640,
             auto_resolves_to: 'stretch',
@@ -45,7 +45,7 @@ describe('useSidecarSettings', () => {
     const { result } = renderHook(() => useSidecarSettings(8765, deps))
     await waitFor(() => expect(result.current.loading).toBe(false))
 
-    expect(result.current.models).toEqual(['models/scanncart-grocery-v2.pt'])
+    expect(result.current.models).toEqual(['models/scanncart-grocery-v2-stretch.pt'])
     expect(result.current.installed[0].resize_mode).toBe('stretch')
   })
 

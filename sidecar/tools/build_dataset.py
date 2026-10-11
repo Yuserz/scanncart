@@ -237,6 +237,10 @@ class Side:
     # Polygon rows reduced to their bounding boxes, counted because it is the one transformation
     # here that changes the numbers in a label file rather than just their class index.
     polygons: int = 0
+    # Boxes dropped because they lie inside a larger box of the same product (`drop_nested_rows`).
+    nested: int = 0
+    # v1 frames left out because their label file is empty (`build_v1`).
+    unlabeled: int = 0
     notes: list[str] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)
 
@@ -397,6 +401,85 @@ def remap_rows(text: str, names: list[str] | None) -> tuple[list[str], list[str]
     return rows, problems, polygons
 
 
+# How far, in the frame's 0-1 coordinates, a box may stick out of a larger one and still count as
+# inside it. The same 2% the scan of the live project used to find these boxes.
+NESTED_TOLERANCE = 0.02
+
+
+def drop_nested_rows(
+    rows: list[str], tolerance: float = NESTED_TOLERANCE
+) -> tuple[list[str], int, list[str]]:
+    """The rows with every box that lies inside a larger box *of the same product* removed.
+
+    v1-era labels hold a second, partial box around a part of the item - the "555" logo inside a
+    sardines can, the noodle picture inside a Lucky Me pouch - beside the box around the whole item.
+    Scored against those labels a detector that draws one box per item is charged with a miss for
+    every partial box (v2 found all 37 Lucky Me items in `merged-v2`'s test split at 0.92-0.96 and
+    still scored 0.794, its partial-box IoUs being 0.16-0.32), and trained on them it learns to draw
+    the partial box too. One box per item is what the app counts, so the larger box is the label.
+
+    Boxes are kept largest first, so of two identical boxes one survives. Rows of different products
+    never affect each other: a small item in front of a large one is two items. Returns
+    `(rows, dropped, problems)`, rows in the input order; a row whose numbers do not parse is a
+    problem rather than an exception, so the caller refuses the frame the way it refuses any other
+    unreadable row instead of the whole build dying on it.
+
+    Applied to v1's side only. The tolerance is absolute, so two of one product at `far` - one
+    standing just behind the other - could read as nested, and the crowded `mid`/`far` frames are
+    v2's captures, labelled one box per item. On the v1 export every one of the 292 boxes it drops
+    was checked against its frame: logo, label panel or picture, never a second item.
+    """
+    parsed = []
+    for index, row in enumerate(rows):
+        try:
+            cls, cx, cy, w, h = row.split()[:5]
+            cx, cy, w, h = float(cx), float(cy), float(w), float(h)
+        except ValueError:
+            return rows, 0, [f"row is not a readable box: {row[:60]!r}"]
+        parsed.append((index, cls, (cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2), w * h))
+    kept: list[tuple[int, str, tuple[float, float, float, float]]] = []
+    for index, cls, box, _area in sorted(parsed, key=lambda item: (-item[3], item[0])):
+        inside = any(
+            cls == other_cls
+            and box[0] >= other[0] - tolerance
+            and box[1] >= other[1] - tolerance
+            and box[2] <= other[2] + tolerance
+            and box[3] <= other[3] + tolerance
+            for _i, other_cls, other in kept
+        )
+        if not inside:
+            kept.append((index, cls, box))
+    keep = {index for index, _cls, _box in kept}
+    return [row for index, row in enumerate(rows) if index in keep], len(rows) - len(keep), []
+
+
+def nested_note(side: "Side") -> str:
+    return (
+        f"[nested] {side.nested} box(es) dropped because they lie inside a larger box of the same "
+        "product - one box per item, the larger one (`drop_nested_rows`)"
+    )
+
+
+# How a build writes its frames, and the `resize_mode` the weights trained on them need at runtime.
+# `stretch` squashes every frame to `size`x`size`; `fit` keeps each frame's own shape, long side
+# `size`, and leaves the padding to the trainer, which letterboxes every image it loads - so the
+# runtime geometry that matches it is `letterbox`. Label rows are fractions of the frame, which a
+# resize of either kind leaves unchanged, so only the pixels differ between the two builds.
+GEOMETRIES = {"stretch": "stretch", "fit": "letterbox"}
+
+
+def fit_image(path: Path, size: int = SIZE) -> Image.Image:
+    """The frame at its own aspect ratio, long side `size` (never enlarged)."""
+    with Image.open(path) as image:
+        frame = image.convert("RGB") if image.mode not in ("RGB", "L") else image
+        scale = size / max(frame.size)
+        if scale >= 1:
+            return frame.copy()
+        return frame.resize(
+            (max(1, round(frame.width * scale)), max(1, round(frame.height * scale))), Image.LANCZOS
+        )
+
+
 def stretch_image(path: Path, size: int = SIZE) -> Image.Image:
     """The frame at `size`x`size`, stretched - which is the requirement, not a convenience.
 
@@ -410,7 +493,13 @@ def stretch_image(path: Path, size: int = SIZE) -> Image.Image:
 
 
 def write_frame(
-    source: Path, rows: list[str] | None, out: Path, split: str, name: str, size: int = SIZE
+    source: Path,
+    rows: list[str] | None,
+    out: Path,
+    split: str,
+    name: str,
+    size: int = SIZE,
+    geometry: str = "stretch",
 ) -> None:
     """One image plus its label file, in the layout `train_model.py` reads.
 
@@ -420,12 +509,13 @@ def write_frame(
     images, labels = split_dirs(out, split)
     images.mkdir(parents=True, exist_ok=True)
     labels.mkdir(parents=True, exist_ok=True)
-    stretch_image(source, size).save(images / name, quality=92)
+    resize = fit_image if geometry == "fit" else stretch_image
+    resize(source, size).save(images / name, quality=92)
     body = "\n".join(rows or [])
     (labels / f"{Path(name).stem}.txt").write_text(body + ("\n" if body else ""), encoding="utf-8")
 
 
-def build_v1(v1_dir: Path, out: Path, size: int = SIZE) -> Side:
+def build_v1(v1_dir: Path, out: Path, size: int = SIZE, geometry: str = "stretch") -> Side:
     """Copy v1's export in, remapping its class indices by name.
 
     The export's own class list is checked against this dataset's order before a frame is written
@@ -439,6 +529,7 @@ def build_v1(v1_dir: Path, out: Path, size: int = SIZE) -> Side:
     """
     side = Side(name="v1")
     names: list[str] | None = None
+    square = written = 0
     for split in SPLIT_NAMES:
         images, labels = split_dirs(v1_dir, split)
         if not images.is_dir():
@@ -466,11 +557,19 @@ def build_v1(v1_dir: Path, out: Path, size: int = SIZE) -> Side:
                 # it exports, so an absent one means this frame arrived without its annotation -
                 # and writing it out empty would turn "nobody labelled this" into "deliberately
                 # background", which is the one state confusion this project has already been
-                # bitten by (and v1's 17 genuinely-empty files are the other state, kept as
-                # background frames because that is what they are).
+                # bitten by. (v1's empty files are no better - see below.)
                 side.problems.append(f"{split}/{image.name}: no label file beside it")
                 continue
             rows, problems, polygons = remap_rows(label_path.read_text(encoding="utf-8"), names)
+            if not rows and not problems:
+                # An *empty* v1 label file is not a background frame either. All 17 in the export
+                # were looked at (2026-10-06): every one is a product - Bear Brand backs, a tuna
+                # lid, Safeguard, Silver Swan - that nobody boxed. Trained as background they teach
+                # the model that the back of a pack is nothing, so they are left out. v1 is frozen,
+                # so this is a fact about its export rather than a guess about a future one; v2's
+                # deliberate nulls are a different state and keep entering as background.
+                side.unlabeled += 1
+                continue
             side.polygons += polygons
             for problem in problems[:3]:
                 side.problems.append(f"{split}/{image.name}: {problem}")
@@ -478,7 +577,16 @@ def build_v1(v1_dir: Path, out: Path, size: int = SIZE) -> Side:
                 # Not written: a frame whose boxes could not be translated would train as a
                 # background frame, which is a worse outcome than a loud refusal.
                 continue
-            write_frame(image, rows, out, split, image.name, size)
+            rows, nested, nested_problems = drop_nested_rows(rows)
+            if nested_problems:
+                side.problems.extend(f"{split}/{image.name}: {p}" for p in nested_problems)
+                continue
+            side.nested += nested
+            if geometry == "fit":
+                with Image.open(image) as probe:
+                    square += probe.width == probe.height
+                written += 1
+            write_frame(image, rows, out, split, image.name, size, geometry)
             side.placed[image.name] = split
             if rows:
                 for row in rows:
@@ -490,6 +598,99 @@ def build_v1(v1_dir: Path, out: Path, size: int = SIZE) -> Side:
             f"[polygons] {side.polygons} polygon row(s) reduced to their bounding boxes - the "
             "same conversion ultralytics applies at load time (segments2boxes)"
         )
+    if side.nested:
+        side.notes.append(nested_note(side))
+    if geometry == "fit" and written and square == written:
+        # Every v1 frame square is a "Stretch to" export: its products are already squashed, and a
+        # fit build cannot unsquash them - the set would be labelled letterbox while a third of it
+        # trains on stretched products. Point --v1 at the originals instead (the v1 fit set is
+        # built from the project's original images).
+        side.problems.append(
+            f"--geometry fit, but all {written} v1 frame(s) are square - {v1_dir} is a stretched "
+            "export, and fitting cannot undo a stretch. Use v1's original images (or --no-v1)"
+        )
+    if side.unlabeled:
+        side.notes.append(
+            f"[unlabeled] {side.unlabeled} frame(s) with an empty label file left out - in v1's "
+            "export those are products nobody boxed, not empty scenes"
+        )
+    return side
+
+
+def build_synthetic(
+    synthetic_dir: Path,
+    out: Path,
+    v2_side: Side,
+    size: int = SIZE,
+    geometry: str = "stretch",
+) -> Side:
+    """Images *made* from frames already in the set, admitted to `train` and nowhere else.
+
+    The case it exists for (2026-10-06): Century Tuna "mid" and "far" images generated from close-ups
+    already staged - the photo shrunk onto a white canvas and rotated. They are augmentation, not
+    evidence about distance: a copy of a `test` close-up in `train` would score the model on a
+    picture it trained on, and a copy anywhere but `train` would make the per-distance numbers
+    describe edited photos. So the folder carries `sources.json` (image -> the frame it was made
+    from), and every image is refused unless that frame is in *this build's* `train` - read off the
+    v2 side that was just placed, so a split plan that moves a close-up moves its copies' verdict
+    with it. Nothing here records a distance, so the per-distance grid never counts them; the tag is
+    the source frame's, so the doctor still checks the drawing against the product it was made from.
+
+    The folder is YOLO-shaped (`images/`, `labels/`) with a `data.yaml` naming the class order its
+    rows index; rows are translated by name like v1's. Any problem is fatal: a half-admitted set of
+    copies is the leak this function exists to refuse.
+    """
+    import json
+
+    side = Side(name="synthetic")
+    names = read_export_names(synthetic_dir)
+    if names is None:
+        side.problems.append(f"no usable data.yaml in {synthetic_dir}, so its rows cannot be translated")
+        return side
+    problem = translation_problem(names, source="synthetic")
+    if problem:
+        side.problems.append(problem)
+        return side
+    try:
+        sources = json.loads((synthetic_dir / "sources.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        side.problems.append(
+            f"no readable sources.json in {synthetic_dir} - without it nothing says which frame each "
+            "image was made from, so nothing can keep a copy of a test frame out of train"
+        )
+        return side
+    admitted: list[tuple[Path, list[str], str]] = []
+    for image in list_images(synthetic_dir / "images"):
+        source = sources.get(image.name)
+        placed = v2_side.placed.get(source) if source else None
+        if placed != "train":
+            side.problems.append(
+                f"{image.name}: made from {source or 'an unnamed frame'}, which this build puts in "
+                f"{placed or 'no split'} - only copies of train frames may enter, and only train"
+            )
+            continue
+        label = synthetic_dir / "labels" / f"{image.stem}.txt"
+        if not label.is_file():
+            side.problems.append(f"{image.name}: no label file beside it")
+            continue
+        rows, row_problems, _ = remap_rows(label.read_text(encoding="utf-8"), names)
+        if row_problems or not rows:
+            side.problems.append(f"{image.name}: {row_problems[0] if row_problems else 'no boxes'}")
+            continue
+        admitted.append((image, rows, source))
+    if side.problems:
+        return side
+    for image, rows, source in admitted:
+        write_frame(image, rows, out, "train", image.name, size, geometry)
+        side.placed[image.name] = "train"
+        if source in v2_side.tags:
+            side.tags[image.name] = v2_side.tags[source]
+        for row in rows:
+            side.classes["train"][CANONICAL_NAMES[int(row.split()[0])]] += 1
+    side.notes.append(
+        f"[synthetic] {len(admitted)} image(s) made from train frames, admitted to train only - "
+        "augmentation, never counted as a distance"
+    )
     return side
 
 
@@ -657,6 +858,7 @@ def build_v2(
     extras: list[Path] | None = None,
     size: int = SIZE,
     allow_unassigned: bool = False,
+    geometry: str = "stretch",
 ) -> Side:
     """Copy v2's decided frames in, with the labels the annotator wrote translated by name against
     the set's declared order, and the split the plan set.
@@ -716,7 +918,7 @@ def build_v2(
             side.problems.append(f"{split}/{frame.name}: {detail}")
         if row_problems:
             continue
-        write_frame(frame.image, rows, out, split, frame.name, size)
+        write_frame(frame.image, rows, out, split, frame.name, size, geometry)
         if frame.slug:
             # `frame.slug` is the manifest's `class` - the class the frame was staged as, which is
             # what its labels have to agree with. Recorded for every frame written, background
@@ -825,7 +1027,9 @@ def drop_test_duplicates(out: Path, notes: list[str]) -> list[dict]:
     return dropped
 
 
-def write_names_yaml(out: Path, splits: dict[str, Path], path: Path | None = None) -> Path:
+def write_names_yaml(
+    out: Path, splits: dict[str, Path], path: Path | None = None, resize_mode: str = "stretch"
+) -> Path:
     """The dataset's own `data.yaml`: the target generation's names, in its order.
 
     Written here rather than in `train_model.write_data_yaml` for the same reason that function
@@ -850,6 +1054,9 @@ def write_names_yaml(out: Path, splits: dict[str, Path], path: Path | None = Non
         # set's merge report) to judge the labels against the generation they actually index.
         "generation": DECLARED_GENERATION.name,
         "source": "merged v1 export + v2 local labels (build_dataset.py)",
+        # The runtime geometry weights trained on these frames need - the build's own fact, which
+        # `train_model --install` records beside the weight in place of the generation's default.
+        "resize_mode": resize_mode,
     }
     for split in SPLIT_NAMES:
         if split in splits:
@@ -1086,6 +1293,7 @@ def summarise(
     size: int = SIZE,
     notes: list[str] | None = None,
     annotations_state: dict | None = None,
+    geometry: str = "stretch",
 ) -> dict:
     """The report: what is in each split, and what a reader has to know before trusting it.
 
@@ -1165,6 +1373,8 @@ def summarise(
         "generation": DECLARED_GENERATION.name,
         "classes": list(CANONICAL_NAMES),
         "size": size,
+        "geometry": geometry,
+        "resize_mode": GEOMETRIES[geometry],
         "splits": per_split,
         "sources": {
             side.name: {
@@ -1172,6 +1382,8 @@ def summarise(
                 "background": dict(side.background),
                 "machine_only": dict(side.machine_only),
                 "polygons_reduced": side.polygons,
+                "nested_dropped": side.nested,
+                "unlabeled_dropped": side.unlabeled,
                 "notes": side.notes,
                 "problems": side.problems,
                 # v2's own frames' distance mix per split (`tags` carries the class, this carries
@@ -1360,6 +1572,12 @@ def main(argv: list[str] | None = None) -> int:
         help=f"where the v2 labels live (default: <v2>/../{ANNOTATIONS_DIRNAME}, as `make annotate` uses)",
     )
     ap.add_argument(
+        "--synthetic",
+        default="",
+        help="a folder of images made from frames already in the set (images/, labels/, data.yaml, "
+        "sources.json): admitted to train only, and refused unless every source frame is in train",
+    )
+    ap.add_argument(
         "--extras",
         action="append",
         default=[],
@@ -1375,6 +1593,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("--out", default=str(DEFAULT_OUT), help="where the merged set is written")
     ap.add_argument("--size", type=int, default=SIZE)
+    ap.add_argument(
+        "--geometry",
+        choices=sorted(GEOMETRIES),
+        default="stretch",
+        help="stretch: every frame squashed to SIZExSIZE (run with resize_mode stretch). fit: each "
+        "frame keeps its own shape, long side SIZE, and the trainer letterboxes it (run with "
+        "resize_mode letterbox)",
+    )
     ap.add_argument("--contact-sheet", default="", help="where to write the sheet (default: <out>/contact_sheet.jpg)")
     ap.add_argument("--contact-frames", type=int, default=CONTACT_FRAMES)
     ap.add_argument("--no-v1", action="store_true", help="build v2's frames alone, for a dry run")
@@ -1459,7 +1685,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         sides: list[Side] = []
         if not args.no_v1:
-            sides.append(build_v1(v1_dir, staging, args.size))
+            sides.append(build_v1(v1_dir, staging, args.size, args.geometry))
         sides.append(
             build_v2(
                 v2_dir,
@@ -1468,8 +1694,15 @@ def main(argv: list[str] | None = None) -> int:
                 extras,
                 args.size,
                 args.allow_unassigned,
+                args.geometry,
             )
         )
+        if args.synthetic:
+            sides.append(
+                build_synthetic(
+                    Path(args.synthetic).expanduser(), staging, sides[-1], args.size, args.geometry
+                )
+            )
 
         problems = [(side.name, p) for side in sides for p in side.problems]
         if problems:
@@ -1492,7 +1725,14 @@ def main(argv: list[str] | None = None) -> int:
         for side in sides:
             machine_only.update(side.machine_only)
         report = summarise(
-            staging, sides, dropped, machine_only, args.size, notes, annotations_state=annotations_state
+            staging,
+            sides,
+            dropped,
+            machine_only,
+            args.size,
+            notes,
+            annotations_state=annotations_state,
+            geometry=args.geometry,
         )
 
         # Drawn from the staging copy, recorded at the path it will have: this report outlives the
@@ -1516,6 +1756,11 @@ def main(argv: list[str] | None = None) -> int:
                     f"  - {side.polygons} polygon row(s) reduced to their bounding boxes, the same "
                     "conversion ultralytics applies at load time"
                 )
+            if side.nested:
+                side_lines.append(
+                    f"  - {side.nested} box(es) inside a larger box of the same product dropped "
+                    "(one box per item)"
+                )
             if side.machine_only:
                 side_lines.append(
                     f"  - machine-only decisions: "
@@ -1534,7 +1779,9 @@ def main(argv: list[str] | None = None) -> int:
             for split in SPLIT_NAMES
             if list_images(split_dirs(staging, split)[0])
         }
-        write_names_yaml(out, splits, path=staging / DATA_YAML_NAME)
+        write_names_yaml(
+            out, splits, path=staging / DATA_YAML_NAME, resize_mode=GEOMETRIES[args.geometry]
+        )
 
         # Before both gates, and outside the flag that skips them, because this one is not a
         # judgement about the annotation state: it reads back the declaration just written and

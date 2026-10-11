@@ -392,6 +392,20 @@ def yaml_bodies(export_dir: Path):
             yield body
 
 
+def read_export_resize_mode(export_dir: Path) -> str | None:
+    """The `resize_mode` a built set declares for the weights trained on it, or None.
+
+    `build_dataset.py` writes it (`--geometry fit` -> letterbox, the default -> stretch), because
+    the geometry is a fact about the frames it wrote. A Roboflow export declares none, and then the
+    generation's own requirement stands.
+    """
+    for body in yaml_bodies(export_dir):
+        mode = body.get("resize_mode")
+        if mode in ("stretch", "letterbox"):
+            return str(mode)
+    return None
+
+
 def read_export_names(export_dir: Path) -> list[str] | None:
     """The class names the export declares, in the order it indexes them.
 
@@ -487,6 +501,11 @@ def frame_geometry(splits: dict[str, Path], sample: int = 12) -> list[str]:
             f"{len(padded)} with a constant border ({'; '.join(padded[:2])}) - that is *fitting* "
             "with padding, which is not what a `stretch` requirement assumes. Check this "
             "generation's resize_mode against how the version was actually generated"
+        )
+    elif any(w != h for (w, h) in sizes):
+        note += (
+            "frames keep their own shape (not square), i.e. a `fit` build - the trainer "
+            "letterboxes each one, so these weights need resize_mode letterbox"
         )
     else:
         note += "no constant border, i.e. stretched - consistent with the recorded requirement"
@@ -1533,6 +1552,7 @@ def weight_record(
     validation: list[dict] | None = None,
     class_names: list[str] | None = None,
     imgsz: int = 0,
+    resize_mode: str | None = None,
     augmentation: dict[str, float] | None = None,
 ) -> dict:
     """What travels with the weights, as a dict. Written beside them by `install()`.
@@ -1596,7 +1616,9 @@ already-generated version was made with (the measurement is in `generations.py`)
     """
     record = {
         "generation": generation.name,
-        "resize_mode": generation.resize_mode,
+        # The set's own declaration when it has one (a local `fit` build is letterbox whatever the
+        # generation's default is), else the generation's requirement.
+        "resize_mode": resize_mode or generation.resize_mode,
         # Where it came from, so the panel can say which dataset produced these weights
         # rather than only what they need.
         "source": f"{project} version {source_version}" if source_version else "",
@@ -1613,6 +1635,49 @@ already-generated version was made with (the measurement is in `generations.py`)
             {k: v for k, v in block.items() if k != "weights_sha256"} for block in validation
         ]
     return record
+
+
+def default_weights(generation: Generation, models_dir: Path, settings_path: Path | None = None) -> Path:
+    """The installed weight a measuring tool means by `--generation X` with no `--weights`.
+
+    `models/<generation weight name>` when it exists - the one name `--install` used to give every
+    weight. Since `--name` lets one generation keep two weights side by side (v2 stretch and v2
+    letterbox), that file may not exist, and then the weight is found by its *record*: the installed
+    weights whose `generation` is this one, and of those the app's own `active_model` when it is one
+    of them (that is the weight the operator is running), else the only one. Two or more with no way
+    to choose is a refusal naming them, because measuring the wrong one silently is the failure.
+    """
+    plain = models_dir / generation.weight_name
+    if plain.is_file():
+        return plain
+    candidates = []
+    for record_path in sorted(models_dir.glob("*.json")):
+        try:
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        weight = record_path.with_suffix(".pt")
+        if isinstance(record, dict) and record.get("generation") == generation.name and weight.is_file():
+            candidates.append(weight)
+    if settings_path is not None and settings_path.is_file():
+        try:
+            active = json.loads(settings_path.read_text(encoding="utf-8")).get("active_model", "")
+        except (OSError, ValueError):
+            active = ""
+        for weight in candidates:
+            if active and Path(active).name == weight.name:
+                return weight
+    if len(candidates) == 1:
+        return candidates[0]
+    if not candidates:
+        raise SystemExit(
+            f"no installed {generation.name} weight in {models_dir} - install one, or pass --weights"
+        )
+    raise SystemExit(
+        f"{len(candidates)} installed {generation.name} weights and the app runs none of them: "
+        + ", ".join(w.name for w in candidates)
+        + " - pass --weights to say which to measure"
+    )
 
 
 def install(
@@ -1767,6 +1832,12 @@ def main(argv: list[str] | None = None, yolo=None) -> int:
     )
     ap.add_argument("--format", default=EXPORT_FORMAT)
     ap.add_argument("--run-project", default=str(DEFAULT_RUN_PROJECT))
+    ap.add_argument(
+        "--name",
+        default="",
+        help="--install under models/<NAME>.pt instead of the generation's own name - for keeping "
+        "two weights of one generation side by side (e.g. scanncart-grocery-v2-letterbox)",
+    )
     ap.add_argument("--models-dir", default=str(DEFAULT_MODELS_DIR))
     ap.add_argument("--run-dir", default="", help="install from this run instead of training")
     ap.add_argument("--yes", action="store_true", help="actually train")
@@ -2226,9 +2297,14 @@ def main(argv: list[str] | None = None, yolo=None) -> int:
             class_names=read_export_names(export_dir),
             imgsz=trained_imgsz,
             augmentation=augmentation,
+            resize_mode=read_export_resize_mode(export_dir),
         )
         target = install(
-            best, models_dir, name=generation.weight_name, force=args.force, record=record
+            best,
+            models_dir,
+            name=f"{args.name}.pt" if args.name else generation.weight_name,
+            force=args.force,
+            record=record,
         )
         print(f"installed: {target}")
         summary["installed"] = str(target)

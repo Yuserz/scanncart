@@ -87,6 +87,49 @@ describe('CameraTuning', () => {
     await waitFor(() => expect(screen.getByLabelText('Focus')).toBeDisabled())
   })
 
+  it('locks brightness and exposure while auto exposure adjusts them', async () => {
+    renderCard({ getSettings: async () => baseSettings({ camera_auto_exposure: true }) })
+    await waitFor(() => expect(screen.getByLabelText('Brightness')).toBeDisabled())
+    expect(screen.getByLabelText('Exposure')).toBeDisabled()
+    expect(screen.getByLabelText('Auto exposure')).toBeChecked()
+  })
+
+  it('hands brightness and exposure back when auto exposure is off', async () => {
+    renderCard({ getSettings: async () => baseSettings({ camera_auto_exposure: false }) })
+    await waitFor(() => expect(screen.getByLabelText('Brightness')).toBeEnabled())
+    expect(screen.getByLabelText('Exposure')).toBeEnabled()
+  })
+
+  it('warns when a manual shutter is longer than the frame rate allows', async () => {
+    // -6 is the longest shutter that keeps 60 fps; a saved 0 held capture near 12 fps with nothing
+    // on screen saying why.
+    renderCard({
+      getSettings: async () =>
+        baseSettings({ camera_auto_exposure: false, capture_fps: 60, camera_exposure: 0 })
+    })
+    await waitFor(() =>
+      expect(screen.getByTestId('exposure-slows-capture')).toHaveTextContent('below 60 fps')
+    )
+  })
+
+  it('says nothing about the shutter inside the cap, or while auto exposure owns it', async () => {
+    renderCard({
+      getSettings: async () =>
+        baseSettings({ camera_auto_exposure: false, capture_fps: 60, camera_exposure: -6 })
+    })
+    await waitFor(() => expect(screen.getByLabelText('Exposure')).toBeEnabled())
+    expect(screen.queryByTestId('exposure-slows-capture')).not.toBeInTheDocument()
+  })
+
+  it('does not warn about a long shutter auto exposure is not using', async () => {
+    renderCard({
+      getSettings: async () =>
+        baseSettings({ camera_auto_exposure: true, capture_fps: 60, camera_exposure: 0 })
+    })
+    await waitFor(() => expect(screen.getByLabelText('Exposure')).toBeDisabled())
+    expect(screen.queryByTestId('exposure-slows-capture')).not.toBeInTheDocument()
+  })
+
   it('shows the live quality readout', async () => {
     renderCard()
     expect(await screen.findByTestId('tuning-quality')).toHaveTextContent('29.4')

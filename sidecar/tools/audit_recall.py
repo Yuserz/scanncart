@@ -111,7 +111,7 @@ from generations import get as generation_for
 # `DISTANCE_ORDER`, and a second copy is how the two tools' `far` comes to mean different files. It
 # is a light module - `httpx` and these same helpers, nothing that loads a model - so importing it
 # costs this tool nothing at start-up.
-from train_model import DISTANCE_ORDER, distance_map, require_labels_order
+from train_model import DISTANCE_ORDER, distance_map, require_labels_order, default_weights
 from workspace import SIDECAR_ROOT
 
 DEFAULT_SPLIT = "test"
@@ -1190,7 +1190,9 @@ def main(argv: list[str] | None = None) -> int:
     generation = resolve_dataset(
         generation_for(args.generation), args.dataset_dir, args.manifest
     )
-    weights = args.weights or str(SIDECAR_ROOT / "models" / generation.weight_name)
+    weights = args.weights or str(
+        default_weights(generation, SIDECAR_ROOT / "models", SIDECAR_ROOT / "data" / "settings.json")
+    )
     resize_mode = args.resize_mode or generation.resize_mode
 
     # Before the weight is resolved, because this mode asks what to shoot next and that question

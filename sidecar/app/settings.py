@@ -10,7 +10,7 @@ class Settings:
     # on CUDA (~18 ms isolated, ~40 fps in-app) while letterbox-native and
     # retrainable. The ONNX export remains selectable (models/scanncart-grocery.onnx).
     # See docs/DETECTOR_BACKENDS.md §1a for the backend comparison.
-    active_model: str = "models/scanncart-grocery.pt"
+    active_model: str = "models/scanncart-grocery-v1.pt"
     camera_index: int = 0
     # 640x480@30 opens and streams reliably over USB 2.0; the StreamCam's
     # 1080p60 needs USB 3.0 and a failed mode switch there can wedge the MSMF
@@ -124,6 +124,21 @@ class Settings:
     camera_exposure: float | None = None
     camera_autofocus: bool | None = None
     camera_focus: float | None = None
+    # A/B instrument for the model, never a worker control: the detector reads
+    # saturation as texture, so a sliding value answers "was that a class or a
+    # colour?" faster than re-running on another item. None = no write.
+    camera_saturation: float | None = None
+    # The app's own auto-exposure (CameraCapture's AutoExposure): it keeps the shutter at the
+    # longest the capture fps allows and moves brightness to hold the picture's level, so the
+    # view follows the room's light without the framerate loss the camera's built-in automatic
+    # exposure causes (measured 12 fps). While on, camera_brightness/camera_exposure are only
+    # its starting point. Hot-reloadable.
+    camera_auto_exposure: bool = True
+    # The one trade auto exposure may make in a room too dark for the framerate's shutter: one stop
+    # longer (30 fps at a 60 fps setting) before it gives up and reports `too_dark`. Off by default,
+    # because 60 fps is the promise and a lamp is the better fix; tracking still works at 30.
+    # Hot-reloadable; switching it off puts a lengthened shutter straight back.
+    camera_auto_exposure_slow: bool = False
 
     # Which detector implementation backs capture. "native" runs the weights in
     # this process (the only backend that satisfies the PRD's offline promise);

@@ -35,9 +35,9 @@ fs.mkdirSync(SHOT_DIR, { recursive: true });
 const electronBin = path.join(APP_DIR, 'node_modules', 'electron', 'dist', 'electron.exe');
 
 const mode = process.argv[2] || 'smoke';
-if (!['smoke', 'capture', 'allowlist', 'dataset', 'models', 'classlist', 'probe', 'v1'].includes(mode)) {
+if (!['smoke', 'capture', 'allowlist', 'dataset', 'models', 'classlist', 'probe', 'v1', 'basket'].includes(mode)) {
   console.error(
-    `unknown mode '${mode}' — use: smoke | capture | allowlist | dataset | models | classlist | probe | v1`
+    `unknown mode '${mode}' — use: smoke | capture | allowlist | dataset | models | classlist | probe | v1 | basket`
   );
   process.exit(1);
 }
@@ -134,6 +134,27 @@ if (mode === 'smoke') {
   const hw = await page.evaluate(() => document.querySelector('[data-testid="hardware-info"]').innerText);
   console.log('hardware info:\n' + hw);
   await shot(page, 'smoke-02-admin');
+  // The self-checkout section sits below the fold; screenshot it on its own so a layout change
+  // there can be read without scrolling a full-page shot.
+  const pos = await page.$('[data-testid="pos-admin"]');
+  if (pos) {
+    await pos.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(1_500);
+    console.log('pos status:', JSON.stringify(await readText('[data-testid="pos-status"]')));
+    // The status settles once the POS loop's first round trip is done, which waits for capture to
+    // start (the camera open alone can take tens of seconds); read it again after that.
+    await page.waitForTimeout(45_000);
+    console.log('pos status after 45 s:', JSON.stringify(await readText('[data-testid="pos-status"]')));
+    // The section is taller than the window, so its head and its save bar are shot separately.
+    await pos.evaluate((el) => el.scrollIntoView({ block: 'start' }));
+    await page.waitForTimeout(500);
+    await shot(page, 'smoke-03-pos-admin-top');
+    await page.evaluate(() =>
+      document.querySelector('[data-testid="pos-admin"] .pos-foot')?.scrollIntoView({ block: 'center' })
+    );
+    await page.waitForTimeout(500);
+    await shot(page, 'smoke-04-pos-admin-bottom');
+  }
 }
 
 if (mode === 'allowlist') {
@@ -1916,6 +1937,226 @@ if (mode === 'capture') {
     await page.waitForTimeout(1_500);
     console.log('after stop — state:', await stateText(), '| ws:', await connText());
     await shot(page, 'capture-04-stopped');
+  }
+}
+
+if (mode === 'basket') {
+  // The Basket test screen end to end: the live picture with its zones, a practice basket with no
+  // tablet, the bands/drawn zone editor round-tripping through the real POS config, and the outline
+  // validation. Zones are read back through the same bridge the screen saves with, and the original
+  // zone fields are written back in a `finally`, so the run leaves the machine as it found it.
+  const ZONE_KEYS = ['zoneMode', 'cartEdge', 'insideFraction', 'openingFraction', 'drawnInside', 'drawnOpening'];
+  const getCfg = () => page.evaluate(() => window.api.getPosConfig());
+  const original = await getCfg();
+  const originalZones = Object.fromEntries(ZONE_KEYS.map((k) => [k, original[k]]));
+  console.log('original zones:', JSON.stringify(originalZones));
+  const visible = (sel) =>
+    page.evaluate((s) => {
+      const el = document.querySelector(s);
+      if (!el) return false;
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    }, sel);
+  const clickTestId = (id) => page.click(`[data-testid="${id}"]`, { timeout: 10_000 });
+
+  try {
+    await page.evaluate(() => document.querySelector('[data-testid="nav-basket"]').click());
+    await page.waitForSelector('[data-testid="basket-test"]', { timeout: 15_000 });
+    check('the Basket test tab opens', true);
+    await shot(page, 'basket-02-tab');
+
+    // --- camera ---
+    if (await page.$('[data-testid="bt-start"]')) await clickTestId('bt-start');
+    const outcome = await page
+      .waitForFunction(
+        () => (document.querySelector('img.bt-img') ? 'frames' : null),
+        null,
+        { timeout: 120_000 }
+      )
+      .then((h) => h.jsonValue())
+      .catch(() => null);
+    check('Start camera delivers frames to the preview', outcome === 'frames',
+      `state=${await readText('.bt-state')}`);
+    await page.waitForTimeout(3_000);
+    await shot(page, 'basket-03-camera');
+
+    // --- zones over the picture (bands, the default) ---
+    if (outcome === 'frames') {
+      const zones = await page.evaluate(() => ({
+        inside: document.querySelector('[data-testid="zone-inside"]')?.getAttribute('points') ?? null,
+        opening: document.querySelector('[data-testid="zone-opening"]')?.getAttribute('points') ?? null
+      }));
+      check('both zones are drawn over the picture', !!zones.inside && !!zones.opening, JSON.stringify(zones));
+      check('the zone overlay is painted, not a zero box', await visible('[data-testid="bt-overlay"]'));
+      const dets = await page.evaluate(() => document.querySelectorAll('[data-testid="bt-overlay"] rect.det').length);
+      console.log(`detections on screen now: ${dets} (depends on what is in front of the camera)`);
+    }
+
+    // --- practice basket ---
+    await page.waitForSelector('[data-testid="bt-practice-start"], [data-testid="bt-customer"]', { timeout: 15_000 });
+    if (await page.$('[data-testid="bt-customer"]')) {
+      check('practice is available (no customer session bound)', false, 'a customer session is bound');
+    } else {
+      await clickTestId('bt-practice-start');
+      const on = await page.waitForSelector('[data-testid="bt-practice-on"]', { timeout: 10_000 }).then(() => true).catch(() => false);
+      check('Start practice binds a local basket', on);
+      check('the practice readout shows a count', on && (await visible('[data-testid="bt-count"]')),
+        `count=${await readText('[data-testid="bt-count"]')}`);
+      const state = await page.evaluate(() => window.api.getBasketState());
+      check('the main process agrees practice is bound', state?.practice === true && state?.customerBound === false,
+        JSON.stringify({ practice: state?.practice, customerBound: state?.customerBound, items: state?.readout?.itemCount }));
+      await shot(page, 'basket-04-practice');
+
+      // A deposit needs a hand moving a product through the zones; nothing here can do that, so
+      // the window is offered and the result reported, never counted as a pass or a fail.
+      const before = Number(await readText('[data-testid="bt-count"]')) || 0;
+      console.log('watching 20 s for a deposit (move a product down into the green band to see it count)…');
+      await page.waitForTimeout(20_000);
+      const after = Number(await readText('[data-testid="bt-count"]')) || 0;
+      console.log(`basket count ${before} -> ${after}; review: ${JSON.stringify(await readText('[data-testid="bt-review"]'))}`);
+      await shot(page, 'basket-05-practice-after-watch');
+      // One frame arriving is not a working camera: the double-start race let a capture die a few
+      // seconds in while "frames reached the preview" had already passed. With POS configured its
+      // loop is calling start throughout, which is exactly the condition that killed it.
+      check('capture is still streaming after the practice window, with no error',
+        (await readText('.bt-state')) === 'camera running' && !(await page.$('[data-testid="bt-error"]')),
+        `state=${await readText('.bt-state')} error=${JSON.stringify(await readText('[data-testid="bt-error"]'))}`);
+
+      await clickTestId('bt-practice-restart');
+      await page.waitForTimeout(1_000);
+      check('Empty and restart leaves an empty basket',
+        (await readText('[data-testid="bt-count"]')) === '0', `count=${await readText('[data-testid="bt-count"]')}`);
+      await clickTestId('bt-practice-stop');
+      const ended = await page.waitForSelector('[data-testid="bt-practice-start"]', { timeout: 10_000 }).then(() => true).catch(() => false);
+      check('End practice unbinds the basket', ended);
+    }
+
+    // --- zone editor: B, drawn outlines ---
+    await page.click('#zone-mode-drawn');
+    check('choosing B shows the Draw controls', await visible('[data-testid="bt-draw-inside"]'));
+    if (outcome === 'frames') {
+      const box = await page.evaluate(() => {
+        const r = document.querySelector('img.bt-img').getBoundingClientRect();
+        return { x: r.left, y: r.top, w: r.width, h: r.height };
+      });
+      const at = (fx, fy) => page.mouse.click(box.x + fx * box.w, box.y + fy * box.h);
+      // Delete first, so outlines left by an earlier run cannot add points to this one.
+      for (const which of ['inside', 'opening']) {
+        const del = page.locator(`[data-testid="bt-delete-${which}"]`);
+        if (await del.isEnabled().catch(() => false)) await del.click();
+      }
+      await clickTestId('bt-draw-inside');
+      check('Draw puts the preview in drawing mode', await visible('[data-testid="bt-drawing"]'));
+      await at(0.3, 0.55);
+      // One point draws no outline; the numbered marker is what shows the click landed.
+      check('the first click shows a numbered marker where it landed',
+        (await visible('[data-testid="bt-handle-inside-0"]')) &&
+          (await readText('[data-testid="bt-handle-inside-0"]')) === '1');
+      for (const [fx, fy] of [[0.7, 0.55], [0.7, 0.9], [0.3, 0.9]]) await at(fx, fy);
+      await clickTestId('bt-draw-opening');
+      for (const [fx, fy] of [[0.2, 0.4], [0.8, 0.4], [0.8, 0.98], [0.2, 0.98]]) await at(fx, fy);
+      await clickTestId('bt-draw-opening'); // Done
+      const pts = await page.evaluate(() => ({
+        inside: (document.querySelector('[data-testid="zone-inside"]')?.getAttribute('points') ?? '').split(' ').length,
+        opening: (document.querySelector('[data-testid="zone-opening"]')?.getAttribute('points') ?? '').split(' ').length
+      }));
+      check('four clicks per outline draw four-point outlines', pts.inside === 4 && pts.opening === 4, JSON.stringify(pts));
+      check('the edit is marked unsaved', (await page.textContent('#bt-zones-h')).includes('unsaved'));
+      const markers = await page.$$eval('.bt-handle', (els) => els.length);
+      check('every drawn point has a marker', markers === 8, `markers=${markers}`);
+      await shot(page, 'basket-06-drawn');
+
+      // Drag inside point 1 with the real mouse, away and back via Undo/Redo.
+      const handleAt = () =>
+        page.evaluate(() => {
+          const r = document.querySelector('[data-testid="bt-handle-inside-0"]').getBoundingClientRect();
+          return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+        });
+      const h0 = await handleAt();
+      await page.mouse.move(h0.x, h0.y);
+      await page.mouse.down();
+      await page.mouse.move(h0.x + 0.05 * box.w, h0.y - 0.05 * box.h, { steps: 6 });
+      await page.mouse.up();
+      const h1 = await handleAt();
+      check('dragging a marker moves the point', Math.abs(h1.x - h0.x - 0.05 * box.w) < 3 && Math.abs(h0.y - h1.y - 0.05 * box.h) < 3,
+        JSON.stringify({ from: h0, to: h1 }));
+      check('and the drag added no extra point', (await page.$$eval('.bt-handle', (els) => els.length)) === 8);
+      await shot(page, 'basket-06b-dragged');
+      await clickTestId('bt-undo');
+      const h2 = await handleAt();
+      check('Undo puts the dragged point back', Math.abs(h2.x - h0.x) < 2 && Math.abs(h2.y - h0.y) < 2, JSON.stringify(h2));
+      await clickTestId('bt-redo');
+      const h3 = await handleAt();
+      check('Redo moves it again', Math.abs(h3.x - h1.x) < 2 && Math.abs(h3.y - h1.y) < 2, JSON.stringify(h3));
+      await clickTestId('bt-undo');
+
+      await clickTestId('bt-save-zones');
+      await page.waitForFunction(() => document.querySelector('.bt-note')?.textContent?.includes('saved'), null, { timeout: 10_000 }).catch(() => {});
+      const saved = await getCfg();
+      check('Save writes a drawn layout to the POS config',
+        saved.zoneMode === 'drawn' && saved.drawnInside.length === 4 && saved.drawnOpening.length === 4,
+        JSON.stringify({ mode: saved.zoneMode, inside: saved.drawnInside.length, opening: saved.drawnOpening.length }));
+      const first = saved.drawnInside[0];
+      check('the saved point is where it was clicked (true orientation)',
+        Math.abs(first.x - 0.3) < 0.02 && Math.abs(first.y - 0.55) < 0.02, JSON.stringify(first));
+      const layout = (await page.evaluate(() => window.api.getBasketState()))?.layout;
+      check('the basket now judges under the drawn layout', layout?.mode === 'drawn', JSON.stringify(layout?.mode));
+
+      // Validation: an outline with too few points is refused before it reaches the config.
+      await clickTestId('bt-delete-inside');
+      check('Delete removes the outline and its markers', !(await page.$('[data-testid="bt-handle-inside-0"]')));
+      check('an empty outline is named as a problem', await visible('[data-testid="bt-problems"]'),
+        JSON.stringify(await readText('[data-testid="bt-problems"]')));
+      check('and Save is disabled while it stands', await page.isDisabled('[data-testid="bt-save-zones"]'));
+      await page.click('button:has-text("Revert")');
+      check('Revert brings the saved outline back',
+        !(await page.$('[data-testid="bt-problems"]')) && (await page.textContent('#bt-zones-h')).indexOf('unsaved') < 0);
+      await shot(page, 'basket-07-validation');
+    }
+
+    // --- back to A, the default ---
+    await page.click('#zone-mode-bands');
+    if (await page.isEnabled('[data-testid="bt-save-zones"]')) {
+      await clickTestId('bt-save-zones');
+      await page.waitForTimeout(1_000);
+    }
+    check('switching back to A saves bands', (await getCfg()).zoneMode === 'bands');
+    await shot(page, 'basket-08-bands');
+
+    // --- the Live view's Camera tuning rows (the overlap fix) ---
+    if (await page.$('[data-testid="bt-stop"]')) {
+      // Leave capture running so the tuning card is live; it is stopped below.
+    }
+    await page.evaluate(() => document.querySelector('[data-testid="nav-live"]').click());
+    await page.waitForSelector('.tuning-field', { timeout: 20_000 }).catch(() => {});
+    const overlaps = await page.evaluate(() => {
+      const hit = (a, b) => a.left < b.right - 1 && b.left < a.right - 1 && a.top < b.bottom - 1 && b.top < a.bottom - 1;
+      const out = [];
+      for (const row of document.querySelectorAll('.tuning-field')) {
+        const label = row.querySelector('.tuning-field-label label');
+        if (!label) continue;
+        const lr = label.getBoundingClientRect();
+        if (lr.width === 0) continue;
+        for (const other of row.querySelectorAll('input[type="range"], .tuning-value-wrap, .field-hint')) {
+          if (hit(lr, other.getBoundingClientRect())) out.push(`${label.textContent} × ${other.className || other.type}`);
+        }
+      }
+      return { rows: document.querySelectorAll('.tuning-field').length, out };
+    });
+    check('no Camera tuning row draws a control over its own label', overlaps.rows > 0 && overlaps.out.length === 0,
+      JSON.stringify(overlaps));
+    await shot(page, 'basket-09-live-tuning');
+  } finally {
+    // Stop capture (Live or Basket test, whichever is mounted), then restore the zone fields.
+    const stop = (await page.$('button[aria-label="Stop"]')) ?? (await page.$('[data-testid="bt-stop"]'));
+    if (stop) {
+      await stop.click().catch(() => {});
+      await page.waitForTimeout(2_000);
+    }
+    await page.evaluate(() => window.api.stopBasketPractice?.()).catch(() => {});
+    await page.evaluate((z) => window.api.savePosConfig(z), originalZones).catch((e) =>
+      console.log('could not restore zones:', String(e).slice(0, 200)));
+    console.log('restored zones:', JSON.stringify(Object.fromEntries(ZONE_KEYS.map((k) => [k, undefined]))) && 'done');
   }
 }
 

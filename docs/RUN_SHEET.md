@@ -384,7 +384,9 @@ recorded distances says the breakdown was *skipped* rather than reporting nothin
 ./sidecar/.venv/Scripts/python.exe sidecar/tools/train_model.py --install
 ```
 
-Writes `sidecar/models/scanncart-grocery-v2.pt` **plus** `scanncart-grocery-v2.json` beside it,
+Writes `sidecar/models/scanncart-grocery-v2.pt` **plus** `scanncart-grocery-v2.json` beside it
+(or `--name <stem>` for a second weight of the same generation — the two on this machine are
+`scanncart-grocery-v2-stretch` and `scanncart-grocery-v2-letterbox`),
 carrying everything `--val` and the run's own `args.yaml` know and nothing else does:
 `resize_mode` (`stretch`), `class_names` (the label set), `imgsz` (the size the app must feed it)
 and the `augmentation` table. Refuses to overwrite an existing weight without `--force`, because
@@ -394,7 +396,7 @@ the picker is keyed by filename.
 |---|---|
 | the Admin Panel's Model field | the weight listed, with `requirement (recorded): stretch` and the measured score |
 | `resize_mode` | leave it on **`auto`** — it honours the record. An explicit `letterbox` overrides it and is the one value worth warning about |
-| `imgsz` | set `Settings.imgsz` to the recorded value if the run used a non-default one — the record is a readout, not an input, so nothing changes it for you |
+| `imgsz` | follows the weight: switching `active_model` in Admin sets `imgsz` to the size the record names (a save that names `imgsz` itself wins). Check it reads the run's size after the switch |
 | Test connection | `7 classes`, and no class warning. A distance-split weight would read `21 classes` with the distance problem named |
 
 ```bash
@@ -446,7 +448,7 @@ the `baseline class order` line before the per-class table.
 | is the set fit to be measured? | the merge report says any `machine_only` decision is left in `valid` or `test` (§4's confirm step), or the report does not carry the field at all, or it carries no stamp naming the `provenance.json` those counts came from — or the stamp no longer matches it, which is what a decision saved *after* the build looks like. A gate that cannot be evaluated is a *failure*, not a pass |
 | is every class above the floor? | either weight below 0.85 on any class |
 | did anything regress? | a class more than the tolerance below v1 |
-| **is crowding better, on the cells it was re-shot for?** | the candidate finds no more frames with **two or more items** than the baseline, on the whole split **and** on every distance in `--claim-distances` (default `mid,far`) — the count is cut by the distance each frame was filed under, because a total can rise while the cell the re-shoot was paid for gets worse (`close` frames are cheap to gain). A claimed distance the split files **no frame at** is a failure, not a pass: `-` in the table means nothing was asked, so `mid` unmeasured is not `mid` held. `CROWD_MIN=2` over the same file list is the claim this dataset exists to make — v1 misses items when several are side by side, and `far` frames are where it is worst |
+| **is crowding better, on the cells it was re-shot for?** | of the frames whose **labels** hold two or more items, the candidate finds (reports two or more items on) no fewer than the baseline, on the whole split **and** on every distance in `--claim-distances` (default `mid,far`). Frames a weight reports two items on whose labels hold one are doubled detections: printed per weight, never credited — the raw count used to credit them, and v1 "won" `mid` with 3 doubled frames where the labels hold no crowd at all. A claimed distance with frames but **no truly crowded frame** is *not measured*, like one with no frames — the count is cut by the distance each frame was filed under, because a total can rise while the cell the re-shoot was paid for gets worse (`close` frames are cheap to gain). A claimed distance the split files **no frame at** is a failure, not a pass: `-` in the table means nothing was asked, so `mid` unmeasured is not `mid` held. `CROWD_MIN=2` over the same file list is the claim this dataset exists to make — v1 misses items when several are side by side, and `far` frames are where it is worst |
 
 `--iou-sweep` reports the same count at several NMS thresholds **in each claimed distance's own
 row**, which is what separates "these weights find the second item" from "the threshold let a
@@ -573,5 +575,5 @@ roster cannot name. (When this was last checked, the project still held `Palmoli
 | set | `build_dataset.py` exits 0, `make doctor` says `[ok]` (and §8/§11 refuse without it), the contact sheet reads right |
 | weights | `scanncart-grocery-v2.pt` + its record, `auto` honouring `stretch`, `imgsz` matching the run |
 | measured | every class ≥ 0.85 **and** every distance cell reported, unbracketed by `!` |
-| accepted | `make accept-v2` exits 0: the gate clean, no class below the floor, and **more crowded frames found than v1** — whole split **and** on every claimed distance, with the `mid`/`far` rows present rather than `-` |
+| accepted | `make accept-v2` exits 0: the gate clean, no class below the floor, and **no fewer truly crowded frames found than v1** — whole split **and** on every claimed distance, with the `mid`/`far` rows holding at least one frame whose labels have two or more items |
 | quoted | the `test` score, labelled with the capture session it came from |

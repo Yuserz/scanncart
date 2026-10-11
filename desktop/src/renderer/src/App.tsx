@@ -12,8 +12,14 @@ export interface AppProps {
 function App({ getPort, pollMs = 500 }: AppProps = {}): JSX.Element {
   const resolvePort = getPort ?? ((): Promise<number | null> => window.api.getSidecarPort())
   const [port, setPort] = useState<number | null>(null)
+  // Outside the Electron shell — this dev URL opened in a plain browser — there is no preload
+  // bridge, so `window.api` is undefined and port discovery can never succeed. An eternal
+  // "Starting sidecar…" spinner there misreports a running sidecar as still loading; the truth
+  // is that this screen only works inside the app.
+  const inShell = getPort != null || (typeof window !== 'undefined' && window.api != null)
 
   useEffect(() => {
+    if (!inShell) return
     let active = true
     let timer: ReturnType<typeof setTimeout>
     const tick = async (): Promise<void> => {
@@ -36,6 +42,17 @@ function App({ getPort, pollMs = 500 }: AppProps = {}): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pollMs])
 
+  if (!inShell) {
+    return (
+      <div className="app-waiting">
+        <p>Open the SCANnCART desktop app</p>
+        <small>
+          This screen reaches the sidecar through the app itself. A browser tab at this address has
+          no shell to ask, so there is nothing to connect to here.
+        </small>
+      </div>
+    )
+  }
   if (port == null) {
     return (
       <div className="app-waiting">

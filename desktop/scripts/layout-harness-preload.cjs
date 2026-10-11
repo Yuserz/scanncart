@@ -1,4 +1,5 @@
-// The app's preload, stubbed down to the one thing the renderer cannot start without.
+// The app's preload, stubbed down to the few things the renderer asks for while drawing the Live
+// view.
 //
 // `App` waits for a sidecar port before it draws any view at all, so the harness has to answer
 // `getSidecarPort` — with a port nothing is listening on: the layout is what is being measured, and
@@ -14,7 +15,20 @@ const NOTHING_LISTENING = 9
 window.api = {
   getSidecarPort: () => Promise.resolve(NOTHING_LISTENING),
   getSidecarHealth: () => Promise.resolve('starting'),
-  onSidecarHealth: () => () => {}
+  onSidecarHealth: () => () => {},
+  // The POS readout is part of the rail this promise is made about, and it is only on screen when
+  // the integration is configured — so it is answered as *bound* rather than left absent. A layout
+  // measured with the feature off would be the one layout that never carries the card, and the
+  // card is the only thing it could push the item log's floor past.
+  getPosState: () =>
+    Promise.resolve({
+      phase: 'bound',
+      cartCode: 'ABCD1234',
+      syncedItemCount: 4,
+      lastSyncAgeS: 7,
+      error: null
+    }),
+  onPosState: () => () => {}
 }
 window.electron = { process: { versions: process.versions } }
 

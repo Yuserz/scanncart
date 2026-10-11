@@ -101,6 +101,9 @@ def _default_source_factory(settings: Settings):
         exposure=settings.camera_exposure,
         autofocus=settings.camera_autofocus,
         focus=settings.camera_focus,
+        saturation=settings.camera_saturation,
+        auto_exposure=settings.camera_auto_exposure,
+        auto_exposure_slow=settings.camera_auto_exposure_slow,
     )
 
 
@@ -299,6 +302,8 @@ def _default_detector_factory(settings: Settings, device: str):
                 settings.active_model,
                 requirement_for(settings.active_model),
             ),
+            # Keep a shown item shown through a weak frame (see `inference.KEEP_CONF`).
+            hold_tracks=True,
         )
     api_key = load_api_key()
     if api_key is None and settings.detector_backend == "cloud_api":
@@ -614,6 +619,9 @@ def _settings_response(state: "AppState") -> SettingsResponse:
         camera_exposure=state.settings.camera_exposure,
         camera_autofocus=state.settings.camera_autofocus,
         camera_focus=state.settings.camera_focus,
+        camera_saturation=state.settings.camera_saturation,
+        camera_auto_exposure=state.settings.camera_auto_exposure,
+        camera_auto_exposure_slow=state.settings.camera_auto_exposure_slow,
         hot_reloadable_fields=sorted(HOT_RELOADABLE_FIELDS),
         restart_required_fields=sorted(RESTART_REQUIRED_FIELDS),
         warnings=compute_warnings(
@@ -639,6 +647,9 @@ _CAMERA_CONTROL_KEYS = {
     "camera_exposure": "exposure",
     "camera_autofocus": "autofocus",
     "camera_focus": "focus",
+    "camera_saturation": "saturation",
+    "camera_auto_exposure": "auto_exposure",
+    "camera_auto_exposure_slow": "auto_exposure_slow",
 }
 
 
@@ -674,6 +685,15 @@ def _apply_settings_patch(
                 status_code=409,
                 detail=f"Cannot change {sorted(locked)} while capture is running; stop capture first.",
             )
+    if "active_model" in patch and "imgsz" not in patch:
+        # A model switch brings the size those weights were trained at (`imgsz_for`, the record
+        # `--install` writes), because `imgsz` is a separate setting: switching to weights trained
+        # at 960 while the field still said 640 ran them at the wrong size with no error, and the
+        # mismatch warning only appeared after the save. A patch that names `imgsz` itself is the
+        # operator's decision and wins; a weight with no record leaves the field alone.
+        trained = imgsz_for(patch["active_model"])
+        if trained is not None and trained != state.settings.imgsz:
+            patch = {**patch, "imgsz": trained}
     for key, value in patch.items():
         setattr(state.settings, key, value)
     if "device" in patch:
@@ -1101,8 +1121,21 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
             reported_size=reported_size,
         )
 
+    # One start at a time. Health reads `idle` for the whole of a start that is still opening the
+    # camera (seconds on a StreamCam), and the desktop's POS loop - which keeps capture running -
+    # calls start whenever it sees `idle`. Without this a second start passed the `!= "running"`
+    # check, acquired a second camera handle, detector and pipeline beside the first, and when one
+    # of them failed its error teardown closed the *other* pipeline's detector mid-inference
+    # ("'NoneType' object has no attribute 'names'"). Under the lock the second caller waits for
+    # the first and then sees `running`, so it acquires nothing.
+    start_lock = asyncio.Lock()
+
     @app.post("/api/capture/start")
     async def start():
+        async with start_lock:
+            return await _start_capture()
+
+    async def _start_capture():
         if state.calibrating:
             # Calibration holds the device exclusively for ~80s (camera_caps.
             # calibrate). Starting capture underneath it would open the same
@@ -1313,7 +1346,11 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
         return DatasetStatusResponse(**asdict(await run_in_threadpool(load_dataset_status)))
 
     @app.get("/api/logs", response_model=LogsResponse)
-    async def logs():
+    async def logs(since: float | None = None):
+        # `since` (sidecar wall-clock seconds, the same clock as `entered_at`/`left_at`) drops tracks
+        # that had already left by then. Omitted, the whole current session is returned, which is
+        # what the renderer's reconnect recovery wants; the POS integration's poller passes its bind
+        # time so an all-day capture is not re-read in full every second.
         sid = state.logging_store.current_session_id()
         if sid is None:
             return LogsResponse(session_id=None, events=[])
@@ -1326,7 +1363,7 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
                 entered_at=r.entered_at,
                 left_at=r.left_at,
             )
-            for r in state.logging_store.query_events(sid)
+            for r in state.logging_store.query_events(sid, since=since)
         ]
         return LogsResponse(session_id=sid, events=events)
 

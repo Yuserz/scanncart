@@ -192,8 +192,11 @@ class _StubSource:
     height = 96
     fps = 30.0
 
+    _seq = 0
+
     def latest(self):
-        return (1, np.full((96, 128, 3), 100, dtype=np.uint8))
+        self._seq += 1  # a new frame per call, as a live camera delivers; the pipeline analyses each frame once
+        return (self._seq, np.full((96, 128, 3), 100, dtype=np.uint8))
 
 
 class _BoxDetector:

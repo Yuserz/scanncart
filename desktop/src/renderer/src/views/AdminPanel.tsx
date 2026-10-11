@@ -24,6 +24,7 @@ import {
   type FieldMeta
 } from '../lib/settingsFields'
 import { Spinner } from '../components/Spinner'
+import { PosAdminSection } from '../components/PosAdminSection'
 import './AdminPanel.css'
 
 // "bottle, cup" → ["bottle", "cup"]. Blank entries are dropped so a trailing
@@ -1189,6 +1190,8 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
           </p>
         ) : null}
       </section>
+
+      <PosAdminSection />
 
       <div className="admin-groups">
         {visibleGroups.map((group) => (

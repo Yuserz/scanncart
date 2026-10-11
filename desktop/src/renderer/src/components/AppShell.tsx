@@ -1,10 +1,11 @@
 import { useState, type JSX } from 'react'
 import { LiveView } from '../views/LiveView'
 import { AdminPanel } from '../views/AdminPanel'
+import { BasketTestView } from '../views/BasketTestView'
 import { useSidecarHealth, type SidecarHealthDeps } from '../hooks/useSidecarHealth'
 import './AppShell.css'
 
-export type View = 'live' | 'admin'
+export type View = 'live' | 'admin' | 'basket'
 
 export interface AppShellProps {
   port: number
@@ -35,6 +36,14 @@ export function AppShell({ port, healthDeps }: AppShellProps): JSX.Element {
         >
           Admin
         </button>
+        <button
+          data-testid="nav-basket"
+          aria-pressed={view === 'basket'}
+          className={view === 'basket' ? 'active' : ''}
+          onClick={() => setView('basket')}
+        >
+          Basket test
+        </button>
       </nav>
       {/* Above the views rather than inside one, because it is not about either of them: with no
           sidecar answering, both panels fail — the Live view on frames and the item log, the Admin
@@ -58,7 +67,9 @@ export function AppShell({ port, healthDeps }: AppShellProps): JSX.Element {
           <span>Quit SCANnCART and start it again to recover.</span>
         </div>
       )}
-      {view === 'live' ? <LiveView port={port} /> : <AdminPanel port={port} />}
+      {view === 'live' && <LiveView port={port} />}
+      {view === 'admin' && <AdminPanel port={port} />}
+      {view === 'basket' && <BasketTestView port={port} />}
     </div>
   )
 }

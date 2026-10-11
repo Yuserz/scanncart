@@ -1,0 +1,483 @@
+/* The basket test screen: the preview with its zones on the left, the practice run and the zone
+   editor in a rail on the right. Colours are the app theme's tokens (`assets/theme.css`); the two
+   zone tints are this screen's own, kept translucent so the picture stays readable under them. */
+.basket-test {
+  --zone-inside: rgba(45, 212, 167, 0.28);
+  --zone-inside-line: #2dd4a7;
+  --zone-opening: rgba(245, 180, 70, 0.3);
+  --zone-opening-line: #f5b446;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 16px;
+  padding: 16px;
+  color: var(--text);
+  background: var(--bg);
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  box-sizing: border-box;
+  max-width: 1600px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.bt-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.bt-toolbar,
+.bt-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.bt-state {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.bt-drawing {
+  color: var(--zone-opening-line);
+  font-size: 13px;
+}
+
+.bt-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--danger-border);
+  background: var(--danger-bg);
+  color: var(--danger-fg);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.bt-preview {
+  position: relative;
+  align-self: start;
+  max-width: 100%;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  line-height: 0;
+}
+
+.bt-preview.drawing {
+  cursor: crosshair;
+  outline: 2px solid var(--zone-opening-line);
+}
+
+.bt-img {
+  display: block;
+  max-width: 100%;
+  max-height: calc(100vh - 170px);
+  width: auto;
+  height: auto;
+}
+
+.bt-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.bt-overlay .z-inside {
+  fill: var(--zone-inside);
+  stroke: var(--zone-inside-line);
+  stroke-width: 2px;
+  vector-effect: non-scaling-stroke;
+}
+
+.bt-overlay .z-opening {
+  fill: var(--zone-opening);
+  stroke: var(--zone-opening-line);
+  stroke-width: 2px;
+  vector-effect: non-scaling-stroke;
+}
+
+.bt-overlay .det {
+  fill: none;
+  stroke: var(--text);
+  stroke-width: 1.5px;
+  stroke-dasharray: 4 3;
+  vector-effect: non-scaling-stroke;
+}
+
+/* Each detection's label, pinned to its box's top-left corner and sitting just above it — or just
+   inside it when the box touches the top of the picture, where above would be cut off. */
+.bt-labels {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.bt-label {
+  position: absolute;
+  transform: translateY(-100%);
+  max-width: 60%;
+  padding: 1px 6px;
+  border-radius: 4px 4px 4px 0;
+  background: var(--text);
+  color: var(--bg);
+  font: 600 11px/16px var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bt-label.inside-box {
+  transform: none;
+  border-radius: 0 0 4px 0;
+}
+
+.bt-label-id {
+  opacity: 0.7;
+  font-weight: 400;
+}
+
+/* The drawn points: a layer the size of the picture that lets clicks through to it, with each
+   point a numbered dot that can be grabbed. Positioned in percent of the picture, so they stay on
+   their spot whatever size the preview is drawn at. */
+.bt-handles {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.bt-handle {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  margin: -9px 0 0 -9px;
+  border-radius: 50%;
+  border: 2px solid var(--bg);
+  box-sizing: border-box;
+  font: 600 10px/14px var(--font-mono);
+  text-align: center;
+  color: var(--accent-ink);
+  pointer-events: auto;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+
+.bt-handle.inside {
+  background: var(--zone-inside-line);
+}
+
+.bt-handle.opening {
+  background: var(--zone-opening-line);
+}
+
+/* The outline currently being drawn: larger, so where the next click joins is obvious. */
+.bt-handle.active {
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  line-height: 18px;
+}
+
+.bt-handle:active {
+  cursor: grabbing;
+}
+
+.bt-spacer {
+  flex: 1;
+}
+
+.bt-placeholder {
+  line-height: 1.5;
+  padding: 80px 24px;
+  color: var(--dim);
+  text-align: center;
+  min-width: 420px;
+}
+
+.bt-legend {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 0;
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.bt-legend .key {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  display: inline-block;
+  margin-left: 8px;
+}
+
+.bt-legend .key.inside {
+  background: var(--zone-inside);
+  border: 1px solid var(--zone-inside-line);
+}
+
+.bt-legend .key.opening {
+  background: var(--zone-opening);
+  border: 1px solid var(--zone-opening-line);
+}
+
+.bt-legend .key.outside {
+  background: transparent;
+  border: 1px solid var(--border);
+}
+
+.bt-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.bt-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.bt-card h3 {
+  margin: 0;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bt-card p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.basket-test .dim {
+  color: var(--dim);
+}
+
+.basket-test button {
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 12px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--state-pill-bg);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.basket-test button.primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: transparent;
+  font-weight: 600;
+}
+
+.basket-test button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.basket-test button:focus-visible,
+.basket-test input:focus-visible,
+.basket-test select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.bt-pill {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 10px;
+  background: var(--state-pill-bg);
+  color: var(--dim);
+}
+
+.bt-pill.on {
+  background: var(--zone-inside);
+  color: var(--text);
+}
+
+.bt-pill.unsaved {
+  background: var(--zone-opening);
+  color: var(--text);
+}
+
+.bt-readout {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bt-stats {
+  display: flex;
+  gap: 14px;
+  font-size: 13px;
+  color: var(--dim);
+}
+
+.bt-stats b {
+  color: var(--text);
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
+.bt-warn {
+  color: var(--danger-fg);
+}
+
+.bt-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.bt-items li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.bt-items li span {
+  overflow-wrap: anywhere;
+}
+
+.bt-review {
+  border: 1px solid var(--danger-border);
+  background: var(--danger-bg);
+  color: var(--danger-fg);
+  border-radius: 4px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.bt-review ul {
+  margin: 0;
+  padding-left: 1.1em;
+}
+
+.bt-review button {
+  align-self: flex-start;
+}
+
+.bt-modes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bt-modes label {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.bt-modes label.checked {
+  border-color: var(--accent);
+}
+
+.bt-modes label span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+}
+
+.bt-modes small {
+  color: var(--dim);
+}
+
+.bt-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bt-fields label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.bt-fields select,
+.bt-fields input {
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 6px;
+}
+
+.bt-fields input {
+  width: 70px;
+}
+
+.bt-draw {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bt-draw-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  gap: 6px;
+  align-items: center;
+  font-size: 13px;
+}
+
+.bt-problems {
+  margin: 0;
+  padding-left: 1.1em;
+  color: var(--danger-fg);
+  font-size: 12px;
+}
+
+.bt-error {
+  color: var(--danger-fg);
+}
+
+.bt-note {
+  color: var(--dim);
+}
+
+@media (max-width: 900px) {
+  .basket-test {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

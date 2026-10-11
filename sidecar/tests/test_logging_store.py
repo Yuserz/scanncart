@@ -52,3 +52,19 @@ def test_query_events_scoped_to_session_and_ordered():
 
 def test_current_session_id_none_when_empty():
     assert _store().current_session_id() is None
+
+
+def test_query_events_since_keeps_tracks_still_present_at_or_after_it():
+    # `since` answers "what was on the counter from this moment on": a track that left before it
+    # is history and is dropped; one still open, or one that left at/after it, is kept - including
+    # one that *entered* before it, because a caller deciding eligibility needs to see that too.
+    s = _store()
+    sid = s.start_session("m", "cpu")
+    s.record_detection(sid, 1, "banana", 0.9, ts=1.0)
+    s.resolve_left(sid, 1, ts=4.0)        # gone before since=10
+    s.record_detection(sid, 2, "apple", 0.9, ts=2.0)
+    s.resolve_left(sid, 2, ts=10.0)       # left exactly at since: kept
+    s.record_detection(sid, 3, "orange", 0.9, ts=3.0)   # entered before, still open: kept
+    s.record_detection(sid, 4, "pear", 0.9, ts=12.0)    # entered after: kept
+    assert [r.track_id for r in s.query_events(sid, since=10.0)] == [2, 3, 4]
+    assert [r.track_id for r in s.query_events(sid)] == [1, 2, 3, 4]   # no filter by default

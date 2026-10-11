@@ -174,7 +174,11 @@ $ok=0; 1..10 | %{ .venv\Scripts\python.exe -c "import torch,cv2,ultralytics" 2>$
 # prints: SIDECAR_PORT=8765
 ```
 
-On first capture start, Ultralytics downloads `yolo11n.pt` automatically.
+The default model is the trained grocery weight `models/scanncart-grocery-v1.pt` (with its
+record `models/scanncart-grocery-v1.json`). Weights are gitignored, so a fresh clone has to copy
+them in or train them (`docs/RUN_SHEET.md`); see [`models/README.md`](models/README.md). A stock
+model such as `yolo11n.pt` is downloaded by Ultralytics into `sidecar/` on the first capture start
+that selects it.
 
 Settings persist to `data/settings.json`, loaded on startup and written back on
 every `PATCH /api/settings` or preset apply. A missing or corrupt file falls

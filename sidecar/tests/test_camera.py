@@ -345,6 +345,79 @@ def test_controls_set_live_survive_a_reopen():
     assert _wrote(caps[1], cv2.CAP_PROP_BRIGHTNESS, 140.0)
 
 
+def test_a_saturation_value_is_written_live():
+    """The A/B instrument: the tuning card slides saturation against detection
+    confidence, so the patch must become a CAP_PROP_SATURATION write without
+    anything exposure-related in between."""
+    cap = _RecordingCap()
+    src = CameraCapture(0, 4, 4, 30, cap_factory=lambda i: cap)
+    src.open()
+    try:
+        src.set_controls(saturation=0.0)
+        assert _wait_for(lambda: _wrote(cap, cv2.CAP_PROP_SATURATION, 0.0))
+    finally:
+        src.release()
+
+
+def test_saturation_set_live_survives_a_reopen():
+    """Same contract as every other live control: values tuned live must come
+    back when the handle is rebuilt, not silently revert."""
+    caps = []
+
+    def factory(index):
+        cap = _RecordingCap()
+        caps.append(cap)
+        return cap
+
+    src = CameraCapture(0, 4, 4, 30, cap_factory=factory)
+    src.open()
+    src.set_controls(saturation=20.0)
+    assert _wait_for(lambda: _wrote(caps[0], cv2.CAP_PROP_SATURATION, 20.0))
+    src.release()
+
+    src.open()
+    src.release()
+    assert _wrote(caps[1], cv2.CAP_PROP_SATURATION, 20.0)
+
+
+def test_a_reset_of_saturation_does_not_write_the_device():
+    """Saturation has no automatic mode the app can name (unlike autofocus, whose
+    undo is a real write), so a reset only stops this app writing it — no
+    device call, no invented restore value."""
+    cap = _RecordingCap()
+    src = CameraCapture(0, 4, 4, 30, cap_factory=lambda i: cap)
+    src.open()
+    try:
+        src.set_controls(saturation=40.0)
+        assert _wait_for(lambda: _wrote(cap, cv2.CAP_PROP_SATURATION, 40.0))
+
+        src.set_controls(saturation=None)
+
+        def _wrote_saturation_twice() -> bool:
+            return len([p for p, _, _ in cap.sets if p == cv2.CAP_PROP_SATURATION]) > 1
+
+        assert not _wait_for(_wrote_saturation_twice, timeout=0.2)
+        assert src._thread.is_alive()
+        assert src.failure is None
+    finally:
+        src.release()
+
+
+def test_saturation_is_written_while_auto_exposure_owns_exposure():
+    """AutoExposure adjusts brightness and exposure only; saturation is outside
+    its loop, so a saturation drag while auto is on must go to the device
+    rather than being swallowed as the loop's next starting point (the rule
+    that _correctly_ swallows brightness/exposure drags)."""
+    cap = _RecordingCap()
+    src = CameraCapture(0, 4, 4, 30, cap_factory=lambda i: cap, auto_exposure=True)
+    src.open()
+    try:
+        src.set_controls(saturation=10.0)
+        assert _wait_for(lambda: _wrote(cap, cv2.CAP_PROP_SATURATION, 10.0))
+    finally:
+        src.release()
+
+
 def test_autofocus_is_written_before_focus_when_set_live():
     """Same ordering open() has always used: a focus value written while
     autofocus is on is immediately hunted away from."""
@@ -457,5 +530,336 @@ def test_a_rejected_control_write_does_not_kill_the_capture_thread():
         src.set_controls(exposure=-6.0)
         assert _wait_for(lambda: _wrote(cap, cv2.CAP_PROP_EXPOSURE, -6.0))
         assert src._thread.is_alive()
+    finally:
+        src.release()
+
+
+def test_open_asks_for_mjpg_before_the_resolution():
+    """The StreamCam reaches 60 fps at 720p/1080p only in MJPG; left to choose, MSMF negotiated the
+    uncompressed format and the camera delivered 29 fps at a 60 fps setting whatever the exposure.
+    The format has to be asked for before the size, because MSMF picks a media type when the size is
+    set. A camera without MJPG ignores the request and keeps its own format."""
+    cap = _RecordingCap()
+    src = CameraCapture(0, 1280, 720, 60, cap_factory=lambda i: cap)
+    src.open()
+    try:
+        props = [p for p, _, _ in cap.sets]
+        assert _wrote(cap, cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        assert props.index(cv2.CAP_PROP_FOURCC) < props.index(cv2.CAP_PROP_FRAME_WIDTH)
+    finally:
+        src.release()
+
+
+# ---- auto exposure -------------------------------------------------------------------------
+
+from app.camera import AutoExposure, exposure_cap_for, mean_luminance  # noqa: E402
+
+
+def test_the_exposure_cap_is_the_longest_shutter_the_framerate_allows():
+    assert exposure_cap_for(60) == -6
+    assert exposure_cap_for(30) == -5
+    assert exposure_cap_for(0) == 0
+
+
+def _settle(ae: AutoExposure, scene, steps: int = 200) -> float:
+    """Run the loop against a simulated camera: luminance = scene(brightness, exposure)."""
+    # The clock carries on across calls, as the capture thread's does.
+    t = _CLOCK.get(id(ae), 0.0)
+    lum = scene(ae.brightness, ae.exposure)
+    for _ in range(steps):
+        t += 0.05
+        ae.update(lum, t)
+        lum = scene(ae.brightness, ae.exposure)
+    _CLOCK[id(ae)] = t
+    return lum
+
+
+_CLOCK: dict[int, float] = {}
+
+
+def _room(light: float):
+    # Roughly the StreamCam at -6: ~0.8 luminance per brightness unit, doubling per stop.
+    return lambda b, e: min(255.0, max(0.0, (b * 0.8 - 50) * light * 2 ** (e + 6)))
+
+
+def _sunlit(light: float):
+    # Brightness as a pure gain, so a strong light overexposes even at the brightness floor.
+    return lambda b, e: min(255.0, b * 0.6 * light * 2 ** (e + 6))
+
+
+def test_a_dim_room_is_brought_to_the_target_by_brightness_alone_at_60_fps():
+    ae = AutoExposure(60, brightness=None, exposure=None)
+    lum = _settle(ae, _room(0.8))
+    assert abs(lum - AutoExposure.TARGET) <= AutoExposure.DEADBAND + 4
+    assert ae.exposure == -6  # the shutter never went past the 60 fps cap
+
+
+def test_a_very_dark_room_never_lengthens_the_shutter_past_the_cap():
+    ae = AutoExposure(60, brightness=128, exposure=-6)
+    _settle(ae, _room(0.1))
+    assert ae.exposure == -6
+    assert ae.brightness == AutoExposure.BRIGHTNESS_MAX
+
+
+def test_a_bright_scene_shortens_the_shutter_instead_of_crushing_brightness():
+    ae = AutoExposure(60, brightness=200, exposure=-6)
+    # Sunlit: even at the lowest useful brightness the picture would be blown out.
+    lum = _settle(ae, _sunlit(6.0), steps=400)
+    assert ae.exposure < -6
+    assert ae.brightness >= AutoExposure.BRIGHTNESS_MIN
+    assert abs(lum - AutoExposure.TARGET) <= AutoExposure.DEADBAND + 10
+
+
+def test_it_comes_back_up_to_the_cap_when_the_light_drops_again():
+    ae = AutoExposure(60, brightness=200, exposure=-6)
+    _settle(ae, _sunlit(6.0), steps=400)
+    _settle(ae, _sunlit(0.8), steps=400)
+    assert ae.exposure == -6
+
+
+def test_inside_the_deadband_nothing_is_written():
+    ae = AutoExposure(60, brightness=128, exposure=-6)
+    assert ae.update(AutoExposure.TARGET + 5, 1.0) == {}
+
+
+def test_a_manual_exposure_longer_than_the_cap_is_clamped_at_start():
+    ae = AutoExposure(60, brightness=128, exposure=-2)
+    assert ae.start_writes()["exposure"] == -6
+
+
+def test_mean_luminance_reads_a_bgr_frame():
+    assert mean_luminance(np.full((16, 16, 3), 100, dtype=np.uint8)) == pytest.approx(100, abs=0.5)
+
+
+class _SceneCap(_RecordingCap):
+    """A camera whose picture brightness follows the brightness control, like the StreamCam."""
+
+    def __init__(self):
+        super().__init__()
+        self.brightness = 128.0
+
+    def set(self, prop, value):
+        if prop == cv2.CAP_PROP_BRIGHTNESS:
+            self.brightness = float(value)
+        return super().set(prop, value)
+
+    def read(self):
+        time.sleep(0.002)
+        level = int(max(0, min(255, self.brightness * 0.8 - 50)))
+        # A scene with detail in it (8-pixel blocks +-20 around the level, so the mean is the level
+        # and the contrast is a lit room's - blocks, because `frame_levels` samples every 8th
+        # pixel), since a flat frame is what `AutoExposure` now reads as too dark to brighten.
+        rows, cols = np.indices((16, 16))
+        sign = np.where((rows // 8 + cols // 8) % 2 == 0, 20, -20)
+        frame = np.clip(level + sign, 0, 255).astype(np.uint8)
+        return True, np.repeat(frame[:, :, None], 3, axis=2)
+
+
+def test_capture_with_auto_exposure_drives_the_picture_to_the_target():
+    cap = _SceneCap()
+    src = CameraCapture(0, 16, 16, 60, cap_factory=lambda i: cap, auto_exposure=True)
+    src.open()
+    try:
+        assert _wait_for(lambda: abs(cap.brightness * 0.8 - 50 - AutoExposure.TARGET) <= 15, 5.0)
+        assert _wrote(cap, cv2.CAP_PROP_EXPOSURE, -6.0)
+        assert all(t != threading.current_thread().name for p, _, t in cap.sets
+                   if p == cv2.CAP_PROP_BRIGHTNESS and _ != 128.0)
+    finally:
+        src.release()
+
+
+def test_switching_auto_exposure_off_restores_the_manual_values():
+    cap = _SceneCap()
+    src = CameraCapture(0, 16, 16, 60, cap_factory=lambda i: cap,
+                        brightness=90, exposure=-7, auto_exposure=True)
+    src.open()
+    try:
+        assert _wait_for(lambda: cap.brightness > 150, 5.0)
+        src.set_controls(auto_exposure=False)
+        assert _wait_for(lambda: cap.brightness == 90.0)
+        assert _wrote(cap, cv2.CAP_PROP_EXPOSURE, -7)
+        settled = len(cap.sets)
+        time.sleep(0.5)
+        assert len(cap.sets) == settled  # the loop stopped writing
+    finally:
+        src.release()
+
+
+def test_a_manual_drag_while_auto_is_on_is_not_written():
+    cap = _SceneCap()
+    src = CameraCapture(0, 16, 16, 60, cap_factory=lambda i: cap, auto_exposure=True)
+    src.open()
+    try:
+        assert _wait_for(lambda: cap.brightness > 150, 5.0)
+        src.set_controls(brightness=10)
+        time.sleep(0.3)
+        assert not _wrote(cap, cv2.CAP_PROP_BRIGHTNESS, 10)
+    finally:
+        src.release()
+
+
+# ---- too dark: a state, not a brightness ----------------------------------------------------
+
+from app.camera import frame_levels  # noqa: E402
+
+GREY_CARD = 2.3  # measured contrast of the grey picture the old loop produced in a dark room
+LIT = 28.0  # an ordinary lit scene measured 24-33
+
+
+def _tick(ae: AutoExposure, lum: float, contrast: float, t: list[float]) -> dict:
+    t[0] += 1.0  # past both the interval and the settle time
+    return ae.update(lum, t[0], contrast)
+
+
+def test_a_room_too_dark_for_the_shutter_is_reported_rather_than_greyed_out():
+    """The 04:30 measurement: at -6 the picture was black, and holding the target by brightness
+    painted it a flat grey (contrast 2.3). The loop now backs brightness off and says so."""
+    ae = AutoExposure(60, brightness=215, exposure=-6)
+    t = [0.0]
+    assert _tick(ae, 100, GREY_CARD, t) == {"brightness": AutoExposure.BRIGHTNESS_NEUTRAL}
+    assert ae.too_dark
+    # Black and flat at neutral brightness: nothing more to write, and no climbing back to grey.
+    assert _tick(ae, 1, 2.4, t) == {}
+    assert ae.too_dark and ae.brightness == AutoExposure.BRIGHTNESS_NEUTRAL
+    assert ae.exposure == -6  # the 60 fps shutter was kept
+
+
+def test_light_coming_back_clears_the_state_and_brightness_works_again():
+    ae = AutoExposure(60, brightness=128, exposure=-6)
+    t = [0.0]
+    _tick(ae, 1, 2.4, t)
+    assert ae.too_dark
+    writes = _tick(ae, 70, LIT, t)
+    assert not ae.too_dark
+    assert writes.get("brightness", 0) > 128
+
+
+def test_a_dark_but_detailed_picture_is_still_brightened():
+    """Flatness is what decides it, not darkness: a dim picture with detail in it is the case
+    brightness exists for."""
+    ae = AutoExposure(60, brightness=128, exposure=-6)
+    t = [0.0]
+    writes = _tick(ae, 60, LIT, t)
+    assert writes.get("brightness", 0) > 128 and not ae.too_dark
+
+
+def test_without_a_contrast_reading_the_loop_behaves_as_before():
+    ae = AutoExposure(60, brightness=128, exposure=-6)
+    assert ae.update(1, 1.0) == {"brightness": 128 + AutoExposure.MAX_STEP}
+    assert not ae.too_dark
+
+
+def test_the_slow_trade_spends_one_stop_before_giving_up_and_no_more():
+    ae = AutoExposure(60, brightness=128, exposure=-6, allow_slow=True)
+    t = [0.0]
+    assert ae.slow_cap == -5
+    assert _tick(ae, 1, 2.4, t) == {"exposure": -5}
+    assert not ae.too_dark  # not given up yet: the slower shutter has not been judged
+    assert _tick(ae, 3, 5.0, t) == {}  # still too dark at 30 fps
+    assert ae.too_dark and ae.exposure == -5
+
+
+def test_the_slow_trade_comes_back_to_the_cap_only_with_light_to_spare():
+    ae = AutoExposure(60, brightness=128, exposure=-6, allow_slow=True)
+    t = [0.0]
+    _tick(ae, 1, 2.4, t)
+    assert ae.exposure == -5
+    # On target at 30 fps: halving the light would undo it, so it stays.
+    _tick(ae, AutoExposure.TARGET, LIT, t)
+    assert ae.exposure == -5
+    # Twice the target's floor: one stop shorter still reaches it.
+    assert _tick(ae, 240, LIT, t) == {"exposure": -6}
+
+
+def test_the_slow_trade_tries_the_cap_again_when_light_returns_gradually():
+    """At 30 fps the brightness loop holds the picture near the target, so the 'twice the target'
+    reading that proves there is light to spare never appears in an ordinarily lit room. The loop
+    tries the cap on a timer instead: with light back it stays there."""
+    ae = AutoExposure(60, brightness=128, exposure=-6, allow_slow=True)
+    t = [0.0]
+    _tick(ae, 1, 2.4, t)
+    assert ae.exposure == -5
+    # Light comes back gradually: on target at 30 fps, never near 236.
+    for _ in range(int(AutoExposure.SLOW_RETRY_S)):
+        _tick(ae, AutoExposure.TARGET, LIT, t)
+    assert ae.exposure == -6  # tried the cap
+    _tick(ae, AutoExposure.TARGET - 5, LIT, t)  # lit and in the deadband at 60 fps
+    assert ae.exposure == -6
+
+
+def test_the_slow_trade_steps_back_if_the_room_is_still_dark_at_the_retry():
+    ae = AutoExposure(60, brightness=128, exposure=-6, allow_slow=True)
+    t = [0.0]
+    _tick(ae, 1, 2.4, t)
+    for _ in range(int(AutoExposure.SLOW_RETRY_S)):
+        _tick(ae, 3, 5.0, t)
+    assert ae.exposure == -6  # the retry
+    assert _tick(ae, 1, 2.4, t) == {"exposure": -5}  # still dark: back to 30 fps
+
+
+def test_switching_auto_exposure_off_takes_the_slow_shutter_back_when_none_was_set():
+    cap = _DarkCap()
+    src = CameraCapture(0, 16, 16, 60, cap_factory=lambda i: cap, auto_exposure=True,
+                        auto_exposure_slow=True)
+    src.open()
+    try:
+        assert _wait_for(lambda: _wrote(cap, cv2.CAP_PROP_EXPOSURE, -5.0), 5.0)
+        src.set_controls(auto_exposure=False)
+        assert _wait_for(
+            lambda: [v for p, v, _ in cap.sets if p == cv2.CAP_PROP_EXPOSURE][-1] == -6.0, 5.0
+        )
+    finally:
+        src.release()
+
+
+def test_turning_the_slow_trade_off_puts_the_shutter_straight_back():
+    ae = AutoExposure(60, brightness=128, exposure=-6, allow_slow=True)
+    t = [0.0]
+    _tick(ae, 1, 2.4, t)
+    assert ae.set_allow_slow(False) == {"exposure": -6}
+    assert ae.set_allow_slow(False) == {}
+
+
+def test_frame_levels_tells_a_flat_frame_from_a_detailed_one():
+    flat = np.full((32, 32, 3), 100, dtype=np.uint8)
+    rows, cols = np.indices((32, 32))
+    checker = np.where((rows // 8 + cols // 8) % 2 == 0, 130, 70).astype(np.uint8)
+    detailed = np.repeat(checker[:, :, None], 3, axis=2)
+    assert frame_levels(flat) == pytest.approx((100, 0), abs=0.5)
+    mean, contrast = frame_levels(detailed)
+    assert mean == pytest.approx(100, abs=0.5) and contrast > AutoExposure.CONTRAST_FLOOR
+
+
+class _DarkCap(_RecordingCap):
+    """A camera in a dark room: a flat, nearly black picture whatever is written to it."""
+
+    def read(self):
+        time.sleep(0.002)
+        return True, np.full((16, 16, 3), 2, dtype=np.uint8)
+
+
+def test_capture_reports_too_dark_only_while_auto_exposure_is_judging():
+    cap = _DarkCap()
+    src = CameraCapture(0, 16, 16, 60, cap_factory=lambda i: cap, brightness=215, auto_exposure=True)
+    src.open()
+    try:
+        assert _wait_for(lambda: src.too_dark, 5.0)
+        assert _wrote(cap, cv2.CAP_PROP_BRIGHTNESS, AutoExposure.BRIGHTNESS_NEUTRAL)
+        src.set_controls(auto_exposure=False)
+        assert _wait_for(lambda: not src.too_dark, 5.0)
+    finally:
+        src.release()
+
+
+def test_capture_turns_the_slow_trade_on_live():
+    cap = _DarkCap()
+    src = CameraCapture(0, 16, 16, 60, cap_factory=lambda i: cap, auto_exposure=True)
+    src.open()
+    try:
+        assert _wait_for(lambda: src.too_dark, 5.0)
+        src.set_controls(auto_exposure_slow=True)
+        assert _wait_for(lambda: _wrote(cap, cv2.CAP_PROP_EXPOSURE, -5.0), 5.0)
+        src.set_controls(auto_exposure_slow=False)
+        assert _wait_for(lambda: [v for p, v, _ in cap.sets if p == cv2.CAP_PROP_EXPOSURE][-1] == -6.0, 5.0)
     finally:
         src.release()

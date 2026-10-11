@@ -53,6 +53,22 @@ class Detector(Protocol):
 # difference. Dropping it is free here.
 DEFAULT_TRACKER = "bytetrack.yaml"
 
+# What the tracker is fed, and what keeps a shown item shown. ByteTrack is built to carry a track
+# through weak frames: its second stage matches detections down to `track_low_thresh` (0.1) to the
+# tracks it already has. Passing the operator's threshold (0.75 on this machine) to `track()` threw
+# every weaker box away before the tracker saw it, so one frame at 0.70 - a hand passing, a
+# reflection - lost the track, and the item came back under a new id and a new item-log row. The
+# tracker now sees everything down to TRACK_CONF, and what is *shown* is filtered after it.
+TRACK_CONF = 0.1
+# Hysteresis for what is shown (`hold_tracks`): a detection needs the threshold to appear, but a
+# track already on screen stays there while its score holds at KEEP_CONF (ByteTrack's own
+# first-stage threshold) - so a dip does not blink the box or split the item. A phantom never gets
+# the benefit: it has to clear the threshold before it is held, and the acceptance rules downstream
+# still judge every box.
+KEEP_CONF = 0.25
+# How long a shown track is remembered without being returned - ByteTrack's own `track_buffer`.
+KEEP_FRAMES = 30
+
 
 #: torch's lib dir already put on the loader path, if any. os.add_dll_directory is
 #: additive — calling it again for the same path just appends a duplicate search
@@ -119,7 +135,7 @@ class RemoteGeometry:
 
 class YoloDetector:
     def __init__(self, model_path, device, conf, imgsz=640, model_factory=None,
-                 tracker=DEFAULT_TRACKER, resize_mode="letterbox"):
+                 tracker=DEFAULT_TRACKER, resize_mode="letterbox", hold_tracks=False):
         if model_factory is None:
             from ultralytics import YOLO
             model_factory = YOLO
@@ -133,6 +149,12 @@ class YoloDetector:
             # Must run before ultralytics builds the ONNX session.
             enable_onnx_cuda()
         self._stretch = resize_mode == "stretch"
+        # Off by default because the measuring tools (`audit_recall`, `spec_check`) score through
+        # this class over unrelated photos, where carrying a track from one image to the next would
+        # credit a box the threshold refused. The app's capture turns it on.
+        self._hold_tracks = hold_tracks
+        self._shown: dict[int, int] = {}  # track id -> the call it was last shown on
+        self._calls = 0
         # Deliberately not self._model.names: for export formats (ONNX) that
         # property sets up a full predictor and builds the session — with the
         # *default* device — and the first infer() then builds a second one
@@ -213,7 +235,7 @@ class YoloDetector:
 
     def infer(self, frame: np.ndarray) -> list[Detection]:
         kwargs = dict(
-            persist=True, conf=self._conf, imgsz=self._imgsz,
+            persist=True, conf=min(TRACK_CONF, self._conf), imgsz=self._imgsz,
             verbose=False, tracker=self._tracker,
         )
         kwargs["device"] = self._device
@@ -246,7 +268,28 @@ class YoloDetector:
         if boxes.id is not None:
             ids = boxes.id.tolist() if hasattr(boxes.id, "tolist") else boxes.id
         h, w = frame.shape[0], frame.shape[1]
-        return normalize_detections(xyxy, confs, clss, ids, r.names, w, h)
+        return self._shown_detections(normalize_detections(xyxy, confs, clss, ids, r.names, w, h))
+
+    def _shown_detections(self, detections: list[Detection]) -> list[Detection]:
+        """The operator's threshold, applied after the tracker - with the hold when it is on."""
+        self._calls += 1
+        shown = []
+        for d in detections:
+            held = (
+                self._hold_tracks
+                and d.track_id is not None
+                and d.track_id in self._shown
+                and d.conf >= KEEP_CONF
+            )
+            if d.conf >= self._conf or held:
+                shown.append(d)
+                if d.track_id is not None:
+                    self._shown[d.track_id] = self._calls
+        if self._hold_tracks:
+            stale = [tid for tid, last in self._shown.items() if self._calls - last > KEEP_FRAMES]
+            for tid in stale:
+                del self._shown[tid]
+        return shown
 
 
 class RoboflowRemoteDetector:

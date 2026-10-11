@@ -680,3 +680,50 @@ def test_train_model_does_not_import_ultralytics_at_module_level():
     assert re.search(r"^\s+from ultralytics import", source, re.MULTILINE)
 
 
+
+
+def test_the_record_carries_the_sets_own_geometry_when_it_declares_one():
+    """A local `fit` build is letterbox whatever the generation's default is - and a set that
+    declares nothing keeps the generation's requirement."""
+    assert train_model.weight_record(generations.V2, resize_mode="letterbox")["resize_mode"] == "letterbox"
+    assert train_model.weight_record(generations.V2)["resize_mode"] == generations.V2.resize_mode
+
+
+def _installed(models, stem, generation):
+    models.mkdir(exist_ok=True)
+    (models / f"{stem}.pt").write_bytes(b"w")
+    (models / f"{stem}.json").write_text(json.dumps({"generation": generation}), encoding="utf-8")
+
+
+def test_default_weights_finds_a_renamed_weight_by_its_record(tmp_path):
+    """`--name` means `models/scanncart-grocery-v2.pt` may not exist; the tools' `--generation v2`
+    then means the v2 weight the app runs, found by its record."""
+    models = tmp_path / "models"
+    _installed(models, "scanncart-grocery-v1", "v1")
+    _installed(models, "scanncart-grocery-v2-stretch", "v2")
+    assert train_model.default_weights(generations.V2, models).name == "scanncart-grocery-v2-stretch.pt"
+
+    _installed(models, "scanncart-grocery-v2-letterbox", "v2")
+    settings = tmp_path / "settings.json"
+    settings.write_text(json.dumps({"active_model": "models/scanncart-grocery-v2-letterbox.pt"}))
+    assert train_model.default_weights(generations.V2, models, settings).name == (
+        "scanncart-grocery-v2-letterbox.pt"
+    )
+    settings.write_text(json.dumps({"active_model": "yolo11n.pt"}))
+    with pytest.raises(SystemExit, match="pass --weights"):
+        train_model.default_weights(generations.V2, models, settings)
+
+
+def test_default_weights_prefers_the_generations_own_name_when_it_exists(tmp_path):
+    models = tmp_path / "models"
+    _installed(models, "scanncart-grocery-v2", "v2")
+    _installed(models, "scanncart-grocery-v2-letterbox", "v2")
+    assert train_model.default_weights(generations.V2, models).name == "scanncart-grocery-v2.pt"
+
+
+def test_install_can_name_a_second_weight_of_one_generation(tmp_path):
+    source = tmp_path / "best.pt"
+    source.write_bytes(b"w")
+    first = train_model.install(source, tmp_path / "models", name="scanncart-grocery-v2-stretch.pt")
+    second = train_model.install(source, tmp_path / "models", name="scanncart-grocery-v2-letterbox.pt")
+    assert first.name != second.name and first.exists() and second.exists()

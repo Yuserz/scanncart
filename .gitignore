@@ -14,6 +14,11 @@ graphify-out/
 # Sidecar runtime logs from a manually launched `python run.py`.
 sidecar/*.log
 
+# `cd desktop && npm run dev` output redirected to a file when the app is driven by hand
+# rather than watched in a terminal. Same reasoning as the sidecar logs above: a session
+# record, not something to clone.
+/desktop_dev.log
+
 # The annotator's own log. `make annotate` runs the tool from `sidecar/`, so these
 # land there and the rule above covers them; launching it from the repo root - which
 # is what an agent shell does - writes the same files here instead.

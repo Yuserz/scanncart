@@ -50,7 +50,7 @@ COST = MEASURED_COST
 SETTINGS_PY = REPO_ROOT / "sidecar" / "app" / "settings.py"
 ACCEPTANCE_PY = REPO_ROOT / "sidecar" / "app" / "acceptance.py"
 ACCEPTANCE_TEST = REPO_ROOT / "sidecar" / "tests" / "test_acceptance.py"
-CLAUDE_MD = REPO_ROOT / "CLAUDE.md"
+CLAUDE_MD = REPO_ROOT / "sidecar" / "app" / "CLAUDE.md"
 DEFAULTS_TS = TS_LIB / "settingsDefaults.ts"
 FIELDS_TS = TS_LIB / "settingsFields.ts"
 
@@ -148,7 +148,7 @@ COPIES = {
         f" (about {COST.share(COST.frame_filling)})",
         f"costs {COST.unsure} of {COST.matched} real detections ({COST.share(COST.unsure)})",
     ),
-    "CLAUDE.md": (
+    "sidecar/app/CLAUDE.md": (
         f"{COST.frame_filling} of {COST.matched} ground-truth-matched",
         _of_matched(COST.unsure),
         COST.share(COST.unsure),
@@ -159,7 +159,7 @@ COPIES = {
 
 
 def _path_for(name: str) -> Path:
-    if name == "CLAUDE.md":
+    if name == "sidecar/app/CLAUDE.md":
         return CLAUDE_MD
     if name in {DEFAULTS_TS.name, FIELDS_TS.name}:
         return TS_LIB / name

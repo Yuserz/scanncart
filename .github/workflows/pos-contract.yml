@@ -1,0 +1,108 @@
+name: POS contract
+
+# Does this repo still speak pushcart-web's POS routes?
+#
+# The desktop's two POS routes are a contract with a codebase in *another* checkout: two paths, a
+# header name, and the status codes those routes answer in. Nothing in the unit suites can notice that
+# codebase moving - the stand-in was written from its files, and the integration suite tests it
+# against a client written beside it, so a header that moved in both would pass green. What closes
+# that is `make verify-pos-contract`: it re-reads pushcart-web's own route source and compares it with
+# the contract this repo records (`desktop/src/main/posContract.json`), which is in turn what
+# `posContract.test.ts` holds the client and the stand-in to inside `npm test`.
+#
+# Its own workflow rather than a job in `ci.yml`, because the event that matters is different: every
+# trigger there is *this* repo changing, while the drift being watched for starts in the other one,
+# which can move while this one sits idle. So this also runs nightly. A `schedule` in `ci.yml` would
+# have had the same reach by making every job in it run nightly - the Electron layout check included -
+# for a reason only this job has.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Nightly, because the repo that can drift is not the repo whose events trigger CI here.
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+env:
+  # The pushcart-web branch this integration is written against - deliberately not its default
+  # branch, because the POS routes live on the integration branch until the two halves are merged.
+  # Point it elsewhere from the repository's own Variables (Settings -> Secrets and variables ->
+  # Actions) without editing this file.
+  PUSHCART_WEB_REF: ${{ vars.PUSHCART_WEB_REF || 'scanncart-integration' }}
+  # Spelled once so the check below and the checkout cannot disagree about which repo they mean.
+  PUSHCART_WEB_REPOSITORY: zneret03/pushcart-web
+  # Where that checkout lands. The script reads this when it is not handed `--pushcart`, so the
+  # target, this job and a by-hand run all find the tree the same way.
+  PUSHCART_WEB_DIR: ${{ github.workspace }}/pushcart-web
+
+jobs:
+  pos-contract:
+    name: POS contract matches pushcart-web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The ref above is a repository Variable, and a Variable can name a branch that has since been
+      # renamed, merged away, or never existed at all. It is settled here, before the checkout, so the
+      # job ends on one sentence naming the ref rather than on whatever tree the checkout settled for.
+      # This is the same question the checkout asks - `git ls-remote` - with `--exit-code` added,
+      # which is what turns "matched nothing" into a nonzero exit instead of an empty listing.
+      - name: The pushcart-web branch this job watches exists
+        env:
+          PUSHCART_WEB_TOKEN: ${{ secrets.PUSHCART_WEB_TOKEN || github.token }}
+        run: |
+          url="https://x-access-token:${PUSHCART_WEB_TOKEN}@github.com/${PUSHCART_WEB_REPOSITORY}.git"
+          if git ls-remote --exit-code "$url" "refs/heads/${PUSHCART_WEB_REF}" >/dev/null 2>&1; then
+            echo "pushcart-web ${PUSHCART_WEB_REF} exists"
+          else
+            echo "::error::${PUSHCART_WEB_REPOSITORY} has no branch '${PUSHCART_WEB_REF}' (git ls-remote exited $?). Nothing was checked."
+            echo "::error::Point the PUSHCART_WEB_REF repository variable at the branch that carries the POS routes, or restore that branch."
+            exit 1
+          fi
+
+      # The other half of the integration, read rather than built: the guard parses its route files as
+      # text, so nothing has to be installed on that side. It is a public repo, so the default token
+      # can read it; `PUSHCART_WEB_TOKEN` is the override for a fork, or for the day it goes private
+      # (an unset secret is an empty string, so the fallback is simply the default token).
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.PUSHCART_WEB_REPOSITORY }}
+          ref: ${{ env.PUSHCART_WEB_REF }}
+          path: pushcart-web
+          token: ${{ secrets.PUSHCART_WEB_TOKEN || github.token }}
+
+      # Existing is not the whole claim - the tree has to *be* that branch's tip. A checkout that fell
+      # back to the repository's default branch, which is the silent failure this job is written
+      # against, would still leave a walkable tree here, and the guard below would then be reading
+      # routes nobody configured. `origin` is the remote the checkout just configured, and comparing
+      # the commit rather than the branch name is what keeps this true whether the tree arrived
+      # detached or on a local branch.
+      - name: The checkout is that branch, not the default one
+        working-directory: pushcart-web
+        run: |
+          expected=$(git ls-remote origin "refs/heads/${PUSHCART_WEB_REF}" | cut -f1)
+          actual=$(git rev-parse HEAD)
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::pushcart-web is at ${actual}, but ${PUSHCART_WEB_REF} is ${expected}. Refusing to check a contract against the wrong tree."
+            exit 1
+          fi
+          echo "pushcart-web is ${PUSHCART_WEB_REF} at ${actual}"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install dependencies
+        working-directory: desktop
+        run: npm ci
+
+      # The documented command rather than its two halves by hand, so this job and a local run are the
+      # same thing. It cannot pass by skipping when the checkout above is missing: the script exits 2
+      # on a tree it cannot find, which is what makes it safe to trust in a job whose whole point is
+      # not to go green over a repo it never saw.
+      - name: The recorded contract still matches pushcart-web's routes
+        run: make verify-pos-contract

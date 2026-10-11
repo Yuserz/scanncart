@@ -1499,3 +1499,194 @@ def test_capture_splits_rides_along_with_a_roboflow_run(tmp_path, monkeypatch):
     assert json.loads((out / "splits.json").read_text(encoding="utf-8")) == {"milo_0001.jpg": "test"}
 
 
+
+
+def test_a_box_inside_a_larger_box_of_the_same_product_is_dropped():
+    """The v1-era partial box - a logo or picture panel boxed again inside the whole item - goes, and
+    the box around the whole item stays."""
+    whole = "3 0.500000 0.500000 0.600000 0.800000"
+    logo = "3 0.450000 0.400000 0.200000 0.150000"
+    rows, dropped, problems = build_dataset.drop_nested_rows([logo, whole])
+    assert rows == [whole] and dropped == 1 and problems == []
+
+
+def test_nested_boxes_of_different_products_are_two_items():
+    """A small item in front of a large one is two items, so the rule never crosses products."""
+    large = "0 0.500000 0.500000 0.600000 0.800000"
+    small = "4 0.450000 0.400000 0.200000 0.150000"
+    assert build_dataset.drop_nested_rows([large, small]) == ([large, small], 0, [])
+
+
+def test_side_by_side_and_overlapping_boxes_of_one_product_are_kept():
+    """Two cans of the same product next to each other, or partly overlapping, are two items."""
+    left = "1 0.250000 0.500000 0.300000 0.400000"
+    right = "1 0.750000 0.500000 0.300000 0.400000"
+    overlapping = "1 0.400000 0.500000 0.300000 0.400000"
+    assert build_dataset.drop_nested_rows([left, right, overlapping]) == (
+        [left, right, overlapping],
+        0,
+        [],
+    )
+
+
+def test_a_box_sticking_out_within_the_tolerance_still_counts_as_inside():
+    whole = "2 0.500000 0.500000 0.400000 0.400000"  # 0.30 .. 0.70
+    edge = "2 0.405000 0.500000 0.230000 0.200000"  # left edge 0.29, 1% outside
+    past = "2 0.390000 0.500000 0.240000 0.200000"  # left edge 0.27, 3% outside
+    assert build_dataset.drop_nested_rows([whole, edge]) == ([whole], 1, [])
+    assert build_dataset.drop_nested_rows([whole, past]) == ([whole, past], 0, [])
+
+
+def test_of_two_identical_boxes_one_survives():
+    row = "5 0.500000 0.500000 0.300000 0.300000"
+    assert build_dataset.drop_nested_rows([row, row]) == ([row], 1, [])
+
+
+def test_a_box_row_whose_numbers_do_not_parse_refuses_the_frame_instead_of_the_build(tmp_path):
+    """`remap_row` passes a five-field row through without reading its numbers; this rule is the
+    first thing that does, so a bad one has to come back as a problem naming the file."""
+    good = "0 0.5 0.5 0.2 0.2"
+    bad = "0 0.5 0.5 abc 0.2"
+    rows, dropped, problems = build_dataset.drop_nested_rows([good, bad])
+    assert (rows, dropped) == ([good, bad], 0)
+    assert problems and "abc" in problems[0]
+
+    v1 = _export_with_names(
+        tmp_path / "export-v1", {"train": ["a.jpg"], "valid": ["b.jpg"], "test": ["c.jpg"]}
+    )
+    (v1 / "train" / "labels" / "a.txt").write_text(f"{good}\n{bad}\n", encoding="utf-8")
+    side = build_dataset.build_v1(v1, tmp_path / "staging")
+    assert any(p.startswith("train/a.jpg: row is not a readable box") for p in side.problems)
+    assert "a.jpg" not in side.placed
+
+
+def test_the_merge_writes_one_box_per_item_and_reports_the_count(tmp_path):
+    """Through `build_v1`, so the rule is on the path the set is actually written by."""
+    import yaml
+
+    v1 = _export_with_names(
+        tmp_path / "export-v1", {"train": ["a.jpg"], "valid": ["b.jpg"], "test": ["c.jpg"]}
+    )
+    names = yaml.safe_load((v1 / "data.yaml").read_text(encoding="utf-8"))["names"]
+    (v1 / "train" / "labels" / "a.txt").write_text(
+        "0 0.5 0.5 0.6 0.8\n0 0.45 0.4 0.2 0.15\n", encoding="utf-8"
+    )
+    staging = tmp_path / "staging"
+    side = build_dataset.build_v1(v1, staging)
+
+    assert side.problems == [] and side.nested == 1
+    assert any(note.startswith("[nested] 1 box(es)") for note in side.notes)
+    written = (staging / "train" / "labels" / "a.txt").read_text(encoding="utf-8").splitlines()
+    assert len(written) == 1
+    assert build_dataset.CANONICAL_NAMES[int(written[0].split()[0])] == names[0]
+
+
+def _synthetic_dir(root, sources):
+    import json
+
+    import yaml
+    from PIL import Image
+
+    (root / "images").mkdir(parents=True)
+    (root / "labels").mkdir()
+    for name in sources:
+        Image.new("RGB", (64, 48), (200, 200, 200)).save(root / "images" / name)
+        (root / "labels" / name.replace(".jpg", ".txt")).write_text("0 0.5 0.5 0.3 0.3\n", encoding="utf-8")
+    (root / "data.yaml").write_text(yaml.safe_dump({"names": list(build_dataset.CANONICAL_NAMES)}))
+    (root / "sources.json").write_text(json.dumps(sources))
+    return root
+
+
+def test_synthetic_copies_of_train_frames_enter_train_only(tmp_path):
+    v2 = build_dataset.Side(name="v2")
+    v2.placed = {"tuna_0001.jpg": "train"}
+    v2.tags = {"tuna_0001.jpg": "century-tuna"}
+    folder = _synthetic_dir(tmp_path / "synthetic", {"tuna_0001_far.jpg": "tuna_0001.jpg"})
+    side = build_dataset.build_synthetic(folder, tmp_path / "staging", v2)
+
+    assert side.problems == []
+    assert side.placed == {"tuna_0001_far.jpg": "train"}
+    assert side.tags == {"tuna_0001_far.jpg": "century-tuna"}
+    assert side.distances == {}  # never counted as a distance
+    assert (tmp_path / "staging" / "train" / "images" / "tuna_0001_far.jpg").is_file()
+
+
+def test_a_copy_of_a_test_frame_is_refused_and_nothing_enters(tmp_path):
+    """A shrunk copy of a test close-up in train would score the model on a picture it trained on."""
+    v2 = build_dataset.Side(name="v2")
+    v2.placed = {"tuna_0001.jpg": "train", "tuna_0002.jpg": "test"}
+    folder = _synthetic_dir(
+        tmp_path / "synthetic", {"tuna_0001_far.jpg": "tuna_0001.jpg", "tuna_0002_far.jpg": "tuna_0002.jpg"}
+    )
+    side = build_dataset.build_synthetic(folder, tmp_path / "staging", v2)
+
+    assert any("tuna_0002.jpg, which this build puts in test" in p for p in side.problems)
+    assert side.placed == {} and not (tmp_path / "staging").exists()
+
+
+def test_a_synthetic_folder_without_its_sources_is_refused(tmp_path):
+    folder = _synthetic_dir(tmp_path / "synthetic", {"a.jpg": "b.jpg"})
+    (folder / "sources.json").unlink()
+    side = build_dataset.build_synthetic(folder, tmp_path / "staging", build_dataset.Side(name="v2"))
+    assert any("sources.json" in p for p in side.problems)
+
+
+def test_a_v1_frame_with_an_empty_label_file_is_left_out_not_trained_as_background(tmp_path):
+    """v1's empty label files are products nobody boxed (all 17 were looked at), so they must not
+    enter as 'nothing here'."""
+    v1 = _export_with_names(
+        tmp_path / "export-v1", {"train": ["a.jpg", "b.jpg"], "valid": ["c.jpg"], "test": ["d.jpg"]}
+    )
+    (v1 / "train" / "labels" / "b.txt").write_text("", encoding="utf-8")
+    staging = tmp_path / "staging"
+    side = build_dataset.build_v1(v1, staging)
+
+    assert side.problems == []
+    assert side.unlabeled == 1 and "b.jpg" not in side.placed and "a.jpg" in side.placed
+    assert not (staging / "train" / "images" / "b.jpg").exists()
+    assert side.background["train"] == 0
+    assert any(note.startswith("[unlabeled] 1 frame(s)") for note in side.notes)
+
+
+def test_a_fit_build_refuses_a_v1_side_that_is_a_stretched_export(tmp_path):
+    """Fitting cannot unsquash a 'Stretch to 640' export, so a letterbox set built from one would
+    train a third of itself on squashed products under a letterbox label."""
+    v1 = _export_with_names(
+        tmp_path / "export-v1", {"train": ["a.jpg"], "valid": ["b.jpg"], "test": ["c.jpg"]}
+    )
+    side = build_dataset.build_v1(v1, tmp_path / "staging", size=200, geometry="fit")
+    with __import__("PIL.Image").Image.open(v1 / "train" / "images" / "a.jpg") as im:
+        assert im.width == im.height  # the fixture's frames are square, as an export's are
+    assert any("stretched export" in p for p in side.problems)
+    assert build_dataset.build_v1(v1, tmp_path / "staging2", size=200).problems == []
+
+
+def test_a_fit_build_keeps_each_frames_shape_and_declares_letterbox(tmp_path):
+    """`--geometry fit`: the frame keeps its aspect (long side = size), the label rows are untouched
+    - they are fractions of the frame, which a resize of either kind leaves alone - and the set says
+    which runtime geometry its weights need."""
+    import yaml
+    from PIL import Image
+
+    v1 = _export_with_names(
+        tmp_path / "export-v1", {"train": ["a.jpg"], "valid": ["b.jpg"], "test": ["c.jpg"]}
+    )
+    Image.new("RGB", (400, 300), (90, 120, 150)).save(v1 / "train" / "images" / "a.jpg")
+    row = "0 0.5 0.5 0.4 0.4"
+    (v1 / "train" / "labels" / "a.txt").write_text(row + "\n", encoding="utf-8")
+
+    staging = tmp_path / "staging"
+    side = build_dataset.build_v1(v1, staging, size=200, geometry="fit")
+    assert side.problems == []
+    with Image.open(staging / "train" / "images" / "a.jpg") as written:
+        assert written.size == (200, 150)
+    assert (staging / "train" / "labels" / "a.txt").read_text(encoding="utf-8").split() == row.split()
+
+    stretched = tmp_path / "stretched"
+    build_dataset.build_v1(v1, stretched, size=200)
+    with Image.open(stretched / "train" / "images" / "a.jpg") as written:
+        assert written.size == (200, 200)
+
+    target = build_dataset.write_names_yaml(staging, {}, resize_mode=build_dataset.GEOMETRIES["fit"])
+    assert yaml.safe_load(target.read_text(encoding="utf-8"))["resize_mode"] == "letterbox"
+    assert train_model.read_export_resize_mode(staging) == "letterbox"

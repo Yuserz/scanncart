@@ -195,6 +195,37 @@ def test_patch_restart_required_field_while_idle_succeeds(tmp_path):
     assert state.settings.active_model == "yolo11s.pt"
 
 
+def test_switching_the_model_brings_the_size_its_weights_were_trained_at(tmp_path, monkeypatch):
+    """`imgsz` is a separate setting, so switching to weights trained at 960 used to leave them
+    running at 640 until someone noticed the warning. The switch carries the recorded size now."""
+    import app.main as main_module
+
+    sizes = {"models/scanncart-grocery-v2-letterbox.pt": 960, "models/scanncart-grocery-v2-stretch.pt": 640}
+    monkeypatch.setattr(main_module, "imgsz_for", lambda model: sizes.get(model))
+    client, state = _make_client(tmp_path)
+
+    r = client.patch("/api/settings", json={"active_model": "models/scanncart-grocery-v2-letterbox.pt"})
+    assert r.status_code == 200 and state.settings.imgsz == 960 and r.json()["imgsz"] == 960
+    client.patch("/api/settings", json={"active_model": "models/scanncart-grocery-v2-stretch.pt"})
+    assert state.settings.imgsz == 640
+
+
+def test_a_size_named_with_the_switch_wins_and_an_unrecorded_weight_leaves_it_alone(
+    tmp_path, monkeypatch
+):
+    import app.main as main_module
+
+    monkeypatch.setattr(main_module, "imgsz_for", lambda model: 960 if "letterbox" in model else None)
+    client, state = _make_client(tmp_path)
+    client.patch(
+        "/api/settings",
+        json={"active_model": "models/scanncart-grocery-v2-letterbox.pt", "imgsz": 1280},
+    )
+    assert state.settings.imgsz == 1280
+    client.patch("/api/settings", json={"active_model": "yolo11s.pt"})
+    assert state.settings.imgsz == 1280
+
+
 def test_patch_out_of_range_value_is_rejected(tmp_path):
     client, state = _make_client(tmp_path)
     r = client.patch("/api/settings", json={"conf_threshold": 5.0})

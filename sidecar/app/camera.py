@@ -1,3 +1,4 @@
+import math
 import threading
 import time
 from collections import deque
@@ -47,6 +48,186 @@ def _with_restores(changes: dict) -> dict:
         if undo is not None:
             writes[name] = undo
     return writes
+
+
+def exposure_cap_for(fps: float) -> int:
+    """The longest exposure (log2 seconds) that still lets the camera deliver `fps`.
+
+    A shutter of 2^e seconds caps delivery at 1/2^e frames a second, so -6 is the longest
+    that keeps 60 fps (measured: -5 held this StreamCam near 30). Same arithmetic as
+    `camera_caps.exposure_ceiling`, kept here because that module imports this one's peers
+    and the capture thread needs the number without importing the calibration module.
+    """
+    if fps <= 0:
+        return 0
+    return int(max(-13, min(0, math.floor(-math.log2(fps)))))
+
+
+class AutoExposure:
+    """Software auto-exposure that never costs framerate.
+
+    The StreamCam's own automatic exposure lengthens the shutter in indoor light: measured at
+    1280x720, it settled at 12 fps with a washed-out picture (mean luminance 206). So the shutter
+    stays at the framerate's cap and **brightness** does the adjusting — at -6 it moved mean
+    luminance from 19 (brightness 64) to 152 (255) with capture holding 60 fps. Only a scene too
+    bright for the lowest useful brightness shortens the shutter, one stop at a time, and the
+    shutter is never lengthened past the cap.
+
+    **Too dark is a state, not a brightness.** On this camera brightness is a black-level offset,
+    not a gain (and the gain control is not honoured over MSMF - `camera_profiles.json` measured
+    `gain: false`), so in a room too dark for the 60 fps shutter it cannot add detail: measured at
+    04:30 with the lights low, the -6 shutter gave mean luminance 1 (brightest pixel 18), and
+    raising brightness to hold the target turned that into a flat grey card - contrast (the
+    standard deviation of the sample) 2.3 where a usable picture reads 24-33, with every pixel
+    between 96 and 120. The model reads phantoms off a picture like that. So when the reading is
+    both under the target and flat (`CONTRAST_FLOOR`), the loop stops raising brightness, brings it
+    back to `BRIGHTNESS_NEUTRAL` and sets `too_dark`, which the pipeline carries to the Live view as
+    a notice: a dark honest picture and a sentence saying "add light" instead of a grey one that
+    looks like the camera's fault.
+
+    `allow_slow` (`camera_auto_exposure_slow`, off by default) is the one trade it may make first:
+    one stop of shutter past the cap, `slow_cap` - 30 fps at a 60 fps setting, which tracking still
+    handles - before giving up. It comes back to the cap as soon as a reading would still reach the
+    target with half the light (`_SLOW_EXIT`) - and, because the brightness loop holds the picture
+    near the target and so hides returning light from that test, it also *tries* the cap every
+    `SLOW_RETRY_S`: a room that is still dark goes flat at the short shutter and the rule above
+    takes the stop back within a second, while a room that has light again simply stays at 60.
+
+    Pure: it is handed a luminance (and, when the caller has it, a contrast) and returns the writes
+    to make, so it is tested without a device. The capture thread owns the device and does the
+    writing.
+    """
+
+    TARGET = 130.0  # camera_quality.BRIGHTNESS_TARGET, the level calibration aims for
+    DEADBAND = 12.0
+    # Luminance moved ~0.5-0.8 per brightness unit on this camera; half of the inverse damps the
+    # step so the loop settles instead of ringing.
+    GAIN = 0.8
+    MAX_STEP = 32.0
+    BRIGHTNESS_MIN = 40.0  # below this the picture crushes; shorten the shutter instead
+    BRIGHTNESS_MAX = 255.0
+    INTERVAL_S = 0.2
+    # A shutter change takes a few frames to show; judging sooner would step twice.
+    SETTLE_S = 0.6
+    # Below this the sample holds no detail worth brightening (measured: a flat grey card 2.2-2.6,
+    # a dark-but-real picture at one stop longer 5-6.5, an ordinary lit scene 24-33).
+    CONTRAST_FLOOR = 8.0
+    # Where brightness goes back to when the room is too dark: the device's own middle, which keeps
+    # black black instead of lifting it to grey.
+    BRIGHTNESS_NEUTRAL = 128.0
+
+    def __init__(
+        self,
+        fps: float,
+        brightness: float | None,
+        exposure: float | None,
+        allow_slow: bool = False,
+    ) -> None:
+        self.cap = exposure_cap_for(fps)
+        # One stop past the cap: the longest shutter that still delivers half the framerate.
+        self.slow_cap = exposure_cap_for(fps / 2) if fps > 0 else self.cap
+        self.allow_slow = allow_slow
+        self.too_dark = False
+        self._slow_retry_at = 0.0
+        self.brightness = 128.0 if brightness is None else float(brightness)
+        self.exposure = float(self.cap if exposure is None else min(exposure, self.cap))
+        self._next_t = 0.0
+
+    def start_writes(self) -> dict:
+        return {"exposure": self.exposure, "brightness": self.brightness}
+
+    @property
+    def longest(self) -> float:
+        """The longest shutter the loop may use right now."""
+        return self.slow_cap if self.allow_slow else self.cap
+
+    # Back to the cap only when half the light would still reach the target (one stop halves it).
+    _SLOW_EXIT = 2 * (TARGET - DEADBAND)
+    # How often a lengthened shutter tries the framerate's own again (see the class docstring).
+    SLOW_RETRY_S = 15.0
+
+    def set_allow_slow(self, allow: bool) -> dict:
+        """Switch the 30 fps trade on or off; off puts a lengthened shutter straight back."""
+        self.allow_slow = bool(allow)
+        if not self.allow_slow and self.exposure > self.cap:
+            self.exposure = float(self.cap)
+            return {"exposure": self.exposure}
+        return {}
+
+    def update(self, luminance: float, now: float, contrast: float | None = None) -> dict:
+        """The control writes this reading calls for (empty when nothing should change).
+
+        `contrast` is the sample's standard deviation (`frame_levels`); without it the loop cannot
+        tell a dark picture from a flat one and never reports `too_dark`.
+        """
+        if now < self._next_t:
+            return {}
+        self._next_t = now + self.INTERVAL_S
+        err = self.TARGET - luminance
+        if self.exposure > self.cap and (
+            luminance >= self._SLOW_EXIT or now >= self._slow_retry_at
+        ):
+            # Light enough again for the framerate's own shutter - or time to find out.
+            self.exposure -= 1
+            self._next_t = now + self.SETTLE_S
+            self._slow_retry_at = now + self.SLOW_RETRY_S
+            return {"exposure": self.exposure}
+        if err > self.DEADBAND and contrast is not None and contrast < self.CONTRAST_FLOOR:
+            # Too dark *and* flat: brightness would only lift black to grey.
+            if self.exposure < self.longest:
+                self.exposure += 1
+                self._next_t = now + self.SETTLE_S
+                if self.exposure > self.cap:
+                    self._slow_retry_at = now + self.SLOW_RETRY_S
+                return {"exposure": self.exposure}
+            self.too_dark = True
+            if self.brightness > self.BRIGHTNESS_NEUTRAL:
+                self.brightness = self.BRIGHTNESS_NEUTRAL
+                return {"brightness": self.brightness}
+            return {}
+        self.too_dark = False
+        if abs(err) <= self.DEADBAND:
+            return {}
+        step = max(-self.MAX_STEP, min(self.MAX_STEP, err * self.GAIN))
+        wanted = self.brightness + step
+        if err < 0 and wanted < self.BRIGHTNESS_MIN and self.exposure > -13:
+            # Too bright even near the floor: one stop shorter halves the light.
+            self.exposure -= 1
+            self.brightness = min(self.BRIGHTNESS_MAX, self.brightness * 1.5)
+            self._next_t = now + self.SETTLE_S
+            return {"exposure": self.exposure, "brightness": self.brightness}
+        if err > 0 and wanted > self.BRIGHTNESS_MAX and self.exposure < self.longest:
+            # Too dark at full brightness, and a stop of shutter is still free.
+            self.exposure += 1
+            self.brightness = max(self.BRIGHTNESS_MIN, self.brightness / 1.5)
+            self._next_t = now + self.SETTLE_S
+            return {"exposure": self.exposure, "brightness": self.brightness}
+        clamped = max(self.BRIGHTNESS_MIN, min(self.BRIGHTNESS_MAX, wanted))
+        if clamped == self.brightness:
+            return {}
+        self.brightness = clamped
+        return {"brightness": self.brightness}
+
+
+def _luma_sample(frame: np.ndarray) -> np.ndarray:
+    sample = frame[::8, ::8]
+    if sample.ndim == 3:
+        # BGR → luma weights, without a colour conversion of the whole frame.
+        b, g, r = sample[..., 0], sample[..., 1], sample[..., 2]
+        return 0.114 * b + 0.587 * g + 0.299 * r
+    return sample.astype(float)
+
+
+def mean_luminance(frame: np.ndarray) -> float:
+    """Mean brightness of a frame, sampled sparsely: the loop needs a level, not detail."""
+    return float(_luma_sample(frame).mean())
+
+
+def frame_levels(frame: np.ndarray) -> tuple[float, float]:
+    """`(mean, contrast)` of the same sparse sample - contrast being its standard deviation, the
+    one number that tells a dark picture from a flat grey one."""
+    sample = _luma_sample(frame)
+    return float(sample.mean()), float(sample.std())
 
 
 class LatestFrameBuffer:
@@ -119,6 +300,9 @@ class CameraCapture:
         self, index, width, height, fps, cap_factory=_default_capture,
         brightness: float | None = None, exposure: float | None = None,
         autofocus: bool | None = None, focus: float | None = None,
+        saturation: float | None = None,
+        auto_exposure: bool = False,
+        auto_exposure_slow: bool = False,
     ):
         self.index = index
         self.width = width
@@ -132,8 +316,14 @@ class CameraCapture:
         # counter never has, so locked manual values suit this app.
         self._brightness = brightness
         self._exposure = exposure
+        self._saturation = saturation
         self._autofocus = autofocus
         self._focus = focus
+        # While on, `AutoExposure` owns brightness and exposure: the manual values are only its
+        # starting point, and come back into force when it is switched off.
+        self._auto_exposure = auto_exposure
+        self._auto_exposure_slow = auto_exposure_slow
+        self._ae: AutoExposure | None = None
         # Control changes queued by another thread, drained by _loop between
         # reads. cv2.VideoCapture is not thread-safe, so set() must never be
         # called from the FastAPI request thread while read() is in flight.
@@ -157,6 +347,15 @@ class CameraCapture:
         self.failure: str | None = None
         self._consecutive_failures = 0
         self._failing_since: float | None = None
+        # The other unplug shape: on MSMF/Windows a vanished device's read() keeps
+        # *succeeding* with one stale (black) frame at ~1 fps instead of failing, so the
+        # failed-read deadline above never fires. Measured 2026-10-07 by disabling the
+        # StreamCam's USB video interface mid-session: health said `running` for 5+ minutes
+        # while the preview re-encoded a frozen black frame 57x/s. Judged by delivery rate
+        # instead: a sustained rate below STALL_MIN_FPS past STALL_GRACE_S is the same
+        # failure. The 60->30 fps latch (see DEFENSE_READINESS) and ordinary hitches sit
+        # far above the threshold and outlast nothing near the grace window.
+        self._stall_since: float | None = None
         # Timestamps of recent successful reads, for the measured rate. The
         # requested fps is a request; this is what arrived.
         self._read_times: deque[float] = deque(maxlen=120)
@@ -167,6 +366,7 @@ class CameraCapture:
             "focus": self._focus,
             "brightness": self._brightness,
             "exposure": self._exposure,
+            "saturation": self._saturation,
         }
 
     @staticmethod
@@ -186,11 +386,13 @@ class CameraCapture:
             cap.set(cv2.CAP_PROP_BRIGHTNESS, controls["brightness"])
         if controls.get("exposure") is not None:
             cap.set(cv2.CAP_PROP_EXPOSURE, controls["exposure"])
+        if controls.get("saturation") is not None:
+            cap.set(cv2.CAP_PROP_SATURATION, controls["saturation"])
 
     def set_controls(self, **changes) -> None:
         """Queue control changes for the capture thread.
 
-        Accepts brightness/exposure/autofocus/focus. Updating a dict rather
+        Accepts brightness/exposure/autofocus/focus/saturation. Updating a dict rather
         than appending to a queue coalesces a fast slider drag to its newest
         value, so the capture thread never works through a backlog.
 
@@ -203,6 +405,19 @@ class CameraCapture:
         with self._controls_lock:
             self._pending_controls.update(changes)
 
+    def _new_auto_exposure(self) -> AutoExposure:
+        return AutoExposure(
+            self.fps, self._brightness, self._exposure, allow_slow=bool(self._auto_exposure_slow)
+        )
+
+    @property
+    def too_dark(self) -> bool:
+        """Whether auto exposure has judged the room too dark to light the picture (see
+        `AutoExposure`). Always False while auto exposure is off: then the operator owns the
+        controls and nothing here is judging the picture."""
+        ae = self._ae
+        return bool(ae is not None and ae.too_dark)
+
     def _drain_controls(self) -> None:
         with self._controls_lock:
             if not self._pending_controls:
@@ -212,9 +427,36 @@ class CameraCapture:
         # Merge onto the instance fields so a later reopen replays them.
         for name, value in changes.items():
             setattr(self, f"_{name}", value)
+        ae_switch = changes.pop("auto_exposure", None)
+        slow_switch = changes.pop("auto_exposure_slow", None)
         # Every value in one write, so the autofocus-before-focus order holds
         # across a batch that moves both.
         writes = _with_restores(changes)
+        if ae_switch is True and self._ae is None:
+            self._ae = self._new_auto_exposure()
+            writes.update(self._ae.start_writes())
+        elif ae_switch is False and self._ae is not None:
+            # Hand the two controls back to the operator's own values, where there are any.
+            ae, self._ae = self._ae, None
+            for name in ("brightness", "exposure"):
+                value = getattr(self, f"_{name}")
+                if value is not None:
+                    writes[name] = value
+            if self._exposure is None and ae.exposure > ae.cap:
+                # The 30 fps trade is the loop's, not the operator's: with no manual exposure to
+                # hand back, leaving it would keep capture at half rate with nothing on screen
+                # saying why (the too-dark notice goes with auto exposure).
+                writes["exposure"] = float(ae.cap)
+        elif self._ae is not None:
+            # A manual drag while auto is on is its next starting point, not a write.
+            writes.pop("brightness", None)
+            writes.pop("exposure", None)
+        if slow_switch is not None and self._ae is not None:
+            # After the drag rule above, which would otherwise discard the loop's own write.
+            writes.update(self._ae.set_allow_slow(slow_switch))
+        self._write_safely(writes)
+
+    def _write_safely(self, writes: dict) -> None:
         if not writes:
             return
         # Deliberately outside the lock: cap.set() can block on some
@@ -232,10 +474,19 @@ class CameraCapture:
 
     def open(self) -> bool:
         self._cap = self._cap_factory(self.index)
+        # MJPG first, then the size. The StreamCam reaches 60 fps at 720p/1080p only in MJPG; left
+        # to choose, MSMF negotiated the uncompressed format and delivered 29 fps at a 60 fps setting
+        # whatever the exposure. The order matters because MSMF picks its media type when the size
+        # is set. A camera with no MJPG mode ignores the request and keeps its own format.
+        self._cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
         self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
         self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
         self._cap.set(cv2.CAP_PROP_FPS, self.fps)
-        self._write_controls(self._cap, self._current_controls())
+        controls = self._current_controls()
+        if self._auto_exposure:
+            self._ae = self._new_auto_exposure()
+            controls.update(self._ae.start_writes())
+        self._write_controls(self._cap, controls)
         if not self._cap.isOpened():
             self.is_open = False
             return False
@@ -250,12 +501,18 @@ class CameraCapture:
     # time a user stares at a frozen image does not depend on the backoff.
     FAILURE_TIMEOUT_S = 3.0
     MAX_FAILURE_BACKOFF_S = 0.2
+    # The delivered-rate stall guard (see the `_stall_since` note): fewer than
+    # STALL_MIN_FPS deliveries per second, sustained for STALL_GRACE_S, is a
+    # dead device even when every read() reports success.
+    STALL_MIN_FPS = 5.0
+    STALL_GRACE_S = 5.0
+    STALL_WINDOW_S = 5.0
 
     def _loop(self) -> None:
         while self._running:
             ok, frame = self._cap.read()
+            now = time.monotonic()
             if not ok:
-                now = time.monotonic()
                 if self._failing_since is None:
                     self._failing_since = now
                 self._consecutive_failures += 1
@@ -275,9 +532,32 @@ class CameraCapture:
             self._consecutive_failures = 0
             self._failing_since = None
             self._drain_controls()
-            self._read_times.append(time.monotonic())
+            if self._ae is not None:
+                level, contrast = frame_levels(frame)
+                self._write_safely(self._ae.update(level, time.monotonic(), contrast))
+            self._read_times.append(now)
             self._seq += 1
             self._buffer.put(self._seq, frame)
+            # Delivered-rate stall guard: runs on the success path, because the
+            # unplug shape this catches keeps read() succeeding (see the
+            # `_stall_since` note). Judged over a fixed window against the
+            # deliveries actually counted, so it cannot trip on startup — the
+            # window cannot be full until the camera has been delivering.
+            recent = sum(1 for t in self._read_times if now - t <= self.STALL_WINDOW_S)
+            if recent < self.STALL_MIN_FPS * self.STALL_WINDOW_S:
+                if self._stall_since is None:
+                    self._stall_since = now
+                elif now - self._stall_since >= self.STALL_GRACE_S:
+                    self.failure = (
+                        f"Camera {self.index} has delivered only {recent / self.STALL_WINDOW_S:.0f} fps "
+                        f"for {now - self._stall_since:.0f}s — the image is frozen. It may have been "
+                        "unplugged, suspended, or taken by another program; restore the camera and "
+                        "restart capture (or the app)."
+                    )
+                    self._running = False
+                    return
+            else:
+                self._stall_since = None
 
     MEASURED_FPS_WINDOW_S = 1.0
 

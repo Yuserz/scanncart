@@ -121,6 +121,7 @@ RESETTABLE_FIELDS = {
     "camera_exposure",
     "camera_autofocus",
     "camera_focus",
+    "camera_saturation",
 }
 
 # Fields the running Pipeline re-reads from `settings` every frame/track update,
@@ -176,6 +177,12 @@ HOT_RELOADABLE_FIELDS = {
     "camera_exposure",
     "camera_autofocus",
     "camera_focus",
+    "camera_saturation",
+    # Queued to the capture thread like the four above; switching it off hands brightness and
+    # exposure back to the values set for them.
+    "camera_auto_exposure",
+    # Queued the same way; read by the running AutoExposure.
+    "camera_auto_exposure_slow",
 }
 RESTART_REQUIRED_FIELDS = {
     "active_model",
@@ -276,10 +283,12 @@ def _valid_field(name: str, value: Any) -> bool:
         return isinstance(value, (int, float)) and 0.1 <= value <= 60.0
     if name == "remote_max_retries":
         return isinstance(value, int) and 0 <= value <= 5
-    if name in ("camera_brightness", "camera_exposure", "camera_focus"):
+    if name in ("camera_brightness", "camera_exposure", "camera_focus", "camera_saturation"):
         return value is None or isinstance(value, (int, float))
     if name == "camera_autofocus":
         return value is None or isinstance(value, bool)
+    if name in ("camera_auto_exposure", "camera_auto_exposure_slow"):
+        return isinstance(value, bool)
     return False
 
 

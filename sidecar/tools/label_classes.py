@@ -202,7 +202,13 @@ def tag_mismatch(slug: str, drawn: Iterable[str]) -> tuple[str, ...]:
     want = SLUG_TO_CLASS.get(slug)
     if want is None:
         return ()
-    return tuple(sorted({str(name) for name in drawn if name and name != want}))
+    names = {str(name) for name in drawn if name}
+    # A frame that names its staged product is a multi-item scene when it names others too: the
+    # second product really is in the photo (a Bear Brand sachet at the edge of a Milo shot), and
+    # boxing it is correct. Only a frame whose drawings never name its product is drawn wrong.
+    if want in names:
+        return ()
+    return tuple(sorted(names))
 
 
 def load_key(project: str) -> str:

@@ -204,6 +204,9 @@ export function baseSettings(overrides: Partial<SettingsResponse> = {}): Setting
     camera_exposure: null,
     camera_autofocus: null,
     camera_focus: null,
+    camera_saturation: null,
+    camera_auto_exposure: false,
+    camera_auto_exposure_slow: false,
     hot_reloadable_fields: ['infer_frame_skip', 'preview_height', 'track_expiry_s'],
     restart_required_fields: ['active_model', 'device'],
     warnings: [],
@@ -368,7 +371,7 @@ export const ROSTER_NAMES = [
 // contradict the weights, which is the state both the Admin field and the Live banner warn about.
 export function installedV2(overrides: Partial<InstalledModel> = {}): InstalledModel {
   return {
-    value: 'models/scanncart-grocery-v2.pt',
+    value: 'models/scanncart-grocery-v2-stretch.pt',
     resize_mode: 'stretch',
     // The size the run trained at, recorded beside the weight with the geometry: `--install`
     // writes both or neither, so a record that has a mode has an `imgsz`.
