@@ -44,13 +44,14 @@ thing is needed to get from a weight to that file, and it is what this tool has 
   generation is what the class list is judged against and two artifacts naming two generations is one
   of them being wrong.
 
-**Refusing is the feature.** Four states have no answer here, and each one is reported with the
+**Refusing is the feature.** Five states have no answer here, and each one is reported with the
 reason and left unwritten rather than filled in with something plausible: neither the index nor any
 run holds these bytes (a weight copied from another machine), two runs hold them (a copied run
-directory is not evidence about which one trained what), the recorded dataset directory is gone, and
-a dataset directory with no merge report - which is a *generated version's* export, where the version
-number exists only in the `--version` that would have been passed to `--install` and is not in the
-run. Each of those prints what it looked for, so the next step is a decision and not a guess.
+directory is not evidence about which one trained what), a run whose `args.yaml` keeps no readable
+`data=` at all, the recorded dataset directory is gone, and a dataset directory with no merge report -
+which is a *generated version's* export, where the version number exists only in the `--version` that
+would have been passed to `--install` and is not in the run. Each of those prints what it looked for,
+so the next step is a decision and not a guess.
 
 Two weights are deliberately **not** touched. One whose record already names its dataset, because
 this is idempotent and a second run must be a no-op. And one with no record at all: writing one here

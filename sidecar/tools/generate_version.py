@@ -37,7 +37,7 @@ one-shot: the class list in the order the export will index it, the geometry bei
 of the project's images carry a decision - which is what the version will contain, since only
 annotated images enter one (a null annotation is a decision, and `filter-null` is forbidden below).
 
-Four of those states are refused rather than printed. A class name carrying a **distance** would
+Five of those states are refused rather than printed. A class name carrying a **distance** would
 train one output per product-and-distance. A project holding the roster's names in **another order**
 is refused because the export declares this project's order - so the version would bake a head whose
 indices mean a different product than the roster says, and nothing in the chain sees that as an
@@ -45,8 +45,13 @@ error: `train_model.check_export` compares names by *membership*, and the datase
 export only once it exists, by which time the number is spent. (The order cannot be set by API -
 MODEL_TRAINING.md 8.1: Settings -> Classes, and it follows the order the classes were created in -
 so the tool prints both lists and sends the operator to the one place that can fix it.) A project
-where **nothing is annotated** is refused, because that version would freeze an empty set. And a
-**background batch holding a frame with no null annotation** is refused, because a hard negative
+declaring a class the **roster does not** is refused too - `generations.class_gaps`' `source_only`
+side, and a *re-created* class is exactly that case, which is why the live project's eighth one reads
+as this refusal rather than as a note under an ok row. A version declares every class its project
+holds, so the export would carry an output the app's roster has no name for, on every capture, for
+the life of the weights. A project where **nothing is annotated** is refused, because that version
+would freeze an empty set. And a **background batch holding a frame with no null annotation** is
+refused, because a hard negative
 enters a version only once it is marked null - an unmarked one is excluded with no error, and being
 invisible in the class and distance tables (there is nothing to draw either way) it is the one
 absence no other readout in this chain can show.
@@ -424,8 +429,10 @@ def inspect_project(args: argparse.Namespace, settings: dict, key: str, generate
 
     The body of `--yes`, with the POST made optional, so `--check` shows the *same* readout: what
     the command prints and what it sends must not be two code paths, or the readout would be a
-    description of something else. The refusals return 2 and spend nothing - a class list carrying a
-    distance, the roster's names in another order, and a project with nothing annotated.
+    description of something else. The refusals return 2 and spend nothing, and there are five of
+    them: a class list carrying a distance, the roster's names in another order, a class the roster
+    does not declare, a background batch holding an unmarked frame, and a project with nothing
+    annotated. The module docstring above says what each one is about.
     """
     body = project(args.project, key)
     # The project's own block, which is where the class list lives on both routes. Kept apart from
