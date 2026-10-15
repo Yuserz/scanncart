@@ -22,7 +22,11 @@ DISK: a percentage cap does not work here. "Leave 80% of a 476 GB drive free"
 would mean keeping 381 GB free, and the drive is already 86% used, so no rule of
 that shape can be satisfied - it would forbid the tool from writing anything.
 Disk instead gets an absolute floor (DISK_RESERVE_GB): the tool refuses a write
-that would drop free space below it. Override with --disk-reserve-gb.
+that would drop free space below it. Override with --disk-reserve-gb, or with
+the SCANNCART_DISK_RESERVE_GB environment variable (read once at import) - the
+latter exists so a low-disk dev machine can still run the test suite without
+touching anything: the floor is checked even when the write is a test's few KB
+of staging, so an under-the-floor machine fails tests that only stage bytes.
 """
 
 from __future__ import annotations

@@ -25,10 +25,11 @@ Every gate in this document on one page, in the order this document runs them:
 ./sidecar/.venv/Scripts/python.exe sidecar/tools/readiness.py
 ```
 
-One row per gate — the label state (§3–§4), the hard negatives, the capture gap (§2), the human pass
-(§4), whether the merged set still matches the labels it was built from (§6), the doctor (§7) and this
-machine's own budget (§8) — and every row is read from the tool that owns it, so the page cannot
-disagree with the command it summarises. **Exit 1 means a gate would refuse the run**: `--yes` would
+One row per gate — the label state (§3–§4), the hard negatives, whether every decided frame is placed
+in a split (§5), the capture gap (§2), the human pass (§4), whether the merged set still matches the
+labels it was built from (§6), the doctor (§7) and this machine's own budget (§8) — and every row is
+read from the tool that owns it, so the page cannot disagree with the command it summarises.
+**Exit 1 means a gate would refuse the run**: `--yes` would
 exit 2 there without spending GPU time. A `WARN` row is the dataset being *unfinished* rather than
 unusable — an unmarked hard negative, a short capture cell, frames nobody has opened — which still
 trains, so if you only want to know whether a run can start, exit 0 is the answer you are after.
@@ -85,7 +86,7 @@ a version while a null-marked one is included as the hard-negative set.
 | `[.ok.] class list … 7 class(es) defined` | and no `distance in a class name` — that would be a `[FAIL]`. Distance is a tag, never a class (§8.1) |
 | `[WARN] project is PUBLIC` | expected on the free plan; there is no toggle |
 | `[WARN] 1 version(s) in Trash: 1` … `next generation is version 2` | v1 was burned empty, so a generated version would be **2** |
-| `[WARN] preprocessing not set yet` | normal before §13; `--verify` is what confirms it afterwards |
+| `[WARN] preprocessing not set yet` | normal before the appendix; `generate_version.py --verify N` is what confirms it afterwards |
 
 Two things this print has said that people misread: `images: 0 annotated` **is not** your labeling
 count (that API field does not move; `label_progress.py` is the real reading), and
@@ -155,7 +156,7 @@ It prints `images`, `labels`, the worklist size, which weight is suggesting, and
 | `d` / *Draw* | the `far` frames in `test`/`valid` a weight was asked about and proposed nothing for — the checklist's draw section, served from the same rule the document is rendered from |
 | `m` / *Nulls* | the hard negatives in `test`/`valid` with no null yet — the checklist's null section. One of these at a time: `Review`, `Draw` and `Nulls` are the document's three lists, and turning one on turns the others off |
 | the three filters | `Split`, `Distance`, `State` narrow whichever list is on screen; `unassigned` and `unrecorded` are the frames with nothing recorded — the hard negatives, and any frame no plan has reached |
-| the gate chip | `gate: 80 machine-only in test/valid (test 25 / valid 55) - stop at 153`, amber, and `gate: clear` in green once they are clean (then it is inert — there is nowhere to go). **Click it** to open exactly those frames: the review pass, narrowed to the pair the run refuses on. It is the number §4's checklist header prints and the one §13's gate reads, recomputed on every save — **work the review pass down to the `stop at` figure and the gate clears**; the rest of the machine-only frames are in `train`, where unread boxes cost nothing |
+| the gate chip | `gate: 80 machine-only in test/valid (test 25 / valid 55) - stop at 153`, amber, and `gate: clear` in green once they are clean (then it is inert — there is nowhere to go). **Click it** to open exactly those frames: the review pass, narrowed to the pair the run refuses on. It is the number §4's checklist header prints and the one the gates in §8 and §11 read, recomputed on every save — **work the review pass down to the `stop at` figure and the gate clears**; the rest of the machine-only frames are in `train`, where unread boxes cost nothing |
 
 **Confirm or correct every machine-only frame.** §11 refuses to report an acceptance number over a
 set with unconfirmed ones, because a box a weight drew and nobody looked at is not evidence — and
@@ -290,7 +291,7 @@ command above with the right filename in it.
 | Checkpoint | Expect |
 |---|---|
 | `plan_split` | `staged sets: cleaned-v2, cleaned-negatives`, then a plan, then the count of `(class, distance)` cells it leaves with **no train images**. With one session that number cannot be zero — it is reported rather than enforced, because a whole-batch plan cannot satisfy it without giving up the hold-out |
-| `label_progress --capture-splits` | `assignment: …/split_plan_b.json (a split plan - the project is not read)`, then `splits -> …/splits.json (N frame(s): train …, valid …, test …)`, exit 0. It **fails closed**: any staged frame the plan never placed, or whose split is unusable, exits 2 *after* writing the partial map, so you can read which frames are the problem |
+| `label_progress --capture-splits` | `assignment: …/split_plan_b.json (a split plan - the project is not read)`, then `splits   -> …/splits.json  (N frame(s): train …, valid …, test …)`, exit 0. It **fails closed**: any staged frame the plan never placed, or whose split is unusable, exits 2 *after* writing the partial map, so you can read which frames are the problem |
 
 Freeze **B** for the distance numbers (A splits strictly by batch, and is worth keeping for a final
 acceptance run; after Tier D there is a **C**, which is the one to freeze then). Without
@@ -460,7 +461,7 @@ the picker is keyed by filename.
 
 | Checkpoint | Expect |
 |---|---|
-| the Admin Panel's Model field | the weight listed, with `requirement (recorded): stretch` and the measured score |
+| the Admin Panel's Model field, and the Live view's requirement tile | the weight listed with its class count and the score `--val` measured; the tile reads `stretch` `requirement (recorded)` off the same record |
 | `resize_mode` | leave it on **`auto`** — it honours the record. An explicit `letterbox` overrides it and is the one value worth warning about |
 | `imgsz` | follows the weight: switching `active_model` in Admin sets `imgsz` to the size the record names (a save that names `imgsz` itself wins). Check it reads the run's size after the switch |
 | Test connection | `7 classes`, and no class warning. A distance-split weight would read `21 classes` with the distance problem named |

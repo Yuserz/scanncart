@@ -394,6 +394,16 @@ cd desktop && npm run dev   # electron-vite dev with HMR, opens a window
   only conclude "the staircase" when the registry shows no holder and frames
   still do not flow. Killing another program's process is the user's call,
   not the agent's — name the holder and ask.
+- **A red dataset test on a full drive is disk space, not code.** The dataset
+  tools refuse a write that would take free space below a 20 GB floor
+  (`tools/resources.DISK_RESERVE_GB`), and the floor is checked even when the
+  write is a test's few KB of staging — after this box slid to ~7 GB free,
+  `test_a_later_session_cannot_reuse_an_earlier_sessions_staged_names` failed
+  with "refusing to write 0.0 GB … the reserve is 20 GB" before the behavior
+  under test could run. Free space is the cure; the tool's own override works
+  for a session: `SCANNCART_DISK_RESERVE_GB=2 .venv/Scripts/python.exe -m
+  pytest` (run from `sidecar/`). The refusal names the same flag
+  (`--disk-reserve-gb`).
 
 ## UI handles
 

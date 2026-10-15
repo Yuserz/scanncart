@@ -69,8 +69,9 @@ skip. `check_and_report` below is the half those two share.
     sidecar/.venv/Scripts/python.exe sidecar/tools/dataset_doctor.py --dataset data/datasets/merged-v2
     sidecar/.venv/Scripts/python.exe sidecar/tools/dataset_doctor.py --json
 
-    # a slower, exact duplicate scan (every test frame against every train frame)
-    sidecar/.venv/Scripts/python.exe sidecar/tools/dataset_doctor.py --duplicates
+    # the exact duplicate scan is on by default (every test frame against every train frame);
+    # this skips it, which is the only slow part of the check
+    sidecar/.venv/Scripts/python.exe sidecar/tools/dataset_doctor.py --no-duplicates
 """
 
 from __future__ import annotations
