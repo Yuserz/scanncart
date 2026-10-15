@@ -13,6 +13,8 @@ import {
   installedV2DistanceSplit,
   installedV2Unmeasured,
   makeDeps as makeSharedDeps,
+  recordedGeometryFacts,
+  unrecordedFacts,
   unrecordedResizeMode,
   VALIDATION_V2
 } from '../test/fakes'
@@ -146,7 +148,9 @@ describe('AdminPanel', () => {
     await waitFor(() => expect(api.applyPreset).toHaveBeenCalledWith('mid_range'))
   })
 
-  it('Restore Defaults calls updateSettings with the hardcoded defaults', async () => {
+  it('Restore Defaults asks for confirmation, then calls updateSettings with the hardcoded defaults', async () => {
+    // One accidental click must not overwrite the persisted settings: the
+    // playtest measured 9 reverted keys with 0 confirmation before this guard.
     const { deps, api } = makeDeps('idle')
     const user = userEvent.setup()
     render(<AdminPanel port={8765} deps={deps} />)
@@ -154,6 +158,13 @@ describe('AdminPanel', () => {
     await waitFor(() => expect(screen.getByTestId('restore-defaults')).toBeEnabled())
     await user.click(screen.getByTestId('restore-defaults'))
 
+    // First click only arms: the button says so, the hint explains the terms,
+    // and nothing has been written.
+    expect(screen.getByTestId('restore-defaults')).toHaveTextContent(/confirm/i)
+    expect(screen.getByTestId('restore-confirm-hint')).toBeInTheDocument()
+    expect(api.updateSettings).not.toHaveBeenCalled()
+
+    await user.click(screen.getByTestId('restore-defaults'))
     await waitFor(() =>
       expect(api.updateSettings).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -162,6 +173,23 @@ describe('AdminPanel', () => {
         })
       )
     )
+  })
+
+  it('Restore Defaults confirmation is cancelled by clicking elsewhere, without writing', async () => {
+    const { deps, api } = makeDeps('idle')
+    const user = userEvent.setup()
+    render(<AdminPanel port={8765} deps={deps} />)
+
+    await waitFor(() => expect(screen.getByTestId('restore-defaults')).toBeEnabled())
+    await user.click(screen.getByTestId('restore-defaults'))
+    expect(screen.getByTestId('restore-defaults')).toHaveTextContent(/confirm/i)
+
+    // Clicking anywhere else blurs the armed button and disarms it.
+    await user.click(document.body)
+    await waitFor(() =>
+      expect(screen.getByTestId('restore-defaults')).toHaveTextContent(/^Restore Defaults$/)
+    )
+    expect(api.updateSettings).not.toHaveBeenCalled()
   })
 
   it('Restore Defaults is disabled while capture is running', async () => {
@@ -825,10 +853,11 @@ describe('AdminPanel', () => {
       expect(label).toContain('7 SKUs')
     })
 
-    it('lists each installed weight with the resize_mode it requires', async () => {
-      // The requirement is a fact recorded beside the weights at install time, not something
-      // the panel can infer from a filename - so it is shown for whatever is on disk, which
-      // is what makes a hand-copied weight as visible as the one the tool installed.
+    it("shows every installed weight's record completeness, naming the writer for each gap", async () => {
+      // The four facts a record can carry, as one view per weight. Each used to be its own note
+      // somewhere under the picker, so an operator had to assemble the completeness themselves -
+      // and every fact goes missing in a different place. Both weights are listed: one the tool
+      // installed, and one copied in by hand, where the whole record is a gap.
       const { deps } = makeDeps('idle', {
         getModels: vi.fn(async () => ({
           stock: [],
@@ -840,18 +869,82 @@ describe('AdminPanel', () => {
 
       const list = await screen.findByTestId('installed-models')
       expect(list).toHaveTextContent('models/scanncart-grocery-v2-stretch.pt')
-      expect(list).toHaveTextContent('resize_mode: stretch')
-      expect(list).toHaveTextContent('snc-grocery version 2')
-      // Two unknowns are not one: nothing recorded is said out loud, because `auto` is not a
-      // safe default for weights whose training geometry nobody wrote down.
-      expect(list).toHaveTextContent('no recorded requirement')
-      // And the other fact the record carries: what these weights predict. Shown as a count
-      // for the installed one, absent for the hand-copied weight - where the class list is as
-      // unknown as the geometry, not zero.
-      expect(list).toHaveTextContent('7 classes')
+      // The count first, so a weight with nothing written down is legible without reading rows.
       expect(
-        within(screen.getByTestId('installed-model-models/hand-copied.pt')).queryByText(/classes/)
-      ).toBeNull()
+        screen.getByTestId('installed-model-completeness-models/scanncart-grocery-v2-stretch.pt')
+      ).toHaveTextContent('4 of 4 recorded')
+      const geometry = screen.getByTestId(
+        'installed-fact-models/scanncart-grocery-v2-stretch.pt-geometry'
+      )
+      expect(geometry).toHaveTextContent('Geometry')
+      expect(geometry).toHaveTextContent('resize_mode: stretch')
+      // The other half of the same fact, and the reason the value matters at all.
+      expect(geometry).toHaveTextContent('auto uses it')
+      expect(
+        screen.getByTestId('installed-fact-models/scanncart-grocery-v2-stretch.pt-source')
+      ).toHaveTextContent('snc-grocery version 2')
+
+      const copied = screen.getByTestId('installed-model-models/hand-copied.pt')
+      expect(copied).toHaveTextContent('0 of 4 recorded')
+      // Each gap names its own writer, in the sidecar's wording - the writers are its tools: the
+      // button for a geometry nobody recorded, `--install` for the generation only a run knows,
+      // `--val` for the measurement, and `--install` for the provenance.
+      expect(screen.getByTestId('installed-fact-models/hand-copied.pt-geometry')).toHaveTextContent(
+        'Record it now'
+      )
+      expect(
+        screen.getByTestId('installed-fact-models/hand-copied.pt-generation')
+      ).toHaveTextContent('train_model.py --install')
+      expect(
+        screen.getByTestId('installed-fact-models/hand-copied.pt-validation')
+      ).toHaveTextContent('train_model.py --val')
+
+      // The strings the live driver scrapes off this container (`run-desktop`'s `record` mode
+      // asserts `auto` follows the requirement it just wrote), pinned here because that driver is
+      // outside CI: a scrape that stopped matching would only be found by someone with a display.
+      expect(list).toHaveTextContent('resize_mode: stretch')
+      expect(list).toHaveTextContent('auto uses it')
+
+      // The class count is not one of the four facts and stays where it was: a count for the weight
+      // whose names are recorded, absent for the one where they are as unknown as everything else.
+      expect(list).toHaveTextContent('7 classes')
+      expect(within(copied).queryByText(/classes/)).toBeNull()
+    })
+
+    it('names the source index where the record has nothing, and only there', async () => {
+      // The source's third state, and the only one this machine can still answer after the training
+      // run is gone. The row is a gap even so - the index is machine-local and the record is what
+      // travels with the weights - so what the index changes is the *writer*: the one tool that
+      // reads the index and writes what it finds into the record.
+      const { deps } = makeDeps('idle', {
+        getModels: vi.fn(async () => ({
+          stock: [],
+          installed: [
+            installedV2(),
+            installedUnrecorded({
+              indexed_source: 'local merge merged-v2',
+              // The index is what changes this row's *writer*, not its state: the record still says
+              // nothing, and `backfill_provenance.py` is what turns the index's answer into one.
+              record_facts: unrecordedFacts('local merge merged-v2')
+            })
+          ],
+          directory: 'models/'
+        }))
+      })
+      render(<AdminPanel port={8765} deps={deps} />)
+
+      await screen.findByTestId('installed-models')
+      const indexed = screen.getByTestId('installed-fact-models/hand-copied.pt-source')
+      expect(indexed).toHaveTextContent('not recorded')
+      expect(indexed).toHaveTextContent('backfill_provenance.py')
+      expect(indexed).toHaveTextContent('local merge merged-v2')
+      // Not beside a weight whose record already names a dataset: the index never second-guesses
+      // one, and the sidecar is what decides that.
+      const recorded = screen.getByTestId(
+        'installed-fact-models/scanncart-grocery-v2-stretch.pt-source'
+      )
+      expect(recorded).toHaveTextContent('snc-grocery version 2')
+      expect(recorded).not.toHaveTextContent('backfill_provenance.py')
     })
 
     it('flags a weight whose recorded class list is not the roster, before it runs', async () => {
@@ -1085,9 +1178,11 @@ describe('AdminPanel', () => {
       expect(screen.queryByTestId('model-validation-by-distance')).toBeNull()
     })
 
-    it('says a record exists but has no score, rather than rendering nothing', async () => {
-      // Installed by the tool, `--val` never run. Silence here would be indistinguishable
-      // from a panel that failed to render the numbers, and there is a command that fixes it.
+    it("names the measurement's writer for a weight that was never measured", async () => {
+      // Installed by the tool, `--val` never run. This used to be a hint of its own under the
+      // scores; it is the validation row now, which says the same thing about every weight on disk
+      // rather than only the selected one - and still renders no scores block, because there are
+      // none to render.
       const { deps } = makeDeps('idle', {
         getSettings: vi.fn(async () =>
           baseSettings({ active_model: 'models/scanncart-grocery-v2-stretch.pt' })
@@ -1100,15 +1195,23 @@ describe('AdminPanel', () => {
       })
       render(<AdminPanel port={8765} deps={deps} />)
 
-      expect(await screen.findByTestId('model-validation-missing')).toHaveTextContent(
-        'train_model.py --val'
+      const validation = await screen.findByTestId(
+        'installed-fact-models/scanncart-grocery-v2-stretch.pt-validation'
       )
+      expect(validation).toHaveTextContent('not recorded')
+      expect(validation).toHaveTextContent('train_model.py --val')
+      // The other three facts are recorded, which is what makes this a gap rather than an empty
+      // record - and the count above the rows is what says so.
+      expect(
+        screen.getByTestId('installed-model-completeness-models/scanncart-grocery-v2-stretch.pt')
+      ).toHaveTextContent('3 of 4 recorded')
       expect(screen.queryByTestId('model-validation')).toBeNull()
     })
 
-    it('shows no score for a weight nothing was recorded about', async () => {
-      // No record means no requirement *and* no numbers. The block cannot say "not measured"
-      // on behalf of a file it knows nothing about - only the record can say that.
+    it('shows no score for a weight nothing was recorded about, and says which command would', async () => {
+      // No record means no geometry *and* no numbers. The scores block cannot say "not measured" on
+      // behalf of a file it knows nothing about - but the completeness view can say which command
+      // would, which is the difference between silence and a next step.
       const { deps } = makeDeps('idle', {
         getSettings: vi.fn(async () => baseSettings({ active_model: 'models/hand-copied.pt' })),
         getModels: vi.fn(async () => ({
@@ -1121,7 +1224,9 @@ describe('AdminPanel', () => {
 
       await screen.findByTestId('installed-models')
       expect(screen.queryByTestId('model-validation')).toBeNull()
-      expect(screen.queryByTestId('model-validation-missing')).toBeNull()
+      expect(
+        screen.getByTestId('installed-model-completeness-models/hand-copied.pt')
+      ).toHaveTextContent('0 of 4 recorded')
     })
 
     it('shows what `auto` gives for weights nobody recorded anything about', async () => {
@@ -1140,9 +1245,17 @@ describe('AdminPanel', () => {
       })
       render(<AdminPanel port={8765} deps={deps} />)
 
-      const list = await screen.findByTestId('installed-models')
-      expect(list).toHaveTextContent('no recorded requirement')
-      expect(list).toHaveTextContent('auto gives letterbox')
+      await screen.findByTestId('installed-models')
+      // Two unknowns must not read as one: the gap is named as a gap, and the geometry `auto` will
+      // actually use sits beside it rather than instead of it.
+      const geometry = screen.getByTestId('installed-fact-models/hand-copied.pt-geometry')
+      expect(geometry).toHaveTextContent('not recorded')
+      expect(geometry).toHaveTextContent('auto gives letterbox')
+      // Nothing here reads as the requirement being recorded - a guess is the one thing this view
+      // must not present as a fact.
+      expect(
+        screen.getByTestId('installed-fact-models/hand-copied.pt-geometry')
+      ).not.toHaveTextContent('resize_mode: letterbox')
     })
 
     it('offers to record the assumption, with the sentence it answers', async () => {
@@ -1219,7 +1332,15 @@ describe('AdminPanel', () => {
         })),
         recordResizeMode: vi.fn(async () => ({
           stock: [],
-          installed: [installedUnrecorded({ resize_mode: 'letterbox', recorded: true })],
+          installed: [
+            installedUnrecorded({
+              resize_mode: 'letterbox',
+              recorded: true,
+              // The refreshed listing states what the write put there, so the geometry row is no
+              // longer a gap - and the source row still is, which is the other half of this test.
+              record_facts: recordedGeometryFacts('letterbox')
+            })
+          ],
           directory: 'models/'
         }))
       })
@@ -1233,9 +1354,116 @@ describe('AdminPanel', () => {
       )
       const entry = screen.getByTestId('unrecorded-resize-mode')
       expect(entry).not.toHaveTextContent('has no record of the geometry')
+      // And it reports the half this button could not write: the record it just created names no
+      // dataset, which the listing renders as a gap with the tool that closes it. Silence here
+      // would read as a complete record.
+      expect(entry).toHaveTextContent('`source` is left empty')
       expect(screen.queryByTestId('record-resize-mode')).toBeNull()
-      // And the listing agrees, because it is where the confirmation came from.
-      expect(screen.getByTestId('installed-models')).toHaveTextContent('auto uses it')
+      // And the listing agrees, because it is where the confirmation came from: the geometry row
+      // now states what was written, and says which way `auto` goes with it.
+      const geometry = screen.getByTestId('installed-fact-models/hand-copied.pt-geometry')
+      expect(geometry).toHaveTextContent('resize_mode: letterbox')
+      expect(geometry).toHaveTextContent('auto uses it')
+      expect(geometry).not.toHaveTextContent('Record it now')
+      expect(screen.getByTestId('installed-fact-models/hand-copied.pt-source')).toHaveTextContent(
+        'not recorded'
+      )
+    })
+
+    it('does not report an empty source for a record that names its dataset', async () => {
+      // The other half of the clause above, and the reason it is read off the listing rather than
+      // assumed from the click: a record can arrive naming its dataset (`--install` writes
+      // `source`, and `backfill_provenance.py` fills it in afterwards), and a confirmation that
+      // mentioned the field anyway would be wrong about the file on disk.
+      const { deps } = makeDeps('idle', {
+        getSettings: vi.fn(async () =>
+          baseSettings({
+            active_model: 'models/hand-copied.pt',
+            resize_mode: 'auto',
+            unrecorded_resize_mode: unrecordedResizeMode()
+          })
+        ),
+        getModels: vi.fn(async () => ({
+          stock: [],
+          installed: [installedUnrecorded()],
+          directory: 'models/'
+        })),
+        recordResizeMode: vi.fn(async () => ({
+          stock: [],
+          installed: [
+            installedUnrecorded({
+              resize_mode: 'letterbox',
+              recorded: true,
+              source: 'local merge merged-v2'
+            })
+          ],
+          directory: 'models/'
+        }))
+      })
+      render(<AdminPanel port={8765} deps={deps} />)
+
+      const user = userEvent.setup()
+      await user.click(await screen.findByTestId('record-resize-mode'))
+
+      const entry = await screen.findByTestId('unrecorded-resize-mode')
+      expect(entry).toHaveTextContent('Recorded')
+      expect(entry).not.toHaveTextContent('`source` is left empty')
+    })
+
+    it('points at the index when the refreshed listing has an entry for those bytes', async () => {
+      // The same write, with the one fact that changes the sentence: this machine can trace the
+      // bytes to a dataset, so the field this button cannot fill is one `backfill_provenance.py`
+      // run rather than a wait for a training run that may not exist any more. The gap itself is
+      // still reported - the record really does name nothing - and only the remedy moves.
+      const { deps } = makeDeps('idle', {
+        getSettings: vi.fn(async () =>
+          baseSettings({
+            active_model: 'models/hand-copied.pt',
+            resize_mode: 'auto',
+            unrecorded_resize_mode: unrecordedResizeMode()
+          })
+        ),
+        getModels: vi.fn(async () => ({
+          stock: [],
+          installed: [installedUnrecorded()],
+          directory: 'models/'
+        })),
+        recordResizeMode: vi.fn(async () => ({
+          stock: [],
+          installed: [
+            installedUnrecorded({
+              resize_mode: 'letterbox',
+              recorded: true,
+              indexed_source: 'local merge merged-v2',
+              // The refreshed entry the sidecar sends: the geometry row now states what was written,
+              // and the source row is still a gap whose writer is the one that reads the index.
+              record_facts: recordedGeometryFacts('letterbox', 'local merge merged-v2')
+            })
+          ],
+          directory: 'models/'
+        }))
+      })
+      render(<AdminPanel port={8765} deps={deps} />)
+
+      const user = userEvent.setup()
+      await user.click(await screen.findByTestId('record-resize-mode'))
+
+      const entry = await screen.findByTestId('unrecorded-resize-mode')
+      expect(entry).toHaveTextContent('Recorded')
+      expect(entry).toHaveTextContent('`source` is left empty')
+      expect(entry).toHaveTextContent('`sidecar/data/source_index.json` does name it')
+      expect(entry).toHaveTextContent('local merge merged-v2')
+      expect(entry).not.toHaveTextContent('nothing for them either')
+      // The listing says the same thing in its own place, which is where the fact will survive the
+      // banner clearing - and it is off the same refreshed read. The geometry gap is closed by the
+      // same write, and the two rows are what an operator would look at to see that.
+      expect(
+        await screen.findByTestId('installed-fact-models/hand-copied.pt-source')
+      ).toHaveTextContent('local merge merged-v2')
+      const geometry = screen.getByTestId('installed-fact-models/hand-copied.pt-geometry')
+      expect(geometry).toHaveTextContent('resize_mode: letterbox')
+      expect(geometry).toHaveTextContent('auto uses it')
+      expect(geometry).not.toHaveTextContent('Record it now')
     })
 
     it('keeps the warning and the button when the write is refused', async () => {

@@ -204,6 +204,13 @@ export function useSidecarStream(port: number, deps: StreamDeps = {}): SidecarSt
     seenRef.current = new Set()
     setItems([])
     setError(null)
+    // The previous capture's last frame goes with its log. A start is ~25 s on this hardware (the
+    // camera open plus the model load) and a frame that outlives its capture is not inert while it
+    // runs: the preview keeps drawing it, the stats strip keeps reading its numbers, and the
+    // placeholder that exists to say "Loading model…" renders only when there is no frame at all —
+    // so a second start drew the old scene and the old fps with nothing on screen saying a new
+    // capture was coming. Cleared before the request, with the log and the class list above.
+    setFrame(null)
     // Cleared before the request: this capture has not loaded a model yet, and the previous
     // capture's finding described a model that is about to be replaced. The sidecar's status
     // message is what fills it in, once it has an inference to read the classes from.

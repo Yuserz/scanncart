@@ -35,8 +35,15 @@ import math
 import os
 from pathlib import Path
 
+from app import source_index
 from app.roster import ROSTERS, class_list_problems
-from app.schemas import ClassRecall, DistanceRecall, InstalledModel, ValidationRecord
+from app.schemas import (
+    ClassRecall,
+    DistanceRecall,
+    InstalledModel,
+    RecordFact,
+    ValidationRecord,
+)
 from app.settings_store import (
     ALLOWED_RESIZE_MODES,
     CUSTOM_MODEL_DIR,
@@ -50,6 +57,20 @@ from app.settings_store import (
 # still finds the models the app was configured with. This matches what inference resolves,
 # because the Electron main process spawns the sidecar with sidecar/ as its cwd.
 MODELS_DIR = Path(__file__).resolve().parents[1] / CUSTOM_MODEL_DIR.rstrip("/")
+
+#: Who writes each fact into the record beside a weight, named as the command an operator runs.
+#: Kept beside the reader rather than in the renderer, for the same reason the roster is: which
+#: tool owns which field is a fact about `tools/train_model.py` and about this app's own record
+#: button, and a second list in TypeScript could only disagree with this one about it.
+INSTALL_WRITER = "train_model.py --install"
+VAL_WRITER = "train_model.py --val"
+#: The source's second writer, and the only one that still works once the run is gone: it reads
+#: the machine-local index `app/source_index.py` writes while the run exists.
+BACKFILL_WRITER = "backfill_provenance.py"
+#: Geometry's second writer, named only for a weight with no record at all. `--install` knows the
+#: requirement because it knows the training run; the button is for the weights that never came
+#: through one, and that is exactly the weight with nothing recorded beside it.
+RECORD_BUTTON_WRITER = "Record it now (or train_model.py --install)"
 
 
 def _finite_number(value: object) -> float | None:
@@ -366,6 +387,19 @@ def generation_for(active_model: str, directory: Path | None = None) -> str | No
     return read_record(weights).get("generation")
 
 
+def indexed_source(weights: Path) -> str:
+    """What this machine's source index says trained these weights, `""` when it has nothing.
+
+    A thin wrapper over `source_index.lookup` so `installed_models` reads as one expression, and a
+    function rather than a call at the site for the one thing it documents: the *index* is not what
+    decides whether to ask. That gate belongs to the caller, because it is a statement about which of
+    two answers wins rather than about the file - the record beside the weights is read first and
+    this only answers where the record is silent.
+    """
+    entry = source_index.lookup(weights)
+    return entry.source if entry is not None else ""
+
+
 def record_requirement(
     active_model: str, resize_mode: str, directory: Path | None = None
 ) -> Path:
@@ -417,6 +451,91 @@ def record_requirement(
     return record_path
 
 
+def record_facts(record: dict, *, resolved: str, indexed: str) -> list[RecordFact]:
+    """The four facts a weight's record states or leaves out, in the order the panel reads them.
+
+    `record` is `read_record`'s answer, so every field is already the *usable* one - a mode the
+    settings PATCH would reject and a generation with no roster both arrive here as absent, which
+    is what makes this list agree with what the app can act on rather than with what the file
+    literally contains.
+
+    `resolved` is `auto`'s answer for these weights and `indexed` is what this machine's source
+    index knows; both are handed in because neither is in the record, and both are what the
+    *missing* states are unreadable without. "Geometry not recorded" is only actionable beside the
+    geometry `auto` will actually use, and "source not recorded" is a different situation when the
+    index can already name the dataset than when nothing on this machine can.
+
+    Pure and total: a dict in, four entries out. Nothing here raises, for `read_record`'s reason -
+    the panel loads this on every open, and a hand-edited record must not be able to take the
+    listing down - and nothing here decides whether a fact is *good*, only whether it is there.
+    A record saying `resize_mode: letterbox` for stretched weights is a fact, and `class_warnings`
+    is where a wrong one is reported.
+    """
+    geometry = record.get("resize_mode")
+    imgsz = record.get("imgsz")
+    generation = record.get("generation")
+    source = record.get("source") or ""
+    validation = record.get("validation") or []
+
+    # One line rather than two facts: a mode without a size is the same story half-told, and
+    # `--install` writes the pair together, so they are read together.
+    geometry_value = f"resize_mode: {geometry}" if geometry else ""
+    if geometry_value and imgsz:
+        geometry_value += f", imgsz {imgsz}"
+
+    if source:
+        # Stated, so the writer is not what the reader needs - the detail belongs to the missing
+        # state alone, and a hint printed beside a fact that is already there is noise.
+        source_writer, source_detail = INSTALL_WRITER, ""
+    elif indexed:
+        source_writer = BACKFILL_WRITER
+        source_detail = f"this machine's source index names {indexed}"
+    else:
+        # The one command that can still answer for a weight whose run is gone, said in the flag
+        # that makes it possible: a local merge is derived from the run, a generated version is
+        # named on the command line.
+        source_writer = INSTALL_WRITER
+        source_detail = "install --version N names a generated version"
+
+    return [
+        RecordFact(
+            key="geometry",
+            label="Geometry",
+            value=geometry_value,
+            # A weight the tool installed gets the writer that recorded its *other* facts, and a
+            # weight copied in by hand gets the button - the one writer that needs no training run
+            # to produce an answer, and the only one that applies to a file nobody installed.
+            writer=INSTALL_WRITER if record.get("recorded") else RECORD_BUTTON_WRITER,
+            detail="auto uses it" if geometry_value else f"auto gives {resolved}",
+        ),
+        RecordFact(
+            key="generation",
+            label="Generation",
+            # Only ever known to the run: a `.pt` keeps no label set, and the export that named
+            # one is gone by the next session. Nothing to add for either state.
+            value=generation or "",
+            writer=INSTALL_WRITER,
+        ),
+        RecordFact(
+            key="validation",
+            label="Validation",
+            value=", ".join(block.split for block in validation),
+            writer=VAL_WRITER,
+            # `--val` measures into the *run* directory and `--install` copies the measurement in,
+            # which is the one thing about this fact a reader has to be told: running the command
+            # the cell names is not by itself enough to make the cell fill in.
+            detail="" if validation else "the next --install carries it into the record",
+        ),
+        RecordFact(
+            key="source",
+            label="Source",
+            value=source,
+            writer=source_writer,
+            detail=source_detail,
+        ),
+    ]
+
+
 def installed_models(directory: Path | None = None) -> list[InstalledModel]:
     """The selectable custom weights, sorted, as `models/<name>` plus what is known of each.
 
@@ -448,6 +567,17 @@ def installed_models(directory: Path | None = None) -> list[InstalledModel]:
         # stops a weight being held to the other generation's roster, which is how a v1 head used
         # to be reported as unable to predict a class that only v2 had.
         names = record.get("class_names") or []
+        # Resolved *through* the requirement, not beside it: `auto` now honours a record, so for a
+        # recorded weight this answers the requirement itself. What it is still for is the
+        # unrecorded case — the one situation where `auto` really is a guess, and the operator has
+        # to be told which way it guesses. Read once, because the completeness list states it too.
+        resolved = resolve_resize_mode("auto", value, required)
+        # Asked only where the record has nothing, and that gate is the cost model as much as the
+        # rule: the lookup hashes the checkpoint (megabytes, not kilobytes), and the answer means
+        # nothing while the record already names a dataset - so a machine whose records are complete
+        # pays nothing on every `/api/models` read, and the one weight that needs the question
+        # answered pays one hash.
+        indexed = "" if record.get("source") else indexed_source(entry)
         installed.append(
             InstalledModel(
                 value=value,
@@ -458,14 +588,14 @@ def installed_models(directory: Path | None = None) -> list[InstalledModel]:
                 class_warnings=(
                     class_list_problems(names, record.get("generation")) if names else []
                 ),
-                # Resolved *through* the requirement, not beside it: `auto` now honours a
-                # record, so for a recorded weight this answers the requirement itself. What
-                # it is still for is the unrecorded case — the one situation where `auto`
-                # really is a guess, and the operator has to be told which way it guesses.
-                auto_resolves_to=resolve_resize_mode("auto", value, required),
+                auto_resolves_to=resolved,
                 source=record.get("source", ""),
+                indexed_source=indexed,
                 recorded=bool(record.get("recorded")),
                 validation=record.get("validation") or [],
+                # The same facts as one list, each either stated or empty with the writer that
+                # fills it - the panel's completeness view, built where the writers live.
+                record_facts=record_facts(record, resolved=resolved, indexed=indexed),
             )
         )
     return installed

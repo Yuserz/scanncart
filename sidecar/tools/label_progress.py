@@ -82,7 +82,7 @@ from pathlib import Path
 
 import httpx
 
-from clean_v2 import CLASS_MAP, TIER_A_CELLS
+from clean_v2 import CLASS_MAP, NEGATIVE_CLS, TIER_A_CELLS, batch_for_session
 from label_classes import (
     DISTANCE_ORDER,
     NEW_CLASS_SLUGS,
@@ -153,7 +153,22 @@ def state_of(rec: dict) -> tuple[str, int]:
     return ("labeled" if n > 0 else "null"), n
 
 
-def project_states(project: str, key: str) -> dict[str, int]:
+def project_index(project: str, key: str) -> dict[str, dict]:
+    """One converged read of the project's index: the request itself, and the only copy of it.
+
+    Split out of `project_states` so a caller that wants two views of it gets both from *one*
+    moment. Counting the decisions and grouping the hard negatives are two questions about the same
+    project, and a project read twice is one that can change between the two answers - an upload
+    landing mid-read would leave the readout quoting frames the check below never saw.
+
+    Raises `SystemExit` when the search route will not answer: the caller decides whether that is
+    fatal, and every caller is already talking to this project over the network.
+    """
+    with httpx.Client(timeout=180) as client:
+        return fetch_all(client, key, project)
+
+
+def project_states(project: str, key: str, index: dict[str, dict] | None = None) -> dict[str, int]:
     """How many images the project holds, and how many of them carry a *decision*.
 
     The counts `generate_version.py` prints before it spends a version number, because they are
@@ -163,11 +178,10 @@ def project_states(project: str, key: str) -> dict[str, int]:
     and a second interpretation of the API's `annotations` field in another tool is how the panel
     and the preflight would come to disagree about the same project.
 
-    Raises `SystemExit` when the search route will not answer: the caller decides whether that is
-    fatal, and every caller is already talking to this project over the network.
+    `index` is an already-swept project, passed by a caller that also needs
+    `background_batches` - the two answers then come off one read instead of two.
     """
-    with httpx.Client(timeout=180) as client:
-        index = fetch_all(client, key, project)
+    index = project_index(project, key) if index is None else index
     states = Counter(state_of(record)[0] for record in index.values())
     return {
         "images": len(index),
@@ -175,6 +189,48 @@ def project_states(project: str, key: str) -> dict[str, int]:
         "null": states["null"],
         "unlabeled": states["unlabeled"],
     }
+
+
+def background_batches(index: dict[str, dict]) -> list[dict]:
+    """The project's hard negatives, per upload batch, and how many of each carry a decision.
+
+    Pure, and a view of the same sweep `project_states` counts, so the readout and the check that
+    refuses on it cannot describe two different projects.
+
+    A frame is a hard negative when its class tag is the `negative` pseudo-class
+    (`clean_v2.NEGATIVE_CLS`), which is what `upload` stamps on every frame of a `--negatives` set.
+    The batch it arrived in is named through `clean_v2.batch_for_session` rather than spelled out:
+    that function is the one rule the uploader, `retag` and the split planner already share, and a
+    reader with its own idea of a session's batch name is the drift it exists to prevent. An image
+    uploaded before sessions existed has no session tag and lands in the plain `negative` batch,
+    which is exactly the name such an upload created.
+
+    The number that decides anything is `undecided`: a hard negative enters a version only if it
+    carries a null annotation, because Roboflow's `[]` is not a decision and the frame is excluded
+    with no error anywhere. That is the one loss a progress percentage cannot show - a background
+    frame has nothing to draw, so in the class and distance tables an unmarked one looks exactly
+    like a marked one, and `clean_v2.hard_negative_verdict` counts the tag rather than the marks.
+
+    `labeled` counts the frames a person drew on instead (C2a's product-plus-clutter material),
+    which is a decision too and enters the version as a label rather than as an empty frame.
+    """
+    rows: dict[str, dict] = {}
+    for rec in index.values():
+        if slug_of(rec) != NEGATIVE_CLS:
+            continue
+        batch = batch_for_session(NEGATIVE_CLS, session_of(rec))
+        row = rows.setdefault(
+            batch, {"batch": batch, "images": 0, "null": 0, "labeled": 0, "undecided": 0}
+        )
+        state, _boxes = state_of(rec)
+        row["images"] += 1
+        if state == "null":
+            row["null"] += 1
+        elif state == "labeled":
+            row["labeled"] += 1
+        else:
+            row["undecided"] += 1
+    return [rows[name] for name in sorted(rows)]
 
 
 def annotated_classes(rec: dict) -> Counter:
@@ -718,7 +774,15 @@ def capture_splits(out: Path, progress: Progress, known: dict[str, object] | Non
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """This tool's command line.
+
+    Its own function rather than inline in `main`, because `local_progress` reads three fields off
+    the namespace it is handed and a second caller (`readiness.py`, which asks this tool for the
+    label state instead of asking the operator to run it) must not be building that namespace by
+    hand: a field added here would silently stop reaching the other caller, and the failure would
+    be a number read from the wrong default rather than an error.
+    """
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", default=str(DEFAULT_OUT))
     ap.add_argument("--project", default="snc-grocery")
@@ -764,7 +828,11 @@ def main(argv: list[str] | None = None) -> int:
         "written on a machine that cannot reach Roboflow",
     )
     ap.add_argument("--json", action="store_true", help="emit a machine-readable summary")
-    args = ap.parse_args(argv)
+    return ap.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
 
     out = Path(args.out).expanduser()
     plan_path = Path(args.split_plan).expanduser() if args.split_plan else None

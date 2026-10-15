@@ -10,6 +10,12 @@ the trainer reads it.
     v1  seven classes, from the export of Roboflow's `scanncart-grocery` version 1
     v2  the same seven, from the merged local dataset (`build_dataset.py`)
 
+A **variant** is one run of a generation rather than a generation: `v2.1` is v2's seven classes and
+v2's geometry retrained from a later version of the same project, so it shares every field below and
+is named by `variant()` instead of by a third entry in `GENERATIONS`. Two runs of one generation
+otherwise write to the same run directory, which is how a retrain silently replaces the run the
+current weight came from - and it is what `--variant` exists to prevent (MODEL_TRAINING.md 8.2).
+
 Three fields differ for a reason worth keeping:
 
 **classes.** A trained model's outputs are in whatever order its dataset declared, so an export is
@@ -64,7 +70,8 @@ so the claim is checked against the data rather than trusted from this comment.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from generate_version import REQUIRED_RESIZE_MODE
@@ -100,6 +107,39 @@ class Generation:
     def label(self) -> str:
         """How this generation is named in a sentence, e.g. for the record's `source`."""
         return f"{self.roboflow_project} ({self.name})"
+
+    def variant(self, name: str) -> "Generation":
+        """This generation as one *variant* of itself (`v2.1`), or itself when there is none.
+
+        `--variant v2.1` is the retrain case: the same seven classes and the same geometry trained
+        from a later version of the same project, which has to be nameable end to end or it
+        collides with what it retrains. So the variant moves two fields and no others - `name`,
+        which every artifact is named from (`scanncart-grocery-v2.1.pt`, the run
+        `scanncart-grocery-v2.1`, its `--val` run) and `export_dir`, because a retrain is trained
+        from a *regenerated* version rather than from the export the current weight came from.
+        `--dataset-dir` answers first when a variant of one generation really does share its
+        sibling's dataset.
+
+        Everything that describes the dataset convention is deliberately left alone: `classes`,
+        their order, `manifest` and `resize_mode` are what make it the same generation, and a
+        variant that changed one of them would be a generation this table has no entry for (that is
+        the second-weight-per-generation case `train_model --name` covers, or a new `Generation`).
+        Which is also why the *record* a variant installs keeps the generation's own name - a
+        roster is judged per generation, `v2.1` names a run rather than a class list, and what
+        distinguishes two variants of one generation in the panel is the filename and the `source`
+        ("<project> version N") - so `--version` is not optional for a retrain.
+
+        Refused rather than sanitised when it cannot be a filename component: the value lands in
+        `models/`, which is the directory the picker lists.
+        """
+        if not name:
+            return self
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name) is None:
+            raise SystemExit(
+                f"--variant {name!r} cannot be part of a filename - letters, digits, dots, "
+                "dashes and underscores, starting with a letter or a digit (e.g. v2.1)"
+            )
+        return replace(self, name=name, export_dir=self.export_dir.parent / f"export-{name}")
 
 
 # The tools' copy of the 8-name roster, derived rather than retyped: `label_classes.SLUG_TO_CLASS`

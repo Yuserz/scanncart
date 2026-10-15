@@ -160,9 +160,10 @@ def test_sanity_blocks_a_class_list_that_has_a_distance_in_it():
 
 
 def test_sanity_does_not_flag_a_correct_class_list():
-    """The false alarm this must never raise: the real roster plus Palmolive is exactly the
-    list a correct project has - and every one of these seven is a name v1's own project already
-    declares, which is the property the drop had to preserve.
+    """The false alarm this must never raise: the seven, and nothing else. Every one of them is a
+    name v1's own project already declares, which is the property the drop had to preserve - and
+    Palmolive, the eighth that was dropped, is deliberately *not* among them, because a project
+    still holding it is the blocking case in the test below rather than this one.
     """
     roster = list(clean_v2.V1_CLASSES)
     rows = clean_v2.class_list_rows({name: i for i, name in enumerate(roster)})
@@ -170,6 +171,31 @@ def test_sanity_does_not_flag_a_correct_class_list():
     assert [level for level, _title, _detail in rows] == ["ok"]
     assert "7 class(es) defined" in rows[0][2]
     assert not any("carry a distance" in title for _l, title, _d in rows)
+
+
+def test_sanity_blocks_a_class_the_roster_does_not_declare():
+    """The drift case, and the one the live project is in: `snc-grocery` still holds Palmolive,
+    dropped from the roster in MODEL_TRAINING.md 8.1 - so the class was *re-created*.
+
+    A blocking row rather than a note under an ok one, for two reasons. What it does: a version
+    declares every class its project holds, so the head keeps an output nothing in the app can name,
+    for the life of the weights, since a version cannot be edited afterwards. What it says: someone
+    deleted a class and made it again, and that is the one edit to a class list which is not
+    reversible at all - deleting a class takes its annotations with it.
+    """
+    rows = clean_v2.class_list_rows([*clean_v2.V1_CLASSES, "Palmolive Naturals Bar Soap 85g"])
+
+    assert [level for level, _title, _detail in rows] == ["fail"]
+    detail = rows[0][2]
+    assert "unexpected: Palmolive Naturals Bar Soap 85g" in detail
+    # Named as what it is, and with the fix beside it: the class is deleted on the Classes tab.
+    assert "(a Palmolive class means it was re-created after being dropped)" in detail
+    assert "Settings -> Classes" in detail
+
+    # The asymmetry, asserted in the same test so neither direction can be softened into the other:
+    # a roster class the project has not created yet is work not done, and stays a warning.
+    missing_only = clean_v2.class_list_rows(clean_v2.V1_CLASSES[:-1])
+    assert [level for level, _t, _d in missing_only] == ["warn"]
 
 
 def test_sanity_still_fails_a_project_with_no_class_list():

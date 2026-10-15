@@ -16,6 +16,7 @@ import build_dataset
 import generations
 import train_model
 import workspace
+from app import source_index
 
 # Rebuilt from the modules that own each fact, not copied by value.
 V2 = generations.V2
@@ -864,6 +865,161 @@ def test_cli_install_says_so_when_nothing_was_measured(tmp_path, capsys):
     assert "validation" not in record
 
 
+def test_cli_install_without_a_version_says_what_the_record_s_cannot_name(tmp_path, capsys):
+    """`source` is written out of `--version` alone, and it is the only place "which dataset
+    produced these weights" is written down - so an install that passed none leaves a blank the
+    Admin Panel has to print, and nothing else in the project holds the fact. The three v2 weights
+    were installed this way and the panel showed nothing after their names, which is what this note
+    is for: saying it at the moment it happens, and naming both repairs. Not a refusal - a weight
+    trained from a local merge has no version number to pass, and one invented would be a
+    provenance the run never had, which is worse than the blank.
+    """
+    root = _fake_export(tmp_path / "export-v2")
+    runs = tmp_path / "runs"
+    models = tmp_path / "models"
+    _finished_run(runs, RUN_NAME)
+
+    code = train_model.main(
+        [
+            "--export-dir", str(root), "--run-project", str(runs),
+            "--models-dir", str(models), "--install",
+        ]
+    )
+    out = capsys.readouterr().out
+
+    assert code == 0
+    record = json.loads((models / f"{WEIGHT_NAME[:-3]}.json").read_text("utf-8"))
+    assert record["source"] == ""
+    assert "empty `source`" in out
+    # Both remedies, and the tool that can answer the case --version cannot: the local merge, where
+    # no version number exists to record and the run is the only evidence left.
+    assert "--version N" in out
+    assert "backfill_provenance.py" in out
+
+
+def test_cli_install_that_named_its_version_says_nothing_about_an_empty_source(tmp_path, capsys):
+    """The note describes the *record*, not the flag: an install that named its version has nothing
+    to warn about, and a note printed anyway is the cry-wolf message that teaches an operator to
+    skip the block. Backfill complements the flag rather than replacing it.
+    """
+    root = _fake_export(tmp_path / "export-v2")
+    runs = tmp_path / "runs"
+    models = tmp_path / "models"
+    _finished_run(runs, RUN_NAME)
+
+    code = train_model.main(
+        [
+            "--export-dir", str(root), "--run-project", str(runs),
+            "--models-dir", str(models), "--install", "--version", "2",
+        ]
+    )
+    out = capsys.readouterr().out
+
+    assert code == 0
+    record = json.loads((models / f"{WEIGHT_NAME[:-3]}.json").read_text("utf-8"))
+    assert record["source"] == f"{V2.roboflow_project} version 2"
+    assert "empty `source`" not in out
+    assert "backfill_provenance" not in out
+
+
+def test_cli_install_derives_a_local_merge_from_the_run_it_is_installing(tmp_path, capsys):
+    """The gap this closes. `source` used to be written out of `--version` alone, so a weight
+    trained from a local merge - where there is no version number to record - was installed with the
+    field empty and the panel printed a weight with nothing in parentheses after its name. Filling it
+    was a second command run over an already-installed weight; the run being installed *is* the
+    evidence, and `--install` is holding it. It reads the run's own `args.yaml` - the same file the
+    augmentation table comes from - and names the dataset its `data=` points at when that set carries
+    a merge report, so nothing is left for `backfill_provenance.py` to do.
+    """
+    runs = tmp_path / "runs"
+    run = _finished_run(runs, RUN_NAME)
+    merged = _fake_export(tmp_path / "merged-v2")
+    _report_with_distances(merged, [])
+    (run / "args.yaml").write_text(
+        f"data: {merged / workspace.SCANNCART_DATA_YAML_NAME}\n", encoding="utf-8"
+    )
+
+    code = train_model.main(
+        [
+            "--export-dir", str(merged), "--run-project", str(runs),
+            "--models-dir", str(tmp_path / "models"), "--install",
+        ]
+    )
+    out = capsys.readouterr().out
+
+    assert code == 0
+    record = json.loads((tmp_path / "models" / f"{WEIGHT_NAME[:-3]}.json").read_text("utf-8"))
+    assert record["source"] == "local merge merged-v2"
+    # Said out loud as well as written, and said as a *finding* rather than as a gap to repair.
+    assert "source: local merge merged-v2" in out
+    assert "empty `source`" not in out
+    assert "backfill_provenance" not in out
+
+
+def test_cli_train_and_install_in_one_command_names_the_local_merge_too(tmp_path, capsys):
+    """The documented sequence can be a single command (`--yes --install`), and `args.yaml` is
+    ultralytics' file to write - so a run it did not leave one for would report a gap over a fact the
+    command is *holding*: the directory `write_data_yaml` just wrote the run's `data=` into. Reading
+    only the run's own file would have reinstated exactly the empty-`source` state this change
+    exists to end, in the one path that never needed help to know the answer.
+    """
+    runs = tmp_path / "runs"
+    run = _finished_run(runs, RUN_NAME)
+    merged = _fake_export(tmp_path / "merged-v2")
+    _report_with_distances(merged, [])
+
+    class _Model:
+        def __init__(self, _weights):
+            pass
+
+        def train(self, **_kwargs):
+            pass
+
+    code = train_model.main(
+        [
+            "--export-dir", str(merged), "--run-project", str(runs), "--run-dir", str(run),
+            "--models-dir", str(tmp_path / "models"), "--yes", "--install",
+        ],
+        yolo=_Model,
+    )
+    out = capsys.readouterr().out
+
+    assert code == 0
+    record = json.loads((tmp_path / "models" / f"{WEIGHT_NAME[:-3]}.json").read_text("utf-8"))
+    assert record["source"] == "local merge merged-v2"
+    assert "source: local merge merged-v2" in out
+    assert "empty `source`" not in out
+
+
+def test_cli_install_says_which_set_it_could_not_name(tmp_path, capsys):
+    """The other half: when the derivation has no answer, the reason is the run's own sentence naming
+    what it looked for - rather than a generic "no provenance". The name is one no workspace holds, so
+    the by-name fallback cannot rescue it: a dataset directory that has gone since the run and a run
+    that never recorded one are different problems with different fixes.
+    """
+    runs = tmp_path / "runs"
+    run = _finished_run(runs, RUN_NAME)
+    export = _fake_export(tmp_path / "export-v2")
+    gone = tmp_path / "merged-v9" / workspace.SCANNCART_DATA_YAML_NAME
+    (run / "args.yaml").write_text(f"data: {gone}\n", encoding="utf-8")
+
+    code = train_model.main(
+        [
+            "--export-dir", str(export),
+            "--run-project", str(runs),
+            "--models-dir", str(tmp_path / "models"), "--install",
+        ]
+    )
+    out = capsys.readouterr().out
+
+    assert code == 0
+    record = json.loads((tmp_path / "models" / f"{WEIGHT_NAME[:-3]}.json").read_text("utf-8"))
+    assert record["source"] == ""
+    assert "is not on disk any more" in out
+    assert "merged-v9" in out
+    assert "backfill_provenance.py" in out
+
+
 def test_cli_a_measurement_of_a_replaced_checkpoint_is_not_installed(tmp_path, capsys):
     """The hash, at the CLI level. A `--val` of the previous checkpoint sits in the same run
     directory; re-training replaces `best.pt` in place. If the numbers were attached anyway,
@@ -994,19 +1150,132 @@ def test_models_readme_is_tracked_and_names_the_weights_the_tool_installs(tmp_pa
     assert "!models/README.md" in ignore
 
 
-def _built_set(root: Path, per_split: dict[str, list[tuple[str, str]]]) -> Path:
-    """A merged set in the shape `build_dataset.py` writes it: frames filed per split, a label
-    beside each, and the per-frame `distances` map in its own `merge_report.json`.
+# --- the source index: the answer written down while the run can still be asked ----------
 
-    `per_split` is `split -> [(filename, distance)]`, so a test states the counts the reader has to
-    join - the report is keyed by name and the split is a directory, and the grid's passes have to
-    marry the two. `_export_with_names` supplies the frames, labels and class list; the report is
-    what makes it a *built set* rather than a download.
+
+def test_training_writes_the_answer_into_the_index_before_anyone_installs(tmp_path, capsys):
+    """The whole point of the file. `--install` is a separate, usually later command
+    (MODEL_TRAINING.md's sequence runs `--val` and then `--install`), and by then the run can have
+    been pruned, the workspace rebuilt elsewhere or the set deleted - the state three installed
+    weights are in today. So the entry is written as the run finishes, from the set the run read:
+    this command has no `--install` in it at all, which is also the state an interrupted sequence
+    leaves behind.
     """
-    dataset = _export_with_names(
-        root, {split: [name for name, _ in frames] for split, frames in per_split.items()}
+    runs = tmp_path / "runs"
+    run = _finished_run(runs, RUN_NAME)
+    merged = _fake_export(tmp_path / "merged-v2")
+    _report_with_distances(merged, [])
+
+    class _Model:
+        def __init__(self, _weights):
+            pass
+
+        def train(self, **_kwargs):
+            pass
+
+    code = train_model.main(
+        [
+            "--export-dir", str(merged), "--run-project", str(runs), "--run-dir", str(run),
+            "--models-dir", str(tmp_path / "models"), "--yes",
+        ],
+        yolo=_Model,
     )
-    _report_with_distances(
-        dataset, [(name, distance) for frames in per_split.values() for name, distance in frames]
+    out = capsys.readouterr().out
+
+    assert code == 0
+    entry = source_index.lookup(run / "weights" / "best.pt")
+    assert entry is not None
+    assert entry.source == "local merge merged-v2"
+    # The directory is only recorded when it is *this command's* fact, which for a training run it is:
+    # the set `write_data_yaml` wrote the run's `data=` into, and the one the run then trained from.
+    assert entry.dataset == str(merged)
+    assert "index:" in out
+
+
+def test_installing_records_the_source_the_record_itself_carries(tmp_path, capsys):
+    """The two writers must not answer "which dataset" differently. `--version` is a claim only the
+    operator can make, so it wins the record's `source` - and it has to win the index's too, even
+    where the run's own merge report could be derived instead, or the file beside the weights and the
+    entry in the index would disagree about the same bytes.
+    """
+    root = _fake_export(tmp_path / "export-v2")
+    runs = tmp_path / "runs"
+    run = _finished_run(runs, RUN_NAME)
+    merged = _fake_export(tmp_path / "merged-v2")
+    _report_with_distances(merged, [])
+    (run / "args.yaml").write_text(
+        f"data: {merged / workspace.SCANNCART_DATA_YAML_NAME}\n", encoding="utf-8"
     )
-    return dataset
+
+    code = train_model.main(
+        [
+            "--export-dir", str(root), "--run-project", str(runs),
+            "--models-dir", str(tmp_path / "models"), "--install", "--version", "2",
+        ]
+    )
+    capsys.readouterr()
+
+    assert code == 0
+    entry = source_index.lookup(tmp_path / "models" / WEIGHT_NAME)
+    assert entry is not None
+    assert entry.source == f"{V2.roboflow_project} version 2"
+
+
+def test_an_install_the_run_cannot_answer_falls_back_to_the_index(tmp_path, capsys):
+    """The last resort, and the only one that still works after the set has gone: the run's `data=`
+    names a directory that is no longer on disk, so the derivation has no answer - and the index,
+    written when that run was still here, names the merge. Without it this is exactly the
+    empty-`source` state the field exists to end, for a weight this machine trained itself.
+    """
+    runs = tmp_path / "runs"
+    run = _finished_run(runs, RUN_NAME)
+    export = _fake_export(tmp_path / "export-v2")
+    gone = tmp_path / "merged-v9" / workspace.SCANNCART_DATA_YAML_NAME
+    (run / "args.yaml").write_text(f"data: {gone}\n", encoding="utf-8")
+    source_index.record_source(
+        run / "weights" / "best.pt",
+        "local merge merged-v2",
+        run=run,
+        dataset=tmp_path / "datasets" / "merged-v2",
+        now="2026-10-14T04:00:00",
+    )
+
+    code = train_model.main(
+        [
+            "--export-dir", str(export), "--run-project", str(runs),
+            "--models-dir", str(tmp_path / "models"), "--install",
+        ]
+    )
+    out = capsys.readouterr().out
+
+    assert code == 0
+    record = json.loads((tmp_path / "models" / f"{WEIGHT_NAME[:-3]}.json").read_text("utf-8"))
+    assert record["source"] == "local merge merged-v2"
+    # Which of the three answers it was is said out loud, so a reader checks it rather than inferring
+    # it from a warning being absent - and it names the run the entry came from, not the one in hand.
+    assert "the source index: written when" in out
+    assert "empty `source`" not in out
+
+
+def test_the_note_says_which_file_was_asked_when_nothing_could_answer(tmp_path, capsys):
+    """The other half of that report: with the index empty too, the note says so *and* says where it
+    looked. The difference between "no run holds these bytes" and "nowhere was looked" is the
+    difference between waiting for a run to turn up and checking the machine that wrote the record.
+    """
+    runs = tmp_path / "runs"
+    run = _finished_run(runs, RUN_NAME)
+    export = _fake_export(tmp_path / "export-v2")
+    gone = tmp_path / "merged-v9" / workspace.SCANNCART_DATA_YAML_NAME
+    (run / "args.yaml").write_text(f"data: {gone}\n", encoding="utf-8")
+
+    code = train_model.main(
+        [
+            "--export-dir", str(export), "--run-project", str(runs),
+            "--models-dir", str(tmp_path / "models"), "--install",
+        ]
+    )
+    out = capsys.readouterr().out
+
+    assert code == 0
+    assert "The source index has nothing for these bytes either" in out
+    assert str(source_index.index_path()) in out

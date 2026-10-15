@@ -2,7 +2,7 @@ import { DEFAULT_SETTINGS } from '../lib/settingsDefaults'
 import { describe, it, expect, vi } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
 import { useSidecarSettings } from './useSidecarSettings'
-import { baseSettings, makeDeps } from '../test/fakes'
+import { baseSettings, installedV2, makeDeps } from '../test/fakes'
 import type { SettingsResponse } from '../lib/api'
 
 describe('useSidecarSettings', () => {
@@ -26,19 +26,10 @@ describe('useSidecarSettings', () => {
     const { deps } = makeDeps({
       getModels: vi.fn(async () => ({
         stock: ['yolo11n.pt'],
-        installed: [
-          {
-            value: 'models/scanncart-grocery-v2-stretch.pt',
-            resize_mode: 'stretch',
-            imgsz: 640,
-            auto_resolves_to: 'stretch',
-            source: 'snc-grocery version 2',
-            class_names: [],
-            class_warnings: [],
-            recorded: true,
-            validation: []
-          }
-        ],
+        // The shared fixture rather than a literal, because a record grows fields: this one
+        // hand-built a whole `InstalledModel` and stopped compiling the moment the completeness
+        // list was added, which is exactly what a fixture is for sparing a test from.
+        installed: [installedV2({ class_names: [], validation: [] })],
         directory: 'models/'
       }))
     })

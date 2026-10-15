@@ -65,6 +65,19 @@ export interface WeightsFacts {
   // means the assumption is not one this app can report — stock weights, whose geometry is
   // known, or a `.onnx`, whose heuristic lands elsewhere.
   required: string | null
+  // Which dataset the record says these weights came from, and `''` when nothing names one — the
+  // field `--install` writes from the training run, or derives from it when no `--version` was
+  // passed. Carried for the one thing that can be said about it here: the record-it-now button
+  // cannot write it, so its acknowledgement has to report the field as still empty rather than
+  // let the write read as complete. Read from the same listing as `required`, so the sentence
+  // and the record it describes cannot come from two different instants.
+  source: string
+  // What the machine's source index says trained these bytes, `''` when it has nothing for them —
+  // the sidecar reports it only where `source` above is empty, so this is never a second opinion
+  // about a record that exists. Carried for the same reason `source` is: the acknowledgement has
+  // to describe the record the button just wrote, and which of the two facts is available decides
+  // whether that sentence names a gap or a one-command repair.
+  indexed_source: string
 }
 
 export interface ActiveWeights extends WeightsFacts {
@@ -109,7 +122,9 @@ function factsOf(settings: SettingsResponse, installed: InstalledModel[]): Weigh
     // fixture) has to read as "nothing assumed", which costs a banner — whereas `undefined`
     // reaching the render would cost the view.
     unrecorded: settings.unrecorded_resize_mode ?? null,
-    required: record?.resize_mode ?? null
+    required: record?.resize_mode ?? null,
+    source: record?.source ?? '',
+    indexed_source: record?.indexed_source ?? ''
   }
 }
 

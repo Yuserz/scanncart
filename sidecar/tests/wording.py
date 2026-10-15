@@ -29,6 +29,18 @@ The convention (`sidecar/tests/CLAUDE.md`'s mirror-guard section states it too):
   asserts exactly the pinned fragments matched, no more and no fewer, so a
   fixture that drifted from the surfaces fails instead of passing green.
 
+A second shape rides the same engine: a claim that **several surfaces must agree**.
+A `WordingContract` asks, surface by surface, whether one still carries the fact,
+which is blind to the failure that matters most for these - a rewrite that keeps
+every pinned fragment everywhere and still sends two surfaces to different tools.
+Such a claim has no surface of its own to live on, so it gets a row instead: an
+`AgreementContract` names the tokens the surfaces are agreeing *about* and the
+span each one keeps its copy in, and a table of rows is walked by two one-line
+tests - the claim, and a canary that drops each token from each surface in turn
+and requires exactly that surface and token to be reported. That per-pair
+mutation is the second shape's version of the marker-inside-the-span rule: it
+proves every token is load-bearing on every surface, not just that the check ran.
+
 Everything here is text-only on purpose: the surfaces are read as files, never
 imported, because several of them (`.ts`, `.tsx`, `.css`, `CLAUDE.md`) have no
 Python import to offer and the ones that do would drag the runtime into the
@@ -211,3 +223,224 @@ def assert_canary_fires(contract: WordingContract) -> None:
                 f"the retired-wording half of the {contract.name} canary matched nothing: "
                 f"{phrase!r} is not in the fixture, so the absence test would never fire"
             )
+
+
+# --- agreements: one claim, several surfaces, and the row that says they match ---------------
+
+
+@dataclass(frozen=True)
+class SurfaceSpan:
+    """One surface's copy of a claim, and how to find the copy inside the file.
+
+    `opens`/`closes` are anchors the file already writes - a `def`/`export function` line, and the
+    next top-level one after it - rather than a regex invented per claim. That is what makes the
+    check about *that region*: a token mentioned somewhere else in the file must not be able to
+    satisfy a row about one definition, and a renamed definition has to fail loudly instead of
+    quietly widening the search to the whole file. Both anchors are required, and a span with no
+    closing anchor fails too: running to the end of the file is the same defect one step quieter.
+    """
+
+    #: The file, spelled the way a failure message quotes it.
+    surface: str
+    #: Where the span starts: a line the file already has, verbatim.
+    opens: str
+    #: Where it ends: the next anchor of the same kind, verbatim.
+    closes: str
+    #: What this span is called in a failure message, when one file carries more than one of them.
+    #: Empty falls back to the filename, which is what a file with a single span wants.
+    label: str = ""
+
+
+@dataclass(frozen=True)
+class AgreementContract:
+    """One fact several surfaces must state the same way - the claim that *spans* them.
+
+    `WordingContract` asks "does this surface still carry the fact?" per surface. This asks the
+    other question, the one no single surface's own row can: "do these agree?" The failure it
+    exists for is a rewrite that keeps every pinned fragment in every row and still sends two
+    surfaces to different tools, so the claim needs a row of its own rather than a bespoke test.
+
+    `tokens` is what agreeing means for the row: every surface's own span has to name every token.
+    A token is a name, a path or a flag - the prose around it belongs to the surfaces, and a whole
+    *sentence* is a `WordingContract`'s business. `canary_spans` proves both ends: the row's own
+    spans as text, one per surface, which each have to carry every token, and then each token is
+    dropped from each surface in turn and the check must report exactly that surface and token.
+    """
+
+    #: Names the claim, for messages ("the two doors into one record no longer agree").
+    name: str
+    #: The places that own either end of the claim, spelled the way a failure message quotes them.
+    owner: str
+    #: The agreement failure's first sentence - what no longer agrees, and why that is not one
+    #: surface's own business.
+    claim: str
+    #: The agreement failure's second sentence - what the surfaces are supposed to be saying.
+    facts: str
+    #: What every surface has to name for the row to hold.
+    tokens: tuple[str, ...]
+    #: `SurfaceSpan` rows: the surfaces, and the region of each that carries its copy.
+    surfaces: tuple[SurfaceSpan, ...]
+    #: `(span name, text)` pairs - one per surface - proving the check can see drift.
+    canary_spans: tuple[tuple[str, str], ...]
+
+    def __post_init__(self) -> None:
+        if len(self.surfaces) < 2:
+            raise ValueError(
+                f"{self.name}: an agreement needs at least two surfaces - with one there is "
+                "nothing it could disagree with, and the claim belongs in a WordingContract"
+            )
+        if not self.tokens:
+            raise ValueError(f"{self.name}: an agreement with no tokens agrees about nothing")
+        for token in self.tokens:
+            if not token.strip():
+                raise ValueError(f"{self.name}: blank token")
+        for outer in self.tokens:
+            for inner in self.tokens:
+                if outer != inner and inner in outer:
+                    raise ValueError(
+                        f"{self.name}: {inner!r} is part of {outer!r}, so naming the longer one "
+                        "already names the shorter - and the canary, which drops one token at a "
+                        "time, could not tell which of the two went missing"
+                    )
+        names = [span_name(span) for span in self.surfaces]
+        if len(set(names)) != len(names):
+            raise ValueError(
+                f"{self.name}: two spans share a name, so a failure could not say which one "
+                f"drifted - give one a `label`: {names}"
+            )
+        for span in self.surfaces:
+            if not span.opens.strip() or not span.closes.strip():
+                raise ValueError(
+                    f"{self.name}: {span_name(span)} needs both anchors - a span read to the end "
+                    "of a file would let a mention elsewhere in it satisfy this row"
+                )
+        canary = dict(self.canary_spans)
+        if set(canary) != set(names):
+            raise ValueError(
+                f"{self.name}: the canary must speak for every span and no others - "
+                f"spans={sorted(names)}, canary={sorted(canary)}"
+            )
+
+
+def span_name(span: SurfaceSpan) -> str:
+    """The name one span goes by: its own label, or the file when it is that file's only one.
+
+    This is also the key its canary text is filed under, so it is kept short - `span_where` is what
+    a failure message prints, which adds the file back for a labelled span.
+    """
+    return span.label or span.surface
+
+
+def span_where(span: SurfaceSpan) -> str:
+    """How a failure message points at one span: the label *and* the file it lives in.
+
+    A label alone ("the `Record it now` confirmation") says which copy drifted but not where to
+    find it, and the whole point of naming the surface in a failure is that the reader can open it.
+    """
+    return f"{span.label} ({span.surface})" if span.label else span.surface
+
+
+def read_span(span: SurfaceSpan) -> str:
+    """The region of one surface that carries a claim, normalized to one string of words.
+
+    Read as text and never imported, like every other surface here, and loud in both directions: a
+    missing opening anchor means the definition was renamed or moved, and a missing closing one
+    means the span would silently run to the end of the file - where a token from an unrelated part
+    of it could stand in for the copy this row is about.
+    """
+    text = read_surface(span.surface)
+    start = text.find(span.opens)
+    if start == -1:
+        raise AssertionError(
+            f"{span.surface}: {span.opens!r} is gone, so the span this row reads is gone with it - "
+            f"a renamed or moved definition has to fail here rather than quietly read the file "
+            f"(the owner of this agreement is `{span.surface}`'s neighbour in the row)"
+        )
+    end = text.find(span.closes, start + len(span.opens))
+    if end == -1:
+        raise AssertionError(
+            f"{span.surface}: no {span.closes!r} after {span.opens!r}, so this span has no end - "
+            "reading on to the end of the file would let a mention elsewhere satisfy the row"
+        )
+    return normalize_wording(text[start:end])
+
+
+def _disagreements(
+    agreement: AgreementContract, texts: dict[str, str]
+) -> list[tuple[str, str]]:
+    """The `(span, token)` pairs whose own text does not name the token, in table order."""
+    return [
+        (span_name(span), token)
+        for span in agreement.surfaces
+        for token in agreement.tokens
+        if token not in texts[span_name(span)]
+    ]
+
+
+def assert_surfaces_agree(agreement: AgreementContract) -> None:
+    """Every surface's own span names every token, or this names what is missing and where it is.
+
+    The failure distinguishes the two repairs, because they are different jobs: one surface drifted,
+    or the fact moved everywhere and this row is what still remembers the old shape. So a missing
+    token is reported with the surfaces that still name it - and with the fact that none do.
+    """
+    texts = {span_name(span): read_span(span) for span in agreement.surfaces}
+    where = {span_name(span): span_where(span) for span in agreement.surfaces}
+    # What the *other* surfaces are called in the "still named by" note: their labels, since the
+    # reader already has the file in front of them by then.
+    problems = _disagreements(agreement, texts)
+    if not problems:
+        return
+    lines = []
+    for name, token in problems:
+        elsewhere = [other for other, text in texts.items() if token in text]
+        lines.append(
+            f"{where[name]}: its own span does not name {token!r}"
+            + (
+                f" (still named by {', '.join(elsewhere)})"
+                if elsewhere
+                else " (no surface in this row names it any more)"
+            )
+        )
+    raise AssertionError(
+        f"{agreement.claim} {agreement.facts} A token is what this row agrees *about*: a surface "
+        "that stops naming one has stopped making the same claim, and a fact that left every "
+        "surface is this row remembering a shape nothing says any more. Update this row in the "
+        "same edit as the wording, or move it into a `WordingContract` if it is no longer a claim "
+        "about several surfaces:\n  " + "\n  ".join(lines)
+    )
+
+
+def assert_agreement_canary_fires(agreement: AgreementContract) -> None:
+    """Both ends, for every span and every token in the row.
+
+    The canary is the row's own spans as text. Each first has to carry every token, or the row would
+    fail on the fixture written to prove it works; then each token is dropped from each span in turn
+    and the check must report exactly that span and that token. Per *pair* rather than one mutation,
+    because a detector that consulted only the first span, or only the first token, would otherwise
+    stay green - which is the canary's whole job, the same reason the fragment canary puts its
+    marker inside the fragment's span instead of at its edges.
+    """
+    texts = {name: normalize_wording(text) for name, text in agreement.canary_spans}
+    unfaithful = [
+        f"{name}: {token!r}"
+        for name, text in texts.items()
+        for token in agreement.tokens
+        if token not in text
+    ]
+    if unfaithful:
+        raise AssertionError(
+            f"the {agreement.name} canary does not carry its own tokens, so this row would fail on "
+            "the fixture meant to prove the check works:\n  " + "\n  ".join(unfaithful)
+        )
+    for span in agreement.surfaces:
+        name = span_name(span)
+        for token in agreement.tokens:
+            drifted = {**texts, name: texts[name].replace(token, "")}
+            problems = _disagreements(agreement, drifted)
+            if problems != [(name, token)]:
+                raise AssertionError(
+                    f"the {agreement.name} check does not catch {token!r} going missing from "
+                    f"{name}: it reported {problems!r}. This row would let exactly that drift "
+                    "through, which is what the canary is for"
+                )

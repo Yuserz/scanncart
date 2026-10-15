@@ -56,6 +56,25 @@ describe('createApiClient', () => {
     await expect(api.health()).rejects.toThrow(/boom/)
   })
 
+  it('formats FastAPI validation lists into named-field sentences', async () => {
+    // A careless typist must see WHICH field was refused and why — the raw
+    // 422 list is FastAPI's shape, not an operator sentence.
+    mockFetchOnce(
+      {
+        detail: [
+          { loc: ['body', 'capture_fps'], msg: 'Input should be less than or equal to 120' },
+          { loc: ['body', 'infer_frame_skip'], msg: 'Input should be a valid number' }
+        ]
+      },
+      false,
+      422
+    )
+    const api = createApiClient(8765)
+    await expect(api.updateSettings({ capture_fps: 5000 })).rejects.toThrow(
+      /capture_fps: Input should be less than or equal to 120; infer_frame_skip: Input should be a valid number/
+    )
+  })
+
   it('getLogs() GETs /api/logs and returns parsed JSON', async () => {
     mockFetchOnce({
       session_id: 3,
@@ -221,10 +240,19 @@ describe('what a failed request tells the operator', () => {
     )
   })
 
-  it('falls back to the status when there is no usable detail', async () => {
-    // FastAPI's request-validation errors put a list in `detail` — that is
-    // for us, not for the operator.
+  it('names the rejected field when FastAPI sends a validation list', async () => {
+    // FastAPI's request-validation errors put a list in `detail`. The bare
+    // "failed: 422" fallback told a careless typist nothing about which field
+    // they mistyped (playtest finding: an out-of-range capture_fps gave the
+    // user nothing actionable), so the list is translated into the field's
+    // own sentence instead.
     mockFetchOnce({ detail: [{ loc: ['body', 'camera_index'], msg: 'wrong' }] }, false, 422)
+    await expect(createApiClient(9000).start()).rejects.toThrow(/camera_index: wrong/)
+  })
+
+  it('falls back to the status when the detail list has nothing usable', async () => {
+    // An empty (or message-less) list carries no sentence to show.
+    mockFetchOnce({ detail: [] }, false, 422)
     await expect(createApiClient(9000).start()).rejects.toThrow(/failed: 422/)
   })
 

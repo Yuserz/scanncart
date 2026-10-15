@@ -1,0 +1,88 @@
+{
+  "workspace": {
+    "name": "New Workspace",
+    "url": "yusri-caloyloy",
+    "members": 1
+  },
+  "project": {
+    "id": "yusri-caloyloy/scanncart-grocery",
+    "type": "object-detection",
+    "name": "scanncart-grocery",
+    "created": 1787072007.178,
+    "updated": 1789549858.041,
+    "images": 1516,
+    "unannotated": 0,
+    "annotation": "scanncart-grocery",
+    "versions": 1,
+    "public": true,
+    "multilabel": false,
+    "license": "CC BY 4.0",
+    "splits": {
+      "export": 0,
+      "valid": 196,
+      "test": 277,
+      "train": 1043
+    },
+    "colors": {
+      "555 sardines 155grams": "#C7FC00",
+      "century_tuna_flakes_in_oil_155_grams": "#8622FF",
+      "lucky_me_pancit_canton_calamansi_flavor": "#FE0056",
+      "silver_swan_sukang_puti_200ML": "#00FFCE",
+      "safeguard_pure_white_60g": "#FF8000",
+      "Bear Brand Fortified Powdered Milk 33g": "#00B7EB",
+      "Milo Chocolate Drink 22g Sachet": "#FFFF00"
+    },
+    "classes": {
+      "century_tuna_flakes_in_oil_155_grams": 302,
+      "Bear Brand Fortified Powdered Milk 33g": 310,
+      "lucky_me_pancit_canton_calamansi_flavor": 352,
+      "silver_swan_sukang_puti_200ML": 302,
+      "555 sardines 155grams": 479,
+      "Milo Chocolate Drink 22g Sachet": 68,
+      "safeguard_pure_white_60g": 0
+    },
+    "icon": {
+      "original": "https://source.roboflow.com/pMLA3HgL2nN6w19PT32lwshZUQg2/wahdljmeiBXztYjeG9cE/original.jpg",
+      "thumb": "https://source.roboflow.com/pMLA3HgL2nN6w19PT32lwshZUQg2/wahdljmeiBXztYjeG9cE/thumb.jpg",
+      "annotation": "https://source.roboflow.com/pMLA3HgL2nN6w19PT32lwshZUQg2/wahdljmeiBXztYjeG9cE/annotation-scanncart-grocery.png"
+    },
+    "preprocessing": {
+      "auto-orient": true,
+      "resize": {
+        "width": 640,
+        "height": 640,
+        "format": "Stretch to"
+      }
+    },
+    "augmentation": {}
+  },
+  "versions": [
+    {
+      "id": "yusri-caloyloy/scanncart-grocery/1",
+      "name": "scanncart",
+      "created": 1787933734.511,
+      "images": 1815,
+      "splits": {
+        "valid": 223,
+        "test": 327,
+        "train": 1265
+      },
+      "generating": false,
+      "progress": 1,
+      "preprocessing": {
+        "auto-orient": true,
+        "resize": {
+          "width": 640,
+          "height": 640,
+          "format": "Stretch to"
+        }
+      },
+      "augmentation": {},
+      "exports": [
+        "coco",
+        "yolov11",
+        "yolov5pytorch"
+      ]
+    }
+  ]
+}

@@ -74,7 +74,8 @@ jobs:
         run: python -m pytest -q -m mirror
 
       # The docs' claims about the code, marked `docs`: a class count, a settings default, a floor,
-      # a split ratio, a split name, an artifact name - and the sync that rewrites the ones it can
+      # a split ratio, a split name, an artifact name, the size a doc states for one of the contract
+      # tables - and the sync that rewrites the ones it can
       # (`tools/docs_sync.py`, exercised site by site in `tests/test_docs_sync.py`). Both read the
       # run sheet, the training doc, the run-desktop skill and `CLAUDE.md` against the modules that
       # own each fact, which is why this is here and not in the fast job below - those modules

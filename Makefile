@@ -9,8 +9,8 @@
 ## from within WSL or a Git Bash shell that has `make` on PATH.
 ##
 ## `test` is CI's target and stays fake-only, so it needs no data. `verify-clamp`,
-## `verify-unsure`, `annotate`, `human-pass`, `doctor`, `accept-v2`, `replay-scenarios`
-## and `verify-pos-routes` are the ones that do - see the notes above them.
+## `verify-unsure`, `annotate`, `human-pass`, `readiness`, `doctor`, `accept-v2`, `replay-scenarios`,
+## `record-roboflow` and `verify-pos-routes` are the ones that do - see the notes above them.
 ## `verify-live-layout` needs no data either but does need a display, which is the other
 ## thing CI runs it in its own job for. `verify-pos-contract` needs the sibling
 ## pushcart-web checkout rather than data, and `.github/workflows/pos-contract.yml`
@@ -30,7 +30,7 @@ endif
 
 .PHONY: help install dev test docs-check docs-sync docs-sync-check build lint format typecheck clean \
         verify-clamp verify-unsure verify-live-layout verify-pos-routes verify-pos-contract \
-        doctor annotate human-pass accept-v2 replay-scenarios \
+        doctor annotate human-pass readiness accept-v2 replay-scenarios record-roboflow push-check \
         sidecar-setup sidecar-run sidecar-test \
         desktop-install desktop-dev desktop-start desktop-test desktop-test-watch \
         desktop-build desktop-build-win desktop-build-mac desktop-build-linux \
@@ -51,9 +51,13 @@ help:
 	@echo "  annotate             label a staged session locally in the browser (local data, not CI)"
 	@echo "  human-pass           render the human pass's checklist from the annotator's store (local data, not CI)"
 	@echo "                       HUMAN_PASS_ARGS=--check verifies it, =--status exits nonzero while the gate is dirty"
+	@echo "  readiness            every gate between the staged data and a training run, with a verdict (local data, not CI)"
+	@echo "                       READINESS_ARGS=--strict fails on an unfinished dataset too, not only on a refused run"
 	@echo "  doctor               check the merged set before training it (local data, not CI)"
 	@echo "  accept-v2            measure v2 against v1 on the merged set's test split (local data, not CI)"
 	@echo "  replay-scenarios     replay the recorded counter corpus into the desktop fixtures (local data, not CI)"
+	@echo "  record-roboflow      re-record the Roboflow bodies the dataset tools parse (needs the API key, not CI)"
+	@echo "  push-check           fail when a local annotated frame never reached the Roboflow project under any name (needs the API key + local data, not CI)"
 	@echo "  verify-pos-routes    check the POS stand-in against a real pushcart-web (needs a running server, not CI)"
 	@echo "  verify-pos-contract  fail if pushcart-web's POS routes moved out from under the recorded contract, or the two repos' copies disagree (needs the sibling checkout; CI checks it out)"
 	@echo "  build                typecheck + build the desktop app"
@@ -238,6 +242,21 @@ human-pass:
 # `data.yaml` declares) rather than taking this target's word for it, so pointing the dataset at v1's
 # export without also naming v1 cannot fail the set for being in v1's order. Override with
 # `DOCTOR_GEN=v1` only to ask a deliberate what-if.
+# The whole chain of `docs/RUN_SHEET.md` on one page, with a verdict: what is captured and labeled
+# (§0), the human pass's gate (§4), whether the merged set still matches the labels it was built from
+# (§6), the doctor (§7), and whether this machine can take the run (§8). Every row is another tool's
+# own verdict - `label_progress.local_progress`, `train_model.pass_gate` (which is `accept_v2`'s
+# `machine_only_verdict`, both halves), `accept_v2.annotation_state_gate`, `dataset_doctor.check_dataset`,
+# `resources` - so the page cannot disagree with the commands it summarises, and each failing row
+# prints its owner's own sentences. `--strict` switches which question is asked: by default only a gate
+# that would make `--yes` exit 2 is a failure, and an unfinished dataset (unlabeled frames, unmarked
+# hard negatives, a capture cell at zero) is a warning that still exits 0.
+# Same local data `doctor` needs, so it is out of `test` for the same reason.
+READINESS_ARGS ?=
+
+readiness:
+	cd $(SIDECAR_DIR) && $(SIDECAR_VENV_PY) tools/readiness.py $(READINESS_ARGS)
+
 DOCTOR_DATASET ?= data/datasets/merged-v2
 DOCTOR_GEN ?= auto
 
@@ -275,6 +294,30 @@ REPLAY_ARGS ?=
 
 replay-scenarios:
 	cd $(SIDECAR_DIR) && $(SIDECAR_VENV_PY) tools/replay_scenarios.py $(REPLAY_ARGS)
+
+# The recorded Roboflow bodies `sidecar/tests/test_roboflow_shapes.py` reads: the project, version,
+# export, search and trash answers the dataset tools parse, taken from the live API so their shape is
+# checked by the suite rather than described in a comment. Reads only (the one POST is the search
+# query), writes `sidecar/tests/__fixtures__/roboflow/`, and needs the API key, so it is not in
+# `test` and not in CI. Each fixture's purpose, and what a recording cannot carry, is in that
+# directory's README.
+record-roboflow:
+	cd $(SIDECAR_DIR) && $(SIDECAR_VENV_PY) tools/record_roboflow_fixtures.py
+
+# The check over the reverse bridge (`tools/push_labels.py --check`): every decided frame in the
+# annotator's tree has to be in the Roboflow project under its own name, or under the name of the
+# byte-identical twin the upload deduped onto (negative_neg3_0014 landed as its twin 0015's
+# record), with the same decision - and the check exits 1 with each frame named when the project
+# has never received one under any name. Read-only: it pushes nothing, it measures what the push
+# would leave behind, so a green check and a green `--apply` are the same statement twice.
+#
+# It needs the API key and the staged workspace - the two inputs a bare CI checkout has neither
+# of - so it is the same kind of gate as `record-roboflow`, run on the machine the labeling lives
+# on (and it refuses, exit 2, a tree it cannot read rather than passing green over nothing). The
+# verdict's decision rules are in CI as `tests/test_push_labels_check.py` against synthetic trees,
+# because the rules themselves are exactly what can drift from the push they gate.
+push-check:
+	cd $(SIDECAR_DIR) && $(SIDECAR_VENV_PY) tools/push_labels.py --check
 
 # The POS route fidelity check (spec §7; docs/POS_SMOKE_TEST.md §3): run the protocol half of
 # `desktop/src/main/posRoutes.integration.test.ts` against a *real* pushcart-web rather than the

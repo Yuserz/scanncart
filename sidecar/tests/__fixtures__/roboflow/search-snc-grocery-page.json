@@ -1,0 +1,1706 @@
+{
+  "offset": 0,
+  "total": 1445,
+  "results": [
+    {
+      "id": "S5F0O604TcY6AwCdWFGX",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0063.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "CkIbObCpchIQcb7PsXLq",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0005.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "test",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "LDf6PfMkS3mJvZpB9wWO",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0036.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "test",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "AuoaTODqVU5iWpfE0pEb",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0054.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "rXiOMHVLU6GaNybWCGEc",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0004.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "U73uyLSChL4AnABdq4DN",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0068.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "wLvMzNtNFpP6jUzT2o2A",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0056.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "a38R3HL6r6phbagNfiay",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0102.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "valid",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "ldciEakdBa6R6UE2detS",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0104.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "2E0x0BUBbULUDKqe9CfM",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0100.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "test",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "AVZD4vJDMNd1cZSx9V1C",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0027.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "oexkyqD6mCnuUbQ5aeEO",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0046.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "p64i3CvDvrVHWMqoTtwT",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0078.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "GEZkZdAhmZp6CB3S1g2U",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0022.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "RfpY0mTIQvH2KkSu1gaJ",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0065.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "VpRIAmIT0WAGA4VEblGn",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0016.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "JzZwTBtnrW0dJ8dEXZsh",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0017.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "test",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "aOjcvrcdMvBSF7lAm8Jt",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0029.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "7wq3NiwfHxGsHolhZrmQ",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0077.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "eUVXu679He4jJpUx2yv1",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0010.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "e869uTIwqtRgbq5B1y3T",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0035.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "XKCpbS4XJSwNMMBxxbvq",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0071.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "xTrNI44oPciTofquIhD8",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0106.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "PGF2NTXZjy0gRUllfkG6",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0026.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "valid",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "18oSvqCmIATsFFVHmwjy",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0037.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "qUqlML8l7R3PYsqr87wq",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0094.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "KmFkEu0bYPNYCqPqmSL0",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0066.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "2YdcvEt9cfPpq2b51X13",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0072.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "Rk3Wp6Kj1xe2UGv6st01",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0088.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "tGUOmWK6jBtHsHkfTSls",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0086.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "AKWkbDJa7ASKwVrDOpq8",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0092.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "a62fLhpBQqNRdgxSGR02",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0047.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "PMTP8JmSN9rJizjUKdky",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0014.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "IYwuMMTcMPRP4TAwFTgM",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0020.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "valid",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "EaXHKvSdLXIY95gqNvsT",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0076.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "valid",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "ektoeF8cMf5jegTfMArS",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0098.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "H76U5jdnWWemHEB8J5QV",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0039.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "9wPkYnkW76KyiO6j092O",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0041.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "KYd3wuE0jdL0dENToyUI",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0024.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "valid",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "dLLoKHQpEw7hPDXHyHBm",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0034.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "valid",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "exgZn1srIernUNoSgwQo",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0050.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "valid",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "CoStgSH2Pz1hGuxkRA0Y",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0075.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "M35FQIm1RLPHJZT2AymV",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0033.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "nuGUzAwskgQle0FUvWGK",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0003.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "valid",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "v5eF9yfAorQlPHZ7s3Ge",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0105.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "VfKRmiGEKdM05nenVoFc",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0101.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "sVRyvOSf8Z7StVptrtwZ",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0011.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "5oeMs1lD8SyyojitKH0o",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0044.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "kHcLK8A0SnqJfISWBy1i",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0018.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "DbjAt21hz8LZOzEJlF4x",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0038.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "vtXpK2L88zZzXDlRMTLd",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0070.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "KWtrEwvncG1ZG4zmbvTS",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0085.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "5hyChZu5TtNgJgrqynkJ",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0007.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "Uy8fdmi4x65SeQHxnNdn",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0073.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "uEZ7LsKZHxUpvGjWPTRL",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0095.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "test",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "uEN1ysRet9Q3gYMpduUv",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0045.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "valid",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "Tc5u8LwcyICoXDEiaYt6",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0001.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "vqQDZiN10hPymRuSJEfm",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0015.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "ysKzFSoJGt517QSKvhML",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0013.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "valid",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "BAdCeyegu0W4SkPBZq4Z",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0040.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "w5DPsqgq5X06LBsDmBhN",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0008.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "valid",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "n8iMK79JSkc6Psurew9x",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0057.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "test",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "HSRTGMrjljdyHyQrz5WV",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0058.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "test",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "MCci1HccA46Ux2nFsTq4",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0067.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "LPo4MDvHBhCny9st5ujR",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0074.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "aTOgyDRHXMDtUzluh1Iy",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0083.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "4FzGH1GUUpklcBaBk25j",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0019.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "Kx60tibjJr5N9tlwT09N",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0080.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "kiGddxdBNVqpU025bfli",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0055.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "C1S4EUZBhAabey53ckdD",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0096.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "kljpbcOqosfpJ3xdURzV",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0012.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "valid",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "lynX7zD9WVthgo85vi7Y",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0059.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "88K5apo50W2P3FKEF9Bu",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0030.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "valid",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "pKTdCu0Nxk2p4fJuCi62",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0060.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "XJknTJdgv4kMu6ys5LeK",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0049.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "SEjx8Yz3jtiaMt0VAuuV",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0082.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "VHzHJSGcKf39GIZivXmZ",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0084.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "valid",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "x2c1wMWuGXFaRF43tsAv",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0103.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "oSJB40UFyPpCylZCl4DJ",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0042.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "P5lIOh64fJwSpBqvvk7W",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0061.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "fCZ21lAZYGJXPDso4iGr",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0021.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "valid",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "BfwthODj650OSUwDOzZp",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0097.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "test",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "352CvqwwoMCSbulMsBC9",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0031.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "valid",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "1pKCBJMhudX5Tzru2yHn",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0090.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "243EdIDaojSNEILvbhzZ",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0009.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "CBUUMz7SJnWvLkMFUYQk",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0091.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "test",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "EPjCJblDnp4oC75F2XOd",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0089.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "qeCszTjzdG63Bhs8hsot",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0051.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "valid",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "D95B4px9y5F68DSdVi15",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0099.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "test",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "wl8Zwcer0DNZs3u62J2i",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0043.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "roCUTyNXKZzE9ukRs2By",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0052.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "805rx91wusISs3Lw4MMI",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0025.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "rZoxDX90RRvekViY3MMT",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0087.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "valid",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "UVczBNLCkX66u47MUSUc",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0023.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "3EJpyAEcla1dnDeqIOMG",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0048.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "1JMRgdy4FPKO5GnA6HIW",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0006.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "valid",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "vwrJWplSJszZ94txWIrN",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0032.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "4QXgov7GXgKHOI8hUbww",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0069.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "valid",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "pLh2JURYXn1ckNAOgTID",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0002.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "train",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    },
+    {
+      "id": "TBittzUi3pM6JK6xDdqX",
+      "mediaType": "image",
+      "name": "bear-brand-milk_0093.jpg",
+      "annotations": {
+        "count": 1,
+        "classes": {
+          "Bear Brand Fortified Powdered Milk 33g": 1
+        }
+      },
+      "split": "test",
+      "tags": [
+        "bear-brand-milk",
+        "close",
+        "s1"
+      ]
+    }
+  ]
+}

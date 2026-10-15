@@ -5,6 +5,8 @@ Two phases, both non-destructive to the source tree:
 
   clean   ingest -> normalise to upright JPEG -> drop unusable/duplicate frames
           -> stage as <class>/<class>_NNNN.jpg -> write manifest + report
+          (a session after the first stages as <class>/<class>_<session>_NNNN.jpg, so two
+          sittings of one class can never be handed the same filename - see `stage`)
   upload  push the kept images to a Roboflow project with per-session batches,
           resumable via upload_state.json
   retag   add the tags and distance metadata the upload endpoint cannot carry,
@@ -574,7 +576,27 @@ def dedup(records: list[Record], notes: list[str], log: list[str]) -> list[tuple
 # --------------------------------------------------------------------------
 
 
-def stage(records: list[Record], out: Path, report: list[str]) -> list[Record]:
+def stage(
+    records: list[Record], out: Path, report: list[str], session: str = DEFAULT_SESSION
+) -> list[Record]:
+    """Copy the kept frames into `<out>/<class>/` under their staged names.
+
+    The name is `<class>_<NNNN>` for the first session and `<class>_<session>_<NNNN>` for any
+    later one: `batch_for_session`'s rule asked of the filename rather than of the batch, so
+    what a frame is called on disk and what it is uploaded into cannot disagree about which
+    session it came from. The first session keeps the bare name because that is what every
+    existing staged set, manifest, `splits.json`, annotator entry and project filename
+    already holds - renaming all of those to fix a collision none of them has would break
+    the lot.
+
+    The suffix buys the collision it prevents. Frames are numbered per class from 1 in every
+    output directory, so a second sitting of the same class produces the same names - and
+    every reader of a split joins on the *name* (`splits.json`, `label_progress`, the
+    annotator's worklist, the project's own filename), so a later set silently inherits the
+    earlier one's train/valid/test assignment. Measured: the neg2 negatives staged as
+    `negative_0001..0052`, and `label_progress` reported them spread 35/10/5 - taken straight
+    from `splits.json`'s entries for the 50 `neg1` frames of the same names.
+    """
     counters: Counter[str] = Counter()
     kept: list[Record] = []
     for rec in records:
@@ -583,7 +605,7 @@ def stage(records: list[Record], out: Path, report: list[str]) -> list[Record]:
         bucket = out / rec.src.cls
         bucket.mkdir(parents=True, exist_ok=True)
         counters[rec.src.cls] += 1
-        name = f"{rec.src.cls}_{counters[rec.src.cls]:04d}.jpg"
+        name = f"{batch_for_session(rec.src.cls, session)}_{counters[rec.src.cls]:04d}.jpg"
         dest = bucket / name
         # Copy, not move: the staged file is what the fingerprint cache points
         # at, and keeping it lets a re-run with different dedup thresholds skip
@@ -689,7 +711,8 @@ def batch_for_session(batch: str, session: str) -> str:
 
     One function, used by `upload` and `retag` and read by `plan_split`, because the
     batch *is* the split unit: a planner that names batches differently from the
-    uploader would assign splits to batches that never exist.
+    uploader would assign splits to batches that never exist. The staged *filename* follows
+    the same rule (`stage`), so the two cannot drift apart either.
     """
     return batch if session in ("", DEFAULT_SESSION) else f"{batch}_{session}"
 
@@ -1124,7 +1147,7 @@ def cmd_clean(args: argparse.Namespace) -> int:
     # Worst case the final copy is as big as everything staged.
     staged_bytes = sum(f.stat().st_size for f in stage_dir.glob("*.jpg"))
     budget.check_disk(str(out), extra_bytes=staged_bytes)
-    kept = stage(records, out, notes)
+    kept = stage(records, out, notes, args.session)
     write_manifest(kept, records, out, args.session)
     (out / "clean_log.txt").write_text("\n".join(log) + "\n", encoding="utf-8")
 
@@ -1471,6 +1494,41 @@ def cmd_drop(args: argparse.Namespace) -> int:
     return 0
 
 
+#: What `upload` says instead of sending, when the project the API reports is public. A constant
+#: rather than a literal at the call site so the wording a person acts on - the flag that opens the
+#: gate - is readable from the tests as well as from the terminal.
+PUBLIC_SEND_REFUSAL = (
+    "upload refused: project {project} is PUBLIC, so every image sent becomes world-readable.\n"
+    "Public is the free plan's default and cannot be flipped from here; Roboflow's own docs say a\n"
+    "private dataset needs a paid plan ('on paid plans, data is private by default'). These are\n"
+    "store captures of a real shop floor, so publishing them is the operator's decision rather\n"
+    "than this tool's - and it is asked for once per run rather than inherited from the last one:\n"
+    "\n"
+    "    add --allow-public to the command you just ran\n"
+    "\n"
+    "Nothing was sent. `--dry-run` prints this same plan without uploading anything."
+)
+
+
+def public_send_refusal(project: str, public: bool, acknowledged: bool) -> str:
+    """The reason this run must not start, or "" when it may.
+
+    One rule rather than an `if` beside the send, because the upload is the only irreversible thing
+    this tool does: the frames land in a project anyone can read, `wipe` is the way back, and a
+    warning printed above a `52 to send` line is read as a notice rather than as a question. Making
+    it a *refusal* is what turns the notice into an answer, and asking after the preview and before
+    the first POST is what lets the answer be an informed one.
+
+    Deliberately not consulted for `--dry-run`: that sends nothing, so it is how someone inspects
+    the plan before deciding, and refusing to print a plan would take away the evidence the decision
+    needs. `retag` and `wipe` are not gated either - they change a project that already holds the
+    images, so the moment this protects has already passed.
+    """
+    if public and not acknowledged:
+        return PUBLIC_SEND_REFUSAL.format(project=project)
+    return ""
+
+
 def cmd_upload(args: argparse.Namespace) -> int:
     try:
         import httpx
@@ -1483,6 +1541,7 @@ def cmd_upload(args: argparse.Namespace) -> int:
         raise SystemExit(f"no manifest at {manifest} - run `clean` first")
 
     api_key, project = load_credentials(args)
+    public = False  # set from the project probe below, and read by the gate before the send
 
     # Fail before the first upload rather than halfway through 1,383: a typo'd
     # project id or a classification project would reject every image.
@@ -1498,13 +1557,15 @@ def cmd_upload(args: argparse.Namespace) -> int:
         print(f"project type: {meta.get('type')}  images: {meta.get('images')}  versions: {meta.get('versions')}")
         if meta.get("type") != "object-detection":
             raise SystemExit(f"project {project} is {meta.get('type')!r}, expected 'object-detection'")
-        if meta.get("public"):
+        public = bool(meta.get("public"))
+        if public:
             print(
                 "WARNING: project is PUBLIC - these store captures are world-readable.\n"
                 "         Public is the free plan's default and is not a per-project toggle you\n"
                 "         can flip here; a private dataset needs a paid plan (Roboflow's own\n"
                 "         docs: 'on paid plans, data is private by default'). Uploading is\n"
-                "         still what puts the images in front of a labeler, so decide now."
+                "         still what puts the images in front of a labeler. This send does not\n"
+                "         start without --allow-public: see `public_send_refusal`."
             )
 
     entries = json.loads(manifest.read_text(encoding="utf-8"))
@@ -1565,6 +1626,13 @@ def cmd_upload(args: argparse.Namespace) -> int:
     if args.dry_run:
         print("\n--dry-run: nothing sent")
         return 0
+
+    # After the preview and before the first POST: the operator has just seen which batches this
+    # would create and how many frames it would publish, which is the moment the question is
+    # answerable. A refusal here has sent nothing and written no resume record.
+    refusal = public_send_refusal(project, public, args.allow_public)
+    if refusal:
+        raise SystemExit(refusal)
 
     ok = fail = 0
     lock = threading.Lock()
@@ -1949,7 +2017,8 @@ def hard_negative_verdict(on_server: int, staged_here: int) -> tuple[str, str, s
         )
         detail += (
             ". Each needs a null annotation (not just an upload) to enter a version - "
-            "`label_progress.py` reports how many are marked"
+            "`label_progress.py` reports how many are marked, and `generate_version.py --check` "
+            "refuses to generate while one of them is unmarked"
         )
     else:
         detail = (
@@ -1962,11 +2031,16 @@ def hard_negative_verdict(on_server: int, staged_here: int) -> tuple[str, str, s
 def class_list_rows(classes: object) -> list[tuple[str, str, str]]:
     """The class list's sanity rows: pure, so the verdict is testable without the network.
 
-    Two independent failures live here, and they send an operator to opposite actions. A
-    **missing** name is work not done yet (create it, then label). A name carrying a
-    **distance** is work done in the wrong shape: those classes have to be deleted and their
+    Three findings live here, and the two directions of the first are **not** symmetrical. A
+    **missing** name is work not done yet - create it, then label - so it is a warning, because it
+    is a legitimate place to be mid-setup. A name the roster does **not** declare is *drift*: a
+    version declares every class its project holds, so a head trained on that list keeps an output
+    nothing in the app can name, and deleting the class afterwards cannot un-bake it. That one
+    blocks, which is what makes a **re-created** class - a name that was dropped from the roster and
+    is present again - loud rather than a detail inside an ok row. A name carrying a **distance** is
+    the third, and work done in the wrong shape: those classes have to be deleted and their
     annotations moved onto the product class, and further labeling only adds to what has to be
-    moved - which is why this one is blocking rather than a warning.
+    moved - which is why that one blocks too.
 
     The relation underneath both is `generations.class_gaps`, shared with
     `train_model.check_export` and the merge, so the three readers of the same two lists cannot read
@@ -2001,9 +2075,28 @@ def class_list_rows(classes: object) -> list[tuple[str, str, str]]:
         # Every name that is not one of the seven is unexpected, including a product the app
         # does not know: a class nothing labels is a head output nothing can ever match.
         detail += f"; unexpected: {', '.join(extra)}"
-        if any("palmolive" in n.lower() for n in extra):
-            detail += " (a Palmolive class means it was re-created after being dropped)"
-    rows: list[tuple[str, str, str]] = [("warn" if missing else "ok", "class list", detail)]
+        # The one that got there by being *re-created*, which is worth saying: it is the shape a
+        # dropped class comes back in, and the reason its boxes are gone rather than misplaced.
+        recreated = [n for n in extra if "palmolive" in n.lower()]
+        if recreated:
+            detail += (
+                "\n  " + ", ".join(recreated) + " was dropped from this roster and is present"
+                "\n  again (a Palmolive class means it was re-created after being dropped): deleting"
+                "\n  a class takes its annotations with it, so it comes back empty and last in the"
+                "\n  creation order."
+            )
+        detail += (
+            "\n  A name this roster does not declare is drift rather than pending work, and it"
+            "\n  blocks: the version declares every class the project holds, so the head keeps an"
+            "\n  output nothing in the app can name - and a version cannot be edited afterwards,"
+            "\n  so deleting the class later does not put it right. Delete it on"
+            "\n  Settings -> Classes (move its boxes first if it has any - a class-list edit alone"
+            "\n  leaves them under a name nothing can resolve)."
+        )
+    # An unexpected name outranks a missing one on this row: the row carries both facts, and a
+    # blocking finding reported inside a row that reads as a warning is the thing being fixed.
+    level = "fail" if extra else ("warn" if missing else "ok")
+    rows: list[tuple[str, str, str]] = [(level, "class list", detail)]
 
     tainted = {n: words for n, words in ((n, distance_tokens_in(n)) for n in sorted(names)) if words}
     if tainted:
@@ -2333,6 +2426,14 @@ def main(argv: list[str] | None = None) -> int:
         help="JSON from plan_split.py mapping image name -> split; overrides --split per image",
     )
     u.add_argument("--limit", type=int, default=0, help="upload only the first N (smoke test)")
+    u.add_argument(
+        "--allow-public",
+        action="store_true",
+        help=(
+            "acknowledge that the API reports the project as public and send anyway; without it a "
+            "public project is refused before the first image"
+        ),
+    )
     u.add_argument("--restart", action="store_true", help="ignore upload_state.json and resend everything")
     u.add_argument("--dry-run", action="store_true")
     u.set_defaults(func=cmd_upload)

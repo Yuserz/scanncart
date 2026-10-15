@@ -10,11 +10,13 @@ from __future__ import annotations
 import csv
 import json
 import re
+import sys
 from pathlib import Path
+import pytest
 import clean_v2
 import plan_split
 
-from tests.dataset_tool_helpers import _batch, _entries, _two_session_batches
+from tests.dataset_tool_helpers import _batch, _entries, _frame, _two_session_batches
 
 
 # --------------------------------------------------------------------------
@@ -278,3 +280,234 @@ def test_the_acceptance_report_claims_only_the_cells_the_session_shot():
     )
 
 
+# --------------------------------------------------------------------------
+# Staging: what a frame is called on disk
+# --------------------------------------------------------------------------
+
+
+def _negative_shoot(root: Path, frames: int = 2) -> Path:
+    """A flat folder of decodable frames, the shape `--negatives` reads.
+
+    Distinct random pixels rather than one repeated file: the cleaner collapses near-duplicates,
+    so a fixture that looks like one photo would stage a single frame and the names under test
+    would be unobservable.
+    """
+    src = root / "PUSHCART"
+    for i in range(1, frames + 1):
+        _frame(src / f"frame_{i:02d}.jpg")
+    return src
+
+
+def test_a_later_session_cannot_reuse_an_earlier_sessions_staged_names(tmp_path):
+    """The bug this prevents, stated as the collision it is: frames are numbered per class from 1
+    in every output directory, so a second negatives session used to stage as
+    `negative_0001.jpg` again - and every reader joins a split to a frame *by name*, so the new
+    set silently inherited the first one's train/valid/test entries from `splits.json` (measured:
+    the neg2 shoot reported 35/10/5 for frames nothing had planned).
+
+    The default session's names are asserted unchanged rather than only the later ones': the
+    suffix is invisible for `s1`, or every existing staged set, manifest and project filename
+    would be orphaned by a fix for a collision none of them have.
+    """
+    src = _negative_shoot(tmp_path)
+    first, neg1, neg2 = (
+        tmp_path / "cleaned-negatives",
+        tmp_path / "cleaned-negatives-neg1",
+        tmp_path / "cleaned-negatives-neg2",
+    )
+
+    def clean(out: Path, session: list[str]) -> None:
+        assert clean_v2.main(
+            ["clean", "--src", str(src), "--negatives", str(src), "--out", str(out), *session]
+        ) == 0
+
+    clean(first, [])  # the documented first negatives: staged as s1, and so unsuffixed
+    clean(neg1, ["--session", "neg1"])
+    clean(neg2, ["--session", "neg2"])
+
+    def staged(out: Path) -> list[str]:
+        return sorted(p.name for p in (out / "negative").glob("*.jpg"))
+
+    assert staged(first) == ["negative_0001.jpg", "negative_0002.jpg"]
+    assert staged(neg1) == ["negative_neg1_0001.jpg", "negative_neg1_0002.jpg"]
+    assert staged(neg2) == ["negative_neg2_0001.jpg", "negative_neg2_0002.jpg"]
+    # The names a reader joins on are disjoint, which is the whole point - including between
+    # two later sessions, which is what a re-shoot of the same background produces.
+    assert not set(staged(first)) & set(staged(neg2))
+    assert not set(staged(neg1)) & set(staged(neg2))
+    # And the manifest carries what the uploader will send, so the two agree - the rename is not
+    # something only the directory listing knows about.
+    with (neg2 / "manifest.csv").open(newline="", encoding="utf-8") as fh:
+        rows = [r for r in csv.DictReader(fh) if r["status"] == "kept"]
+    assert {r["new_name"] for r in rows} == set(staged(neg2))
+    assert {r["batch"] for r in rows} == {"negative"}
+    assert {r["session"] for r in rows} == {"neg2"}
+
+
+# --------------------------------------------------------------------------
+# Uploading to a project the API reports as public
+# --------------------------------------------------------------------------
+
+
+class _FakeResponse:
+    """Just enough of an httpx response for `cmd_upload`: a status, a body, text for errors."""
+
+    def __init__(self, status_code: int, body: dict):
+        self.status_code = status_code
+        self._body = body
+        self.text = json.dumps(body)
+
+    def json(self):
+        return self._body
+
+
+class _FakeHttpx:
+    """A stand-in for the httpx module that `cmd_upload` imports *inside* itself.
+
+    The import is function-local on purpose - the tool's own "httpx is not installed" message
+    depends on it - so the module cache is the only seam: patching an attribute on `clean_v2` would
+    leave the `import httpx` in the function reading the real module. Every request is recorded,
+    because a gate whose entire job is to send nothing has to be judged on what was actually sent
+    rather than on the exit status alone.
+    """
+
+    def __init__(self, public: bool = True):
+        self.public = public
+        self.posts: list[dict] = []
+        self.gets: list[str] = []
+
+    def Client(self, *args, **kwargs):  # noqa: N802 - named after the httpx API it replaces
+        return _FakeClient(self)
+
+
+class _FakeClient:
+    def __init__(self, owner: _FakeHttpx):
+        self.owner = owner
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def get(self, url, params=None):
+        self.owner.gets.append(url)
+        return _FakeResponse(
+            200,
+            {
+                "project": {
+                    "type": "object-detection",
+                    "images": 1343,
+                    "versions": 1,
+                    "public": self.owner.public,
+                }
+            },
+        )
+
+    def post(self, url, params=None, files=None, timeout=None):
+        self.owner.posts.append(dict(params or {}))
+        return _FakeResponse(200, {"id": "asset-1"})
+
+
+def _staged_for_upload(tmp_path: Path, names: tuple[str, ...]) -> Path:
+    """A staged set holding only what `upload` reads: each manifest entry, and the file it names."""
+    out = tmp_path / "cleaned-negatives"
+    (out / "negative").mkdir(parents=True)
+    for name in names:
+        (out / "negative" / name).write_bytes(b"jpeg")
+    entries = [
+        {
+            "new_name": name,
+            "class": "negative",
+            "distance": "",
+            "batch": "negative",
+            "session": "neg2",
+            "tags": ["negative", "neg2"],
+            "status": "kept",
+        }
+        for name in names
+    ]
+    (out / "manifest.json").write_text(json.dumps(entries), encoding="utf-8")
+    return out
+
+
+def _upload_args(out: Path, *extra: str) -> list[str]:
+    return [
+        "upload", "--out", str(out), "--project", "snc-grocery", "--api-key", "k",
+        "--session", "neg2", *extra,
+    ]
+
+
+def test_the_public_project_gate_names_the_flag_that_opens_it():
+    """The decision itself, all four ways. A gate that cannot be opened is a wall, and one that
+    opens itself is the warning the gate exists to replace - so both directions are pinned."""
+    assert clean_v2.public_send_refusal("snc-grocery", public=False, acknowledged=False) == ""
+    assert clean_v2.public_send_refusal("snc-grocery", public=False, acknowledged=True) == ""
+    assert clean_v2.public_send_refusal("snc-grocery", public=True, acknowledged=True) == ""
+
+    refusal = clean_v2.public_send_refusal("snc-grocery", public=True, acknowledged=False)
+    assert "PUBLIC" in refusal
+    assert "snc-grocery" in refusal
+    # The remedy, spelled as the flag that is actually parsed - a refusal naming a flag that does
+    # not exist is the failure this is written to avoid.
+    assert "--allow-public" in refusal
+
+
+def test_upload_refuses_a_public_project_and_sends_nothing(tmp_path, monkeypatch):
+    """The whole point, measured on what left the machine: the project is public, no
+    acknowledgement was given, so the run stops - after it has read the project (that is how it
+    knows) and before the first POST. No resume record either, so a later run starts clean."""
+    out = _staged_for_upload(tmp_path, ("negative_neg2_0001.jpg", "negative_neg2_0002.jpg"))
+    fake = _FakeHttpx(public=True)
+    monkeypatch.setitem(sys.modules, "httpx", fake)
+
+    with pytest.raises(SystemExit) as exit_:
+        clean_v2.main(_upload_args(out))
+
+    assert "--allow-public" in str(exit_.value)
+    assert fake.gets, "the project was never read, so this refused for the wrong reason"
+    assert fake.posts == [], "a refused upload sent something"
+    assert not (out / "upload_state.json").exists()
+
+
+def test_upload_proceeds_once_the_public_project_is_acknowledged(tmp_path, monkeypatch):
+    """And the gate opens: the same project, the same frames, with the acknowledgement - landing in
+    the session's own batch, under the distance-first tag the upload endpoint can carry."""
+    names = ("negative_neg2_0001.jpg", "negative_neg2_0002.jpg")
+    out = _staged_for_upload(tmp_path, names)
+    fake = _FakeHttpx(public=True)
+    monkeypatch.setitem(sys.modules, "httpx", fake)
+
+    assert clean_v2.main(_upload_args(out, "--allow-public")) == 0
+
+    assert len(fake.posts) == len(names)
+    assert {p["name"] for p in fake.posts} == set(names)
+    assert {p["batch"] for p in fake.posts} == {"negative_neg2"}
+    state = json.loads((out / "upload_state.json").read_text(encoding="utf-8"))
+    assert set(state) == set(names) and all(v["ok"] for v in state.values())
+
+
+def test_a_private_project_is_never_asked_to_acknowledge_anything(tmp_path, monkeypatch):
+    """The gate has to be invisible where it does not apply, or every ordinary upload grows a flag
+    nobody needs and the flag stops meaning anything."""
+    out = _staged_for_upload(tmp_path, ("negative_neg2_0001.jpg",))
+    fake = _FakeHttpx(public=False)
+    monkeypatch.setitem(sys.modules, "httpx", fake)
+
+    assert clean_v2.main(_upload_args(out)) == 0
+    assert len(fake.posts) == 1
+
+
+def test_a_dry_run_on_a_public_project_still_prints_its_plan(tmp_path, monkeypatch, capsys):
+    """The evidence the decision needs: a dry run sends nothing, so it is how someone sees which
+    batches and how many frames are at stake. Refusing to print that would leave the only way to
+    inspect the plan behind the flag the plan exists to inform."""
+    out = _staged_for_upload(tmp_path, ("negative_neg2_0001.jpg", "negative_neg2_0002.jpg"))
+    fake = _FakeHttpx(public=True)
+    monkeypatch.setitem(sys.modules, "httpx", fake)
+
+    assert clean_v2.main(_upload_args(out, "--dry-run")) == 0
+    printed = capsys.readouterr().out
+
+    assert "batch negative_neg2" in printed and "2 to send" in printed
+    assert fake.posts == []

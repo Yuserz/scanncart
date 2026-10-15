@@ -19,6 +19,24 @@ server-side labels.
 
 ## 0. Before anything: what is actually missing
 
+Every gate in this document on one page, in the order this document runs them:
+
+```bash
+./sidecar/.venv/Scripts/python.exe sidecar/tools/readiness.py
+```
+
+One row per gate — the label state (§3–§4), the hard negatives, the capture gap (§2), the human pass
+(§4), whether the merged set still matches the labels it was built from (§6), the doctor (§7) and this
+machine's own budget (§8) — and every row is read from the tool that owns it, so the page cannot
+disagree with the command it summarises. **Exit 1 means a gate would refuse the run**: `--yes` would
+exit 2 there without spending GPU time. A `WARN` row is the dataset being *unfinished* rather than
+unusable — an unmarked hard negative, a short capture cell, frames nobody has opened — which still
+trains, so if you only want to know whether a run can start, exit 0 is the answer you are after.
+`make readiness READINESS_ARGS=--strict` asks the other question and fails on those too, which is the
+reading for a run whose numbers are going into §11.
+
+Then the labeling state on its own, which is the number §2 moves:
+
 ```bash
 ./sidecar/.venv/Scripts/python.exe sidecar/tools/label_progress.py
 ```
@@ -203,6 +221,53 @@ decisions (provider `roboflow:snc-grocery`) — the footing v1's hand-labelled f
 unless `--awaiting-review` says otherwise, which records them as a provider's unread boxes and puts
 them in the *Review* worklist (test split first) and in §11's machine-only count.
 
+### If the cloud copy falls behind instead — `push_labels.py`
+
+The reverse direction. The merge reads the local tree, so `import_labels.py` closes the caption
+above — but several cloud-side readers (`label_progress.py --source roboflow`, `generate_version.py
+--check`, the suggester) read the *project*, and a decision made locally is invisible to them until
+it is sent back. `push_labels.py` diffs the annotator's tree against what the project holds and
+pushes exactly the gap: the staged photo (again — with the batch and tags its manifest record
+carries, through the same `tags_for`/`batch_for_session` helpers §3's uploader used), and the
+decision as a VOC annotation. Each frame is verified by reading its own record back after the
+push; a frame that does not read back as the local decision is a reported `MISMATCH`, never a
+silent one.
+
+```bash
+./sidecar/.venv/Scripts/python.exe sidecar/tools/push_labels.py           # dry run: what would be pushed
+./sidecar/.venv/Scripts/python.exe sidecar/tools/push_labels.py --apply
+./sidecar/.venv/Scripts/python.exe sidecar/tools/push_labels.py --stems safeguard_0221 --apply
+make push-check                                                          # the gate, read-only
+```
+
+Dry run by default — `--apply` is the only thing that sends anything. `--stems` narrows the diff to
+named frames, and `--any-outstanding` adds the recovery path: cloud frames that exist but were never
+annotated (the upload landed fine, the annotation write did not).
+
+`make push-check` (`push_labels.py --check`) is the gate over all of that: read-only, no uploads,
+it exits 0 only when every local decided frame is in the project under its own name, or under the
+byte-identical twin's name with the same decision — and exits 1, each frame named, when the project
+has never received one under any name. Exit 2 is the inputs it cannot check — an absent or empty
+local tree, the ordinary case on a bare CI checkout, since the annotator's tree is gitignored; the
+decision rules themselves are what `tests/test_push_labels_check.py` holds to the push's own dedupe
+semantics on synthetic trees, which is why the verdict is checked in CI even where the live data
+cannot ship. Run it whenever a readback or a cloud-side number that moved raises the question,
+before a whole re-diff does.
+
+| Expect | Why it matters |
+|---|---|
+| `frames to push: N of M held locally` | the diff, measured rather than assumed. `0 of M` means the two sides already agree — run it, it also self-checks |
+| per frame `readback labels=[…] tags=[…] -> OK` | the write is not the proof; the readback is (the reads are eventually consistent and poll until they converge) |
+| `NOTE …: a null cannot be written over the API` | **the known limit**: the annotate endpoint rejects an empty annotation file and the null flag exists only in the UI, so a null the cloud lacks is *reported* as a hand-marks frame rather than half-written. That is usually not a loss — see the dedupe row below; a genuinely unmatched null is marked in the project's UI by hand |
+| `NOTE …: the upload deduped onto …` | a byte-identical photo (two source files, same sha256) dedupes onto the record the project already holds — under the *twin's* name. The note names it and prints what that record says, so the frame is explained rather than claimed under a wrong stem. This is also why a pushed null can be fine: if its photo is byte-identical to a staged twin, the twin's record already holds the null |
+| `FAIL …` lines at the end of the run | the frames to fix and re-run; nothing downstream reads a push that wasn't verified |
+| re-run `label_progress.py --source roboflow` after `--apply` | the project snapshot, like all snapshots, does not refresh itself — the number it prints is what the cloud-side tools will read |
+
+Nothing here touches the annotator's tree: it stays the source of truth, and the push only ever
+adds to the project. A frame the project labels *differently* from the tree is not repaired by the
+diff (the frame is not missing — it disagrees), so a conflict is fixed by hand in one of the two,
+then re-run; the readback is what flags that rather than letting the older copy win.
+
 ## 5. Plan the split, then freeze it
 
 `plan_split` decides 70/20/10 over the batches and writes the plans; `label_progress
@@ -386,7 +451,8 @@ recorded distances says the breakdown was *skipped* rather than reporting nothin
 
 Writes `sidecar/models/scanncart-grocery-v2.pt` **plus** `scanncart-grocery-v2.json` beside it
 (or `--name <stem>` for a second weight of the same generation — the two on this machine are
-`scanncart-grocery-v2-stretch` and `scanncart-grocery-v2-letterbox`),
+`scanncart-grocery-v2-stretch` and `scanncart-grocery-v2-letterbox` — or `--variant v2.1` for a
+retrain, which names the run and the `--val` run as well as the weight),
 carrying everything `--val` and the run's own `args.yaml` know and nothing else does:
 `resize_mode` (`stretch`), `class_names` (the label set), `imgsz` (the size the app must feed it)
 and the `augmentation` table. Refuses to overwrite an existing weight without `--force`, because
@@ -398,6 +464,24 @@ the picker is keyed by filename.
 | `resize_mode` | leave it on **`auto`** — it honours the record. An explicit `letterbox` overrides it and is the one value worth warning about |
 | `imgsz` | follows the weight: switching `active_model` in Admin sets `imgsz` to the size the record names (a save that names `imgsz` itself wins). Check it reads the run's size after the switch |
 | Test connection | `7 classes`, and no class warning. A distance-split weight would read `21 classes` with the distance problem named |
+
+A **retrain** of the same generation is this chain again with `--variant <M>` on each `train_model.py`
+command (`--variant v2.1`): the same seven classes and the same geometry, trained from a later
+version of the same project with the capture gap filled (`MODEL_TRAINING.md` §8.2). The flag is what
+keeps the retrain off the run and the weight it retrains — it moves the export directory, the run,
+the `--val` run and the installed `scanncart-grocery-v2.1.pt` together — while the record it installs
+still says `generation: v2` and carries the version it came from in `source`. That record is what
+the Admin Panel's Model field shows per weight: which classes the weight declares, and what `--val`
+measured for it, class by class and distance by distance. With no `--version` the `source` is derived
+instead, from the run being installed (or from the set the command trained on itself, when `--yes`
+ran it): a weight trained from a local merge names the merge (`local merge merged-v2`), because that
+is a dataset and not a version. A record that can name neither says
+so as it is written, and `sidecar/tools/backfill_provenance.py` is the repair — it reads the dataset
+out of the run that produced the weight and merges it into `source`. That works after the run itself
+is gone, because the answer was written down while it still existed: `train_model.py` records each
+trained weight's bytes and the dataset they came from in the machine-local source index
+(`sidecar/data/source_index.json`), which `backfill_provenance.py` consults first and `--install`
+falls back on — so neither the run project nor the workspace has to be on disk to name a dataset.
 
 ```bash
 ./sidecar/.venv/Scripts/python.exe sidecar/tools/spec_check.py --generation v2
@@ -476,7 +560,7 @@ node .claude/skills/run-desktop/driver.mjs classlist
 |---|---|
 | the run | **13 `PASS` lines, exit 0** — one per check, so a new check raises the number; any `FAIL` exits non-zero, which is what lets it gate a change |
 | the fixture | `scratch weight: <n> bytes` — a real `DetectionModel('yolo11n.yaml', nc=21)` (one head output per product and distance, read from the roster), built and deleted by the mode itself |
-| Admin · *Weights on disk* | `… — 21 classes` with ⚠ `21 of 21 class name(s) carry a distance`, **before** the weight is selected |
+| Admin · *Weights on disk* | `21 classes` on the weight's row, with ⚠ `21 of 21 class name(s) carry a distance`, **before** the weight is selected |
 | Live · banner and chip | the same sentence in `live-class-warnings`, and `21` · `classes · 1 finding` in amber — from a running capture, not a fake status |
 | the banner is *painted* | `{"w":952,"h":200,"onScreen":true,"shown":true}`: a non-zero box inside the viewport, because `textContent` cannot tell a rendered element from a collapsed one |
 | cleanup | `scratch weight removed` and `settings put back` — both in a `finally`, so they run even when a check throws |
@@ -537,9 +621,10 @@ with the geometry in code, and download the export rather than using the **Downl
 ```
 
 `--check` is the one to read before committing: it reads the project and prints everything `--yes`
-would bake in — the class list **in order** with any extra/missing class named against the roster,
-the geometry being sent, and how many images carry a decision (`858 labeled, 0 marked null, 575 not
-looked at yet` is what the project looked like the last time this was run). Only annotated frames
+would bake in — the class list **in order**, with any roster class the project has not created yet
+named against it, the geometry being sent, how many images carry a decision (`858 labeled, 0 marked null, 575 not
+looked at yet` is what the project looked like the last time this was run), and the hard negatives
+per batch — how many of each are marked null and how many nobody has looked at yet. Only annotated frames
 enter a version, so that last number *is* the size of the set it would freeze — a version is a
 snapshot, not a work in progress, and it cannot be revisited. Spending nothing is the point: it is
 the same readout `--yes` prints one line before the POST.
@@ -549,20 +634,29 @@ gives a zip, and the export is only a build once it appears on the page (the pol
 `--download` automates).
 
 A version number is consumed and cannot be reused, and `--yes` (or `--check`) refuses **before** the
-POST — fail closed, exit 2, nothing spent — on any of three states: a class list carrying a
-*distance* (it would train one output per product-and-distance), one whose names are the roster's in
-**another order** (the export declares the project's order, so the version would bake a head whose
-indices mean a different product, and the first check downstream that can see it is the doctor, on an
-export that already exists), and a project where **nothing is annotated** (the version would freeze
-an empty set). The first two print their two lists side by side: the fix is Settings → Classes, and
-the order is not settable by API.
+POST — fail closed, exit 2, nothing spent — on any of five states: a class list carrying a
+*distance* (it would train one output per product-and-distance); one holding a **class the roster
+does not declare**, which is an extra output the app has no name for and the shape a *re-created*
+class arrives in, since deleting a class and creating it again is how a dropped one comes back
+(§8.1); one whose names are the roster's in **another order** (the export declares the project's
+order, so the version would bake a head whose indices mean a different product, and the first check
+downstream that can see it is the doctor, on an export that already exists); a project where
+**nothing is annotated** (the version would freeze an empty set); and a **negatives batch holding a
+frame with no null annotation** (a background frame enters a version only once it is marked null, so
+an unmarked one is excluded — and nothing else in the chain can show the loss, because a frame with
+nothing to draw looks the same marked or not). The first three print their two lists side by side:
+the fix is Settings → Classes, and the class order is not settable by API. The last prints the batch
+it is refusing on, so the fix is the annotator's null tool for the frames it names.
 
-A class that is present but not in the roster — an extra, a missing name — is **reported as a
-warning, not refused**: that verdict belongs to `label_classes.py`, which is the tool that reads the
-live class list and can create a missing class, and its remedy is the Classes tab. It is printed
-loudly because a version declares every class it is given, so the head ends up with outputs the app's
-roster cannot name. (When this was last checked, the project still held `Palmolive Naturals Bar Soap
-85g` — dropped from the roster in §8.1 — as class 2 of 8.)
+A roster class the project has not created yet is the one direction that is **reported rather than
+refused**, because it is work not done rather than drift: `label_classes.py --create-classes` creates
+it, and its frames are shot and labeled afterwards. It is printed loudly, because a version declares
+only the classes it is given, so a head trained on that list could never predict the missing product
+— and `train_model.check_export` refuses such an export, by name, at the first run. The other
+direction is the refusal above, and `sanity` reports it as a blocking problem at the other end of the
+chain — before a shoot instead of before a version. (When this was last checked, the project still
+held `Palmolive Naturals Bar Soap 85g` — dropped from the roster in §8.1 — as class 2 of 8, so
+`--yes` refuses on that project until the class is deleted.)
 
 ---
 

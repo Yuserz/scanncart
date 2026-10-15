@@ -411,18 +411,24 @@ and `inference-watch-detail` inside it), and for the dataset panel
 and `dataset-backlog-null` inside them) / `dataset-backlog-summary` /
 `dataset-backlog-done` / `dataset-distance` / `refresh-dataset`, with the capture gap in
 `dataset-tier-a` → `dataset-tier-a-summary` + `dataset-tier-a-cells`, and for the
-Model field `installed-models` (one `installed-model-<value>` per weight) +
+Model field `installed-models` (one `installed-model-<value>` per weight, each carrying
+`installed-model-completeness-<value>` — the `n of 4 recorded` count — and
+`installed-facts-<value>` → one `installed-fact-<value>-<key>` row per fact, `key` being
+`geometry` / `generation` / `validation` / `source`: the value where the record states it, and
+`not recorded — written by <writer>` where it does not) +
 `model-resize-mismatch` (only present while the setting disagrees) +
 `unrecorded-resize-mode` (the assumption, with `record-resize-mode` — the button that
 records it — inside it), `probe-result` (Test connection's line) and `probe-geometry`
 (the remote geometry pair, with `data-state` of `same` / `resized` / `unreported`), and
 below those
-the measured score: `model-validation` → one `model-validation-test` per split, with
-`model-validation-metrics` and one `model-validation-class-<name>` per class, or
-`model-validation-missing` when the weights have a record but no measurement — plus, when
-the record has a breakdown, `model-validation-by-distance` (the table) with one
-`model-validation-<distance>-<class>` cell per class and distance, and
-`model-validation-distance-misses` for the line naming what is under the floor at a distance. The Live
+the measured score, when the record carries one: `model-validation` → one
+`model-validation-test` per split, with `model-validation-metrics` and one
+`model-validation-class-<name>` per class — plus, when the record has a breakdown,
+`model-validation-by-distance` (the table) with one `model-validation-<distance>-<class>` cell
+per class and distance, and `model-validation-distance-misses` for the line naming what is under
+the floor at a distance. A weight with a record and no measurement renders no scores block at all:
+there is nothing to score, and the gap is the `validation` row of the completeness view above it,
+which names `--val` as the writer. The Live
 view's copies of the resize warning are `live-resize-mismatch` (an explicit setting
 contradicting the record) and `live-assumed-geometry` (nothing recorded, so `auto` is
 guessing) — both present only while capture runs, and mutually exclusive — the second

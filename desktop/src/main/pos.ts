@@ -154,9 +154,10 @@ export class PosController {
     if (bound !== null && !bound.startsWith(PRACTICE_REF_PREFIX)) {
       throw new Error('A customer session is open on this station; practice is unavailable.')
     }
-    // A fresh run each time: re-binding the same ref would keep the last run's basket.
-    if (bound !== null) this.basket.unbind()
-    await this.basket.bind(`${PRACTICE_REF_PREFIX}${Date.now()}`)
+    // A fresh run each time: re-binding the same ref would keep the last run's basket. The swap
+    // is one operation — unbinding and rebinding separately used to push the transient unbound
+    // readout mid-way, which unmounts the "practice running" row for the length of the rebind.
+    await this.basket.rebind(`${PRACTICE_REF_PREFIX}${Date.now()}`)
     this.pushBasketState()
     return this.getBasketState()
   }

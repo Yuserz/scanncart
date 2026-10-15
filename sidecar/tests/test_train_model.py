@@ -474,6 +474,32 @@ def test_run_command_matches_the_hyperparameters_the_doc_quotes():
     assert kwargs["device"] == "0"
 
 
+def test_the_variant_run_name_is_what_training_writes_into():
+    """`--variant v2.1` moves the run directory (`generation.variant`'s own docstring), and the
+    printed command and the `model.train` call it stands in for both have to read the variant's
+    name: resolved apart, the epochs train into the generation's auto-incremented directory
+    (`scanncart-grocery-v2-6`) while the end-of-run completeness check looks under the variant's
+    (`scanncart-grocery-v2.1`) and fails a finished run. Both sites are scanned as text because
+    the mismatch lives in `main()`'s call sites, not in a helper a unit test can drive.
+    """
+    source = Path(train_model.__file__).read_text(encoding="utf-8")
+    assert "train_kwargs(data_yaml, run_project, generation.run_name" not in source
+    assert "command_line(data_yaml, run_project, generation.run_name" not in source
+    # The fixed sites, counted so a one-site revert is the same failure shape as a full one:
+    # both the echo and the call use the variant's name, or neither artifact is trustworthy.
+    assert source.count("run_project, named.run_name") == 2
+
+
+def test_resolve_run_train_writes_the_variant_directory(tmp_path):
+    """The behavior the call-site scan above is about: with a variant, `--yes` writes into
+    `<project>/scanncart-grocery-v2.1` (fresh dirs get the name verbatim), not the generation's
+    auto-incremented `scanncart-grocery-v2-6`.
+    """
+    named = generations.V2.variant("v2.1")
+    assert train_model.resolve_run(tmp_path, named, "", training=True) == tmp_path / "scanncart-grocery-v2.1"
+    assert train_model.resolve_run(tmp_path, generations.V2, "", training=True) != tmp_path / "scanncart-grocery-v2.1"
+
+
 def test_the_augmentation_is_the_docs_table_and_the_run_applies_it():
     """4's table, not ultralytics' defaults - which are *not* the table: `degrees` is 0.0 there
     and `mosaic` is 1.0. A run that inherits them trains a model the doc does not describe, and

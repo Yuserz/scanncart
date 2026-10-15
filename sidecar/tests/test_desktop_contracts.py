@@ -51,10 +51,16 @@ from tests.desktop_mirrors import (
     ts_value,
 )
 from tests.wording import (
+    AgreementContract,
+    SurfaceSpan,
     WordingContract,
+    assert_agreement_canary_fires,
     assert_canary_fires,
     assert_fragments_present,
+    assert_surfaces_agree,
     assert_wording_stays_retired,
+    normalize_wording,
+    read_surface,
 )
 
 pytestmark = pytest.mark.mirror
@@ -600,6 +606,54 @@ RESIZE_REMEDY_CONTRACT = WordingContract(
                 "not need the view switch it used to",
             ),
         ),
+        # The two doors into one record. The button and `--install` write the same file, and the
+        # `source` neither of them can derive is theirs to describe identically: a confirmation that
+        # stopped at "recorded" would leave the operator believing the record is complete.
+        (
+            "desktop/src/renderer/src/lib/resizeMode.ts",
+            (
+                "the button attests to the geometry, and only a training run ever knew the dataset",
+                "the gap would be silent on both screens",
+                "The two repairs are the ones the CLI's `--install` note names",
+                "because both doors write this one field and must not describe it differently",
+                "Its `source` is left empty, though: nothing in it names the dataset these weights came",
+                # Starts at `button` because the clause is assembled from adjacent literals: a
+                # fragment crossing one carries the `' + '` between them and matches nothing.
+                "button records the geometry and knows nothing about training runs.",
+                # Split at the same kind of boundary, for the same reason.
+                "`sidecar/tools/backfill_provenance.py` names a local",
+                "merge by matching the weights' bytes to it.",
+                # The index, on both sides of the branch: one is written while a run still exists, so
+                # it is the one thing that can still name a dataset after that run is gone.
+                "The index at `sidecar/data/source_index.json` does name it, though",
+                "no training run has to still be around.",
+                "The index at `sidecar/data/source_index.json` has",
+                "nothing for them either, so the run is the only thing left that can name it.",
+            ),
+        ),
+        (
+            "sidecar/tools/train_model.py",
+            (
+                "The record just written has an empty `source`: nothing in it names the dataset",
+                "That field is the one place the Admin Panel reads the fact from",
+                "Which way to fill it depends on what trained these weights",
+                "which records `{project} version N`",
+                "put the run and the set it trained on back where they were, then run",
+                "`sidecar/tools/backfill_provenance.py` (`--dry-run` first) - it matches the",
+                # The index named where it is asked and found wanting: the difference between "no run
+                # holds these bytes" and "nowhere was looked" is the difference between waiting for a
+                # run to turn up and checking the machine that wrote the record.
+                "The source index has nothing for these bytes either, so no run recorded on this",
+                "(that file is written while a run is still on disk - app/source_index.py).",
+            ),
+        ),
+        (
+            "sidecar/models/README.md",
+            (
+                "the button agrees rather than implying otherwise: what it writes carries no `source`,",
+                "so its confirmation says that field is still empty and names the same two writers that fill it",
+            ),
+        ),
     ),
     # The marker sits inside the fragment's span, as a wrapped comment would put it, so the
     # canary proves the marker-dropping and not only the matching - the lesson from the null
@@ -625,6 +679,144 @@ def test_the_resize_remedy_wording_guard_is_wired_to_its_end():
     """The guard's own canary: a fixture carrying its marker inside the fragment's span, matched
     exactly, or the presence test above could pass while checking nothing."""
     assert_canary_fires(RESIZE_REMEDY_CONTRACT)
+
+
+#: The claims that *span* surfaces rather than living on one. Every `WordingContract` above
+#: answers "does this surface still carry the fact?", one surface at a time - which is blind to the
+#: failure these rows exist for: a rewrite that keeps every pinned fragment in every row and still
+#: sends two surfaces to different tools. A row states the tokens the surfaces are agreeing *about*
+#: and the region each keeps its copy in, and the two parametrized tests below walk the table. The
+#: engine (`tests/wording.py`) validates a row at construction, so a claim that cannot disagree with
+#: itself - one surface, no tokens, a token that is part of another - fails rather than pinning
+#: nothing.
+RECORD_REMEDY_AGREEMENT = AgreementContract(
+    name="the two doors into one record",
+    owner=(
+        "desktop/src/renderer/src/lib/resizeMode.ts::recordedConfirmation and "
+        "sidecar/tools/train_model.py::print_provenance_note"
+    ),
+    claim=(
+        "the panel's confirmation and `--install`'s own note no longer send an operator to the "
+        "same places for an empty `source`."
+    ),
+    facts=(
+        "Both doors write that one field into the record, so they have to describe the gap the "
+        "same way: `--version` travels with `--install` (the number `generate_version.py` "
+        "reported), `backfill_provenance.py` merges a named dataset into the record - the only "
+        "route for the local merges `build_dataset.py` produces, where no version number exists - "
+        "and the source index (`app/source_index.py`) is the file that makes either possible "
+        "after the training run is gone."
+    ),
+    tokens=("--version", "backfill_provenance.py", "source_index"),
+    surfaces=(
+        SurfaceSpan(
+            surface="desktop/src/renderer/src/lib/resizeMode.ts",
+            opens="export function recordedConfirmation",
+            # The function's own closing brace, not the next `export`: this is the last export in
+            # the file, so that anchor never matched - which the old hand-rolled reader hid by
+            # falling back to reading to the end of the file, where a mention from anywhere in it
+            # could have stood in for the copy this row is about.
+            closes="\n}\n",
+            label="the `Record it now` confirmation",
+        ),
+        SurfaceSpan(
+            surface="sidecar/tools/train_model.py",
+            opens="def print_provenance_note",
+            closes="\ndef ",
+            label="`--install`'s note",
+        ),
+    ),
+    canary_spans=(
+        (
+            "the `Record it now` confirmation",
+            "the record it just wrote leaves `source` empty, so this line names the way back: "
+            "`--version` for a generated version, `backfill_provenance.py` for a local merge, or "
+            "the index at sidecar/data/source_index.json when there is no run left to ask",
+        ),
+        (
+            "`--install`'s note",
+            "the index at `sidecar/app/source_index.py` has nothing for these bytes either, so "
+            "pass `--version N` for a generated version, or run `backfill_provenance.py`",
+        ),
+    ),
+)
+
+#: The one claim where a surface is *code* rather than prose: `minTrackExpiryS` has to consult the
+#: mirrored floors by name. A literal in its body is a second floor the value comparison above
+#: cannot see - it would answer from the literal while the exported map still matched this repo's
+#: `MIN_TRACK_EXPIRY_S_BY_BACKEND`, which is the failure the bespoke regex that used to live in that
+#: test was written for. Both ends are read as spans now, so the pair is stated once.
+EXPIRY_ACCESSOR_AGREEMENT = AgreementContract(
+    name="the track-expiry accessor and the floors it reads",
+    owner=(
+        "desktop/src/renderer/src/lib/settingsFields.ts::minTrackExpiryS (the accessor) and "
+        "sidecar/app/settings_store.py (the floors)"
+    ),
+    claim=(
+        "the desktop's track-expiry accessor no longer reads the floors by the names the sidecar "
+        "declares them under."
+    ),
+    facts=(
+        "The per-backend floors have one owner (`settings_store.py`) and one consumer "
+        "(`minTrackExpiryS`), which is what keeps the warning the panel shows and the value the "
+        "sidecar compares the setting against answering from the same two numbers."
+    ),
+    tokens=("MIN_TRACK_EXPIRY_S_BY_BACKEND", "MIN_REMOTE_TRACK_EXPIRY_S"),
+    surfaces=(
+        SurfaceSpan(
+            surface="desktop/src/renderer/src/lib/settingsFields.ts",
+            opens="export function minTrackExpiryS",
+            closes="\n}\n",
+        ),
+        SurfaceSpan(
+            surface="sidecar/app/settings_store.py",
+            opens="# A remote round trip must not outlast the tracker's memory of a track",
+            closes="\n\n\ndef min_track_expiry_s",
+        ),
+    ),
+    canary_spans=(
+        (
+            "desktop/src/renderer/src/lib/settingsFields.ts",
+            "export function minTrackExpiryS(backend: string): number { return "
+            "MIN_TRACK_EXPIRY_S_BY_BACKEND[backend] ?? MIN_REMOTE_TRACK_EXPIRY_S }",
+        ),
+        (
+            "sidecar/app/settings_store.py",
+            "MIN_TRACK_EXPIRY_S_BY_BACKEND = {'local_api': 2.0, 'cloud_api': 5.0} # conservative "
+            "fallback for a backend not listed above: MIN_REMOTE_TRACK_EXPIRY_S = 5.0",
+        ),
+    ),
+)
+
+#: Every agreement row, walked by the two tests below. A new claim that two surfaces must agree is
+#: a row here rather than a test of its own: the table is where the fact, its surfaces and the drift
+#: it can suffer are stated once, and the check that reads it is already written.
+AGREEMENTS = (RECORD_REMEDY_AGREEMENT, EXPIRY_ACCESSOR_AGREEMENT)
+
+
+@pytest.mark.parametrize("agreement", AGREEMENTS, ids=lambda agreement: agreement.name)
+def test_every_cross_surface_agreement_holds(agreement):
+    """The claims that span surfaces: every row's surfaces still make the same claim.
+
+    Parametrized rather than hand-written per claim, because the bespoke version of this test -
+    slicing each door's own definition out of its file, then asserting both named the same writers -
+    is exactly the shape every claim like it has: the surfaces differ, the check does not. A failure
+    names the row, the surface and the token, and says whether the token is gone from one surface or
+    from all of them, because those are two different repairs.
+    """
+    assert_surfaces_agree(agreement)
+
+
+@pytest.mark.parametrize("agreement", AGREEMENTS, ids=lambda agreement: agreement.name)
+def test_every_cross_surface_agreement_guard_can_see_drift(agreement):
+    """The guard's own canary: each token dropped from each surface in turn, caught and named.
+
+    A row whose surfaces were read wrongly - one file read whole, one anchor matching the wrong
+    region - would pass while comparing nothing, and every other test here would stay green with
+    it. The canary mutates one surface-and-token pair at a time and requires exactly that pair to be
+    reported, which is what makes each token load-bearing rather than decorative.
+    """
+    assert_agreement_canary_fires(agreement)
 
 
 #: What the remote backends cost per call, and where a maintainer can read it. This contract's
@@ -730,6 +922,7 @@ def test_the_rest_response_models_mirror_the_sidecar():
         (schemas.ClassRecall, "ClassRecall"),
         (schemas.DistanceRecall, "DistanceRecall"),
         (schemas.ValidationRecord, "ValidationRecord"),
+        (schemas.RecordFact, "RecordFact"),
         (schemas.InstalledModel, "InstalledModel"),
         (schemas.ModelsResponse, "ModelsResponse"),
         (schemas.ControlSupportPayload, "CameraControlSupport"),
@@ -769,17 +962,11 @@ def test_the_per_backend_track_expiry_floor_mirrors_the_sidecar():
         f"desktop={ts_scalar(source, 'MIN_REMOTE_TRACK_EXPIRY_S')} "
         f"sidecar={MIN_REMOTE_TRACK_EXPIRY_S}"
     )
-    # The accessor is the desktop's own wiring rather than a mirrored value, so it is read
-    # textually: a fallback replaced by a literal would put a second number on screen that the
-    # comparisons above could not see, since it would no longer be the exported constant.
-    function = re.search(r"export function minTrackExpiryS\b.*?\n\}", source, re.DOTALL)
-    assert function is not None, "the desktop no longer exports minTrackExpiryS"
-    assert "MIN_TRACK_EXPIRY_S_BY_BACKEND" in function.group(0), (
-        "minTrackExpiryS no longer reads the mirrored map"
-    )
-    assert "MIN_REMOTE_TRACK_EXPIRY_S" in function.group(0), (
-        "minTrackExpiryS no longer falls back to the mirrored constant"
-    )
+    # The accessor's own wiring is a claim about two surfaces rather than a mirrored value: a
+    # fallback replaced by a literal would put a second number on screen that the comparisons above
+    # could not see, since it would no longer be the exported constant. It reads as a row of the
+    # agreement table below instead of a regex here.
+
 
 
 def test_the_experimental_model_set_mirrors_the_sidecar():

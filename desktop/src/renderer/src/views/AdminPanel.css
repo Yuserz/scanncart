@@ -456,8 +456,53 @@
   line-height: 1.35;
 }
 
-.installed-models-source {
+.installed-model-head {
+  margin: 4px 0 0;
+}
+
+/* How complete the record is, in one number, beside the weight it describes. Read first, so a
+   weight with nothing written down is legible without reading four rows below it. */
+.installed-model-completeness {
+  opacity: 0.8;
+}
+
+/* One row per fact the record can carry: two columns, tighter than the validation grid below,
+   because this is read for what is *missing* rather than for numbers. No colour of its own on
+   purpose - a gap is a fact about a file someone has to run a command to fill, not a fault, and
+   the count above already says how many there are. */
+.installed-model-facts {
+  margin: 1px 0 0;
+  border-collapse: collapse;
+  font-size: 10.5px;
+}
+
+.installed-model-facts th {
+  padding: 0 6px 0 0;
+  text-align: left;
+  font-weight: 400;
+  color: inherit;
+  opacity: 0.85;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.installed-model-facts td {
+  padding: 0;
+  color: inherit;
+  vertical-align: top;
+}
+
+.installed-fact-missing {
+  opacity: 0.85;
+}
+
+.installed-fact-note {
   opacity: 0.75;
+}
+
+.installed-models-classes {
+  display: block;
+  margin-top: 1px;
 }
 
 /* What the selected weights scored, under the entry that needs them. Reference material like

@@ -195,6 +195,26 @@ export class BasketTracker {
     this.changed()
   }
 
+  /**
+   * Exchange the bound ref without announcing the void between the two: an Empty-and-restart
+   * unbinds before rebinding, and the transient *unbound* readout — pushed the moment unbind
+   * returns — paints "Start practice" over the running row for as long as the rebind's file
+   * read takes. Changes are muted across the whole swap and emitted once, after the new
+   * ledger is in place, so the window sees the old session and then the new one, never the
+   * gap. Dispatching to the state machine and the baseline belongs to `bind`, which does the
+   * fresh-ref resets itself.
+   */
+  async rebind(sessionRef: string): Promise<void> {
+    this.muted += 1
+    try {
+      this.ledger.unbind()
+      await this.bind(sessionRef)
+    } finally {
+      this.muted -= 1
+      this.changed()
+    }
+  }
+
   snapshot(): Map<string, CartEntry> {
     return this.ledger.snapshot()
   }
@@ -393,7 +413,15 @@ export class BasketTracker {
     return region
   }
 
+  /**
+   * How many `rebind` swaps are in flight. A swap replaces the ledger wholesale, so the
+   * transitions inside it (the unbind's unbound state, the bind's fresh one) are not states
+   * the reader has to see — `rebind` emits once, at the end.
+   */
+  private muted = 0
+
   private changed(): void {
+    if (this.muted > 0) return
     this.opts.onChange?.(this.readout())
   }
 }

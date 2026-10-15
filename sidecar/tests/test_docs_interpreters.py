@@ -35,7 +35,8 @@ are still found, and that neither the positive nor the negative control has gone
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+import sys
+from dataclasses import dataclass, replace
 from typing import Iterable
 
 import pytest
@@ -48,6 +49,7 @@ from tests.docs_fences import (
     corpus_blocks,
     is_invocation,
 )
+from tests.exemptions import Exemption, Exemptions, Waiver, assert_still_present, waived_note
 
 pytestmark = pytest.mark.docs
 
@@ -59,12 +61,21 @@ BARE_INTERPRETER = re.compile(r"^(?:python(?:3(?:\.\d+)?)?|py)(?:\.exe)?(?:\s|$)
 #: The one legal use of a bare interpreter: making the venv it is about to be replaced by.
 VENV_CREATION = re.compile(r"^(?:python(?:3(?:\.\d+)?)?|py)(?:\.exe)?\s+-m\s+venv(?:\s|$)")
 
-# `(doc, phrase, reason)`, the same shape `test_docs_claims` uses, and live for the same reason: an
-# exemption is a sentence somebody has to read, and `test_the_exemptions_are_still_live` fails when
-# the line it covers is gone, so one cannot outlive its reason and start covering whatever replaced
-# it. Empty today on purpose - the venv rule above is a rule, not a doc's excuse - and kept so the
-# first legitimate one costs a reason instead of a looser pattern.
-EXEMPT: tuple[tuple[str, str, str], ...] = ()
+# The bare interpreter this scan is for, as the shape a row here would be excused from. One scan step,
+# so every row would name it; a row written for another step would have to name that one instead, which
+# is what the shared lookup enforces.
+SHAPE_BARE_INTERPRETER = "bare interpreters in pasted commands"
+
+# The rows are `tests/exemptions.py`'s shape - a phrase, why it is allowed, the one scan step it is
+# excused from and the places it may appear in - and `assert_still_present`, called with this module's
+# own reader below, keeps them honest: an exemption is a sentence somebody has to read, and one whose
+# line is gone would start covering whatever replaced it. Empty today on purpose - the venv rule above
+# is a rule, not a doc's excuse - and kept so the first legitimate one costs a reason instead of a looser
+# pattern. The emptiness is *declared* at that call (`designed_empty=True`) rather than assumed, because
+# a table with no rows is the one failure that liveness rule cannot see from the inside: it has nothing
+# to check, so a cleared table would pass it silently. Adding the first row means dropping the
+# declaration in the same edit.
+EXEMPT = Exemptions()
 
 #: The corpus's own bare-interpreter usage, which is exactly the `python -m venv .venv` lines the
 #: rule above legalises. Pinned so the scan is known to reach *inside* fences on real docs rather than
@@ -86,13 +97,16 @@ class Invocation:
 
     @property
     def exempt(self) -> bool:
-        return self.creating_venv or self._listed_exemption() is not None
+        return self.creating_venv or self.exemption() is not None
 
-    def _listed_exemption(self) -> str | None:
-        for doc, phrase, reason in EXEMPT:
-            if doc == self.doc and phrase in self.command:
-                return reason
-        return None
+    def exemption(self, waived: list[Waiver] | None = None) -> str | None:
+        """The reason a row excuses this command, if one does - recording the `Waiver` in `waived` when
+        the caller collects them, which is what lets the scan say what it let through and why.
+
+        A method rather than part of `exempt` because the boolean is for reading and the record is for
+        saying: a caller that only asks whether the command is legal keeps asking that.
+        """
+        return EXEMPT.reason(SHAPE_BARE_INTERPRETER, self.doc, self.command, waived)
 
 
 def _invocations_in(shell: Iterable[Block], doc: str) -> list[Invocation]:
@@ -137,11 +151,12 @@ def scan_corpus() -> tuple[dict[str, list[Invocation]], dict[str, int]]:
 def test_no_documented_command_runs_a_bare_python():
     """The rule this guard exists for, over every instruction doc in the repo."""
     hits, _fences = scan_corpus()
+    waived: list[Waiver] = []
     violations = [
         f"{doc}:{inv.line}: {inv.command}"
         for doc, found in hits.items()
         for inv in found
-        if not inv.exempt
+        if not inv.creating_venv and inv.exemption(waived) is None
     ]
     assert not violations, (
         "a documented shell block tells the reader to run a bare `python`, which is not the "
@@ -149,6 +164,7 @@ def test_no_documented_command_runs_a_bare_python():
         "nothing, so a bare one is the system interpreter and cannot import the app's dependencies "
         "(the local inference server is worse: it lives in its own `.venv-inference`). Name the "
         "venv's interpreter the way the rest of the docs do:\n  " + "\n  ".join(violations)
+        + waived_note(waived)
     )
 
 
@@ -265,16 +281,56 @@ def test_every_instruction_doc_is_scanned():
     )
 
 
+def _doc_text(doc: str) -> str:
+    """This guard's reader for the shared liveness rule: a place here is a doc's own text."""
+    return (REPO_ROOT / doc).read_text(encoding="utf-8")
+
+
+def test_an_exemption_would_excuse_the_command_it_names(monkeypatch):
+    """`EXEMPT` is empty on purpose, and that leaves this module's own call into the shared lookup
+    unexercised: a shape, place or text passed in the wrong order would go on excusing nothing, and the
+    corpus cannot show it because there is no row to ask about. So a fixture table carrying one real
+    shape is asked the way the scan asks it - through `Invocation.exempt` - and it has to answer for
+    the command it names and stay silent for another shape's.
+    """
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "EXEMPT",
+        Exemptions(
+            Exemption(
+                phrase="python3 -m pytest",
+                reason="a fixture row, so this module's own wiring is exercised by something",
+                shape=SHAPE_BARE_INTERPRETER,
+                places=("README.md",),
+            )
+        ),
+    )
+    listed = Invocation(
+        doc="README.md", line=1, command="python3 -m pytest -q", fence="bash", creating_venv=False
+    )
+    assert listed.exempt
+    # And the trace comes back with it, under this module's own shape: the reason a failure report would
+    # quote for the command it let through.
+    waived: list[Waiver] = []
+    assert listed.exemption(waived) is not None
+    assert [str(waiver) for waiver in waived] == [
+        "'python3 -m pytest' in README.md [bare interpreters in pasted commands]: a fixture row, so "
+        "this module's own wiring is exercised by something"
+    ]
+    # The place is part of the question, so the same command in another doc is not excused...
+    assert not replace(listed, doc="sidecar/README.md").exempt
+    # ...and neither is a command the row does not name.
+    assert not replace(listed, command="python -m pytest -q").exempt
+
+
 def test_the_exemptions_are_still_live():
     """An exemption cannot outlive the line it was written for.
 
-    The same rule `test_docs_claims` holds its own list to, for the same reason: a phrase left behind
-    after an edit keeps covering text nobody has read, and the next bare `python` written near it
-    would pass. Vacuously true while `EXEMPT` is empty, and the point is that it stops being vacuous
-    the moment somebody adds an entry.
+    The same rule `test_docs_claims` and `test_class_order` hold their tables to (`assert_still_present`
+    in `tests/exemptions.py`), for the same reason: a phrase left behind after an edit keeps covering
+    text nobody has read, and the next bare `python` written near it would pass. The table is empty on
+    purpose, and that is said here rather than left implied - an empty table passes this rule
+    trivially, so the declaration is what tells a reader the emptiness is the design and not a deletion;
+    it stops being true, and has to go, the moment the first row arrives.
     """
-    for doc, phrase, reason in EXEMPT:
-        assert phrase in (REPO_ROOT / doc).read_text(encoding="utf-8"), (
-            f"{doc} no longer contains {phrase!r}, so this exemption ({reason}) is covering text "
-            "that is not there - delete it, or point it at what replaced it"
-        )
+    assert_still_present(EXEMPT, _doc_text, designed_empty=True)

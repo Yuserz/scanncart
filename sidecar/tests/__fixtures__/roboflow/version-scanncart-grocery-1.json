@@ -1,0 +1,290 @@
+{
+  "workspace": {
+    "name": "New Workspace",
+    "url": "yusri-caloyloy",
+    "members": 1
+  },
+  "project": {
+    "id": "yusri-caloyloy/scanncart-grocery",
+    "type": "object-detection",
+    "name": "scanncart-grocery",
+    "created": 1787072007.178,
+    "updated": 1789549858.041,
+    "images": 1516,
+    "unannotated": 0,
+    "annotation": "scanncart-grocery",
+    "versions": 1,
+    "public": true,
+    "multilabel": false,
+    "license": "CC BY 4.0",
+    "splits": {
+      "export": 0,
+      "valid": 196,
+      "test": 277,
+      "train": 1043
+    },
+    "colors": {
+      "555 sardines 155grams": "#C7FC00",
+      "century_tuna_flakes_in_oil_155_grams": "#8622FF",
+      "lucky_me_pancit_canton_calamansi_flavor": "#FE0056",
+      "silver_swan_sukang_puti_200ML": "#00FFCE",
+      "safeguard_pure_white_60g": "#FF8000",
+      "Bear Brand Fortified Powdered Milk 33g": "#00B7EB",
+      "Milo Chocolate Drink 22g Sachet": "#FFFF00"
+    },
+    "classes": {
+      "century_tuna_flakes_in_oil_155_grams": 302,
+      "Bear Brand Fortified Powdered Milk 33g": 310,
+      "lucky_me_pancit_canton_calamansi_flavor": 352,
+      "silver_swan_sukang_puti_200ML": 302,
+      "555 sardines 155grams": 479,
+      "Milo Chocolate Drink 22g Sachet": 68,
+      "safeguard_pure_white_60g": 0
+    },
+    "icon": {
+      "original": "https://source.roboflow.com/pMLA3HgL2nN6w19PT32lwshZUQg2/wahdljmeiBXztYjeG9cE/original.jpg",
+      "thumb": "https://source.roboflow.com/pMLA3HgL2nN6w19PT32lwshZUQg2/wahdljmeiBXztYjeG9cE/thumb.jpg",
+      "annotation": "https://source.roboflow.com/pMLA3HgL2nN6w19PT32lwshZUQg2/wahdljmeiBXztYjeG9cE/annotation-scanncart-grocery.png"
+    },
+    "preprocessing": {
+      "auto-orient": true,
+      "resize": {
+        "width": 640,
+        "height": 640,
+        "format": "Stretch to"
+      }
+    },
+    "augmentation": {}
+  },
+  "version": {
+    "id": "yusri-caloyloy/scanncart-grocery/1",
+    "name": "scanncart",
+    "created": 1787933734.511,
+    "images": 1815,
+    "splits": {
+      "valid": 223,
+      "test": 327,
+      "train": 1265
+    },
+    "generating": false,
+    "progress": 1,
+    "model": {
+      "id": "scanncart-grocery/1",
+      "endpoint": "https://serverless.roboflow.com/scanncart-grocery/1",
+      "start": 1787933822.783,
+      "end": 1787935385.025,
+      "fromScratch": false,
+      "tfjs": false,
+      "oak": false,
+      "map": "98.21",
+      "recall": "97.70",
+      "precision": "98.50"
+    },
+    "preprocessing": {
+      "auto-orient": true,
+      "resize": {
+        "width": 640,
+        "height": 640,
+        "format": "Stretch to"
+      }
+    },
+    "augmentation": {},
+    "exports": [
+      "coco",
+      "yolov11",
+      "yolov5pytorch"
+    ],
+    "modelType": "yolov11n",
+    "train": {
+      "status": "finished",
+      "model": "yolov11n",
+      "modelType": "yolov11n",
+      "checkpoint": "COCOn",
+      "start": {
+        "_seconds": 1787933822,
+        "_nanoseconds": 783000000
+      },
+      "end": {
+        "_seconds": 1787935385,
+        "_nanoseconds": 25000000
+      },
+      "results": {
+        "map": 0.9820907050226757,
+        "mAP_50_95": 0.9638441509294223,
+        "precision": 0.985,
+        "recall": 0.977,
+        "f1": 0.98,
+        "f1_conf_thresh": 0.41000000000000003,
+        "test_inference": true,
+        "class_map": {
+          "valid": [
+            {
+              "class": "all",
+              "images": 223,
+              "targets": 239,
+              "precision": 0.985,
+              "recall": 0.977,
+              "map50": 0.9820907050226757,
+              "map95": 0.9638441509294223
+            },
+            {
+              "class": "555 sardines 155grams",
+              "images": 223,
+              "targets": 30,
+              "precision": 0.906,
+              "recall": 0.967,
+              "map50": 0.9895666986053443,
+              "map95": 0.9457707867560949
+            },
+            {
+              "class": "Bear Brand Fortified Powdered Milk 33g",
+              "images": 223,
+              "targets": 30,
+              "precision": 1,
+              "recall": 1,
+              "map50": 1,
+              "map95": 0.9870457981758767
+            },
+            {
+              "class": "Milo Chocolate Drink 22g Sachet",
+              "images": 223,
+              "targets": 13,
+              "precision": 1,
+              "recall": 1,
+              "map50": 1,
+              "map95": 1
+            },
+            {
+              "class": "century_tuna_flakes_in_oil_155_grams",
+              "images": 223,
+              "targets": 34,
+              "precision": 1,
+              "recall": 0.882,
+              "map50": 0.9060743912229061,
+              "map95": 0.8667458324389018
+            },
+            {
+              "class": "lucky_me_pancit_canton_calamansi_flavor",
+              "images": 223,
+              "targets": 31,
+              "precision": 1,
+              "recall": 1,
+              "map50": 1,
+              "map95": 1
+            },
+            {
+              "class": "safeguard_pure_white_60g",
+              "images": 223,
+              "targets": 27,
+              "precision": 1,
+              "recall": 1,
+              "map50": 1,
+              "map95": 0.9956362302896956
+            },
+            {
+              "class": "silver_swan_sukang_puti_200ML",
+              "images": 223,
+              "targets": 74,
+              "precision": 0.986,
+              "recall": 0.986,
+              "map50": 0.9789938453304788,
+              "map95": 0.951710408845387
+            }
+          ],
+          "test": [
+            {
+              "class": "all",
+              "images": 327,
+              "targets": 401,
+              "precision": 0.985,
+              "recall": 0.968,
+              "map50": 0.9742348768677123,
+              "map95": 0.9400979285275568
+            },
+            {
+              "class": "555 sardines 155grams",
+              "images": 327,
+              "targets": 97,
+              "precision": 0.989,
+              "recall": 0.887,
+              "map50": 0.8886138613861386,
+              "map95": 0.839585938608196
+            },
+            {
+              "class": "Bear Brand Fortified Powdered Milk 33g",
+              "images": 327,
+              "targets": 50,
+              "precision": 1,
+              "recall": 1,
+              "map50": 1,
+              "map95": 0.9638938238371076
+            },
+            {
+              "class": "Milo Chocolate Drink 22g Sachet",
+              "images": 327,
+              "targets": 6,
+              "precision": 1,
+              "recall": 1,
+              "map50": 1,
+              "map95": 0.9219471947194721
+            },
+            {
+              "class": "century_tuna_flakes_in_oil_155_grams",
+              "images": 327,
+              "targets": 50,
+              "precision": 1,
+              "recall": 1,
+              "map50": 1,
+              "map95": 0.9847102796348846
+            },
+            {
+              "class": "lucky_me_pancit_canton_calamansi_flavor",
+              "images": 327,
+              "targets": 74,
+              "precision": 0.908,
+              "recall": 0.932,
+              "map50": 0.9607332469848767,
+              "map95": 0.9305343521596944
+            },
+            {
+              "class": "safeguard_pure_white_60g",
+              "images": 327,
+              "targets": 50,
+              "precision": 1,
+              "recall": 1,
+              "map50": 1,
+              "map95": 1
+            },
+            {
+              "class": "silver_swan_sukang_puti_200ML",
+              "images": 327,
+              "targets": 74,
+              "precision": 1,
+              "recall": 0.959,
+              "map50": 0.9702970297029703,
+              "map95": 0.9400139107335427
+            }
+          ]
+        },
+        "finished_epochs": 311
+      }
+    },
+    "models": {},
+    "trainings": [
+      {
+        "id": "522046eef9b23ba96b06",
+        "versionId": "1",
+        "status": "finished",
+        "start": 1787933822783,
+        "end": 1787935385025,
+        "jobType": "fine-tune",
+        "modelType": "yolov11n",
+        "modelGroup": null,
+        "modelIds": [
+          "yusri-caloyloy/scanncart-grocery-1-yolo11n-t1"
+        ]
+      }
+    ],
+    "classes": []
+  }
+}

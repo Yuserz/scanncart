@@ -357,9 +357,18 @@ if (mode === 'dataset') {
           .join('\n')
     );
     await shot(page, 'dataset-02-worklist');
+    // `dataset-backlog` is the list element; an empty backlog swaps it for the done line
+    // (`dataset-backlog-done`), which the null here is otherwise indistinguishable from at
+    // this check. Only a non-empty sidecar waiting-list turn a null into the render-error
+    // case the check exists for — the empty case's row-count claim is `0 === 0`.
+    const doneLine =
+      backlog.length === 0 &&
+      (await page.evaluate(
+        () => document.querySelector('[data-testid="dataset-backlog-done"]') !== null
+      ));
     check(
       'one row per cell still waiting for a label',
-      onScreen !== null && onScreen.length === backlog.length,
+      (onScreen !== null && onScreen.length === backlog.length) || doneLine,
       `${onScreen?.length ?? 'no list'} row(s) vs ${backlog.length} cell(s) left`
     );
     // Names plus distance, in order: the pair identifies a cell, so this is the whole ordering
@@ -828,11 +837,13 @@ print(json.dumps(train_model.weight_record(generations.V2, 2, "snc-grocery", val
     // draft edits above never leave the Admin form, so before this patch the only mismatch was in
     // an unsaved draft and the check below passed because there was nothing to warn about, not
     // because of the gate.
+    const healthPre = (await api('/api/health')).body;
+    console.log('health before the mismatch patch:', JSON.stringify(healthPre).slice(0, 120));
     const mismatched = await patch({ resize_mode: 'letterbox' });
     check(
       'the sidecar accepted a saved setting that contradicts the record',
       mismatched.status === 200,
-      `HTTP ${mismatched.status}`
+      `HTTP ${mismatched.status} ${JSON.stringify(mismatched.body).slice(0, 160)}`
     );
     // Remount the Live view rather than waiting: the readout reads the settings once on mount and
     // does not poll (the answer can only change when someone edits a restart-required field), so a
@@ -2035,11 +2046,22 @@ if (mode === 'basket') {
     await page.click('#zone-mode-drawn');
     check('choosing B shows the Draw controls', await visible('[data-testid="bt-draw-inside"]'));
     if (outcome === 'frames') {
-      const box = await page.evaluate(() => {
-        const r = document.querySelector('img.bt-img').getBoundingClientRect();
-        return { x: r.left, y: r.top, w: r.width, h: r.height };
-      });
-      const at = (fx, fy) => page.mouse.click(box.x + fx * box.w, box.y + fy * box.h);
+      const imgBox = () =>
+        page.evaluate(() => {
+          const r = document.querySelector('img.bt-img').getBoundingClientRect();
+          return { x: r.left, y: r.top, w: r.width, h: r.height };
+        });
+      // Measured per click, never once: entering drawing mode puts the "Click the corners…" hint
+      // into the toolbar, and at this window's width it wraps to a second line — which moves the
+      // picture down by the hint's height (31 px on the 1024-wide canvas, measured). A box taken
+      // before the first click is stale by the time the clicks land, so every point lands that far
+      // above where the driver aimed and the true-orientation check below reads the app saving a
+      // point 9% too high (30%,55% aimed -> 30%,46% stored). The app maps a click against the
+      // image's rect at click time, which is what the user clicks on.
+      const at = async (fx, fy) => {
+        const box = await imgBox();
+        await page.mouse.click(box.x + fx * box.w, box.y + fy * box.h);
+      };
       // Delete first, so outlines left by an earlier run cannot add points to this one.
       for (const which of ['inside', 'opening']) {
         const del = page.locator(`[data-testid="bt-delete-${which}"]`);
@@ -2073,6 +2095,9 @@ if (mode === 'basket') {
           return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
         });
       const h0 = await handleAt();
+      // Re-measured here for the same reason as `at`: the box above predates the hint, and the
+      // drag's expected travel is stated as a fraction of the picture.
+      const box = await imgBox();
       await page.mouse.move(h0.x, h0.y);
       await page.mouse.down();
       await page.mouse.move(h0.x + 0.05 * box.w, h0.y - 0.05 * box.h, { steps: 6 });

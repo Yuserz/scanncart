@@ -37,15 +37,19 @@ one-shot: the class list in the order the export will index it, the geometry bei
 of the project's images carry a decision - which is what the version will contain, since only
 annotated images enter one (a null annotation is a decision, and `filter-null` is forbidden below).
 
-Three of those states are refused rather than printed. A class name carrying a **distance** would
+Four of those states are refused rather than printed. A class name carrying a **distance** would
 train one output per product-and-distance. A project holding the roster's names in **another order**
 is refused because the export declares this project's order - so the version would bake a head whose
 indices mean a different product than the roster says, and nothing in the chain sees that as an
 error: `train_model.check_export` compares names by *membership*, and the dataset doctor refuses the
 export only once it exists, by which time the number is spent. (The order cannot be set by API -
 MODEL_TRAINING.md 8.1: Settings -> Classes, and it follows the order the classes were created in -
-so the tool prints both lists and sends the operator to the one place that can fix it.) And a project
-where **nothing is annotated** is refused, because that version would freeze an empty set.
+so the tool prints both lists and sends the operator to the one place that can fix it.) A project
+where **nothing is annotated** is refused, because that version would freeze an empty set. And a
+**background batch holding a frame with no null annotation** is refused, because a hard negative
+enters a version only once it is marked null - an unmarked one is excluded with no error, and being
+invisible in the class and distance tables (there is nothing to draw either way) it is the one
+absence no other readout in this chain can show.
 
     # what would be sent, without generating anything
     sidecar/.venv/Scripts/python.exe sidecar/tools/generate_version.py --dry-run
@@ -170,20 +174,38 @@ def describe(settings: dict) -> str:
 
 
 def class_order(classes: object) -> list[str] | None:
-    """A project's `classes` field as the ordered list a version's export will declare.
+    """A project's `classes` field as the ordered list a version's export will declare, or `None`.
 
-    Roboflow answers with a mapping of name -> index on both routes, and that index is a *position*:
-    it is what the export's `names` list is written from, and therefore what every label row of every
-    image in the version is written against. So the mapping is sorted by its value rather than read
-    in dict order, which is insertion order - something that happens to agree today and is not the
-    thing being checked. A list is accepted as well (the routes' shapes differ, and `read_export_names`
-    handles both for the same reason).
+    A *position* is what the export's `names` list is written from, and therefore what every label
+    row of every image in the version is written against - so a mapping is ranked by its value and
+    never read in dict order, which is insertion order and not the thing being checked. A list is
+    accepted as well, for a route whose shape is already ordered (`read_export_names` handles both
+    for the same reason). Indices are read through `int()`, so a route that numbers them as strings
+    still ranks.
 
-    `None` means **no order was readable** - a shape this cannot rank, or a mapping whose values are
-    not indices - and the caller says so rather than inventing one: two of these lists in the wrong
-    order is exactly the mistake the check exists for, so a guess here would be the defect. Indices
-    are read through `int()`, so a route that numbers them as strings still ranks.
+    **A mapping whose values are not a complete set of positions is not an order, and reads as
+    `None`.** The live project route answers `name -> annotation count` - `snc-grocery` says 150, 79,
+    282 - so ranking those values put the class with the fewest boxes first. Ranking any
+    integer-valued mapping meant that the moment a project's names *did* match its roster,
+    `order_mismatch` compared the roster against an order assembled from box counts and refused a
+    project whose order was never read at all; the same laxity is what would have let a genuinely
+    reordered project pass. The values must be exactly `0..n-1` before this claims to have read an
+    order.
+
+    Checked against the live API before being written this way, and the order a version bakes is
+    not exposed by this route *or* by any other: the project body carries `classes` (counts, as
+    above) and `colors` (a UI palette), and `colors` is falsified as the answer rather than merely
+    suspect - `scanncart-grocery`'s export on disk declares the roster's order while its `colors`
+    order differs, so reading the palette would be a guess that happens to be right for
+    `snc-grocery` alone. It is a palette and the export's order is not a palette.
+
+    `None` therefore means **no order was readable**, and the caller says so rather than inventing
+    one: two of these lists in the wrong order is exactly the mistake this check exists for, so a
+    guess here *is* the defect. The caller reads the class *names* off the mapping's keys whether or
+    not an order could be ranked, so a map that cannot be ranked still reports its membership.
     """
+    if isinstance(classes, list):
+        return [str(name) for name in classes]
     if isinstance(classes, dict):
         if not classes:
             return []
@@ -191,9 +213,9 @@ def class_order(classes: object) -> list[str] | None:
             ranked = sorted((int(index), str(name)) for name, index in classes.items())
         except (TypeError, ValueError):
             return None
+        if [index for index, _name in ranked] != list(range(len(ranked))):
+            return None  # values that are per-class counts, not positions - see the docstring
         return [name for _index, name in ranked]
-    if isinstance(classes, list):
-        return [str(name) for name in classes]
     return None
 
 
@@ -235,16 +257,18 @@ def order_mismatch(names: list[str], generation) -> list[str] | None:
     return list(generation.classes)
 
 
-def entering_counts(project: str, key: str) -> tuple[dict[str, int] | None, str | None]:
-    """What a version of `project` would contain, or the reason it could not be counted.
+def project_readout(project: str, key: str) -> tuple[dict[str, int] | None, list[dict], str | None]:
+    """What a version of `project` would contain, or the reason it could not be read.
 
     Only annotated images enter a version, and a null annotation is a decision (the hard negatives,
     which `FORBIDDEN_STEPS` refuses to filter out) - so the number of frames carrying a decision is
     the size of the set about to be frozen, and it is the number an operator has to see before
     spending the version number to freeze it.
 
-    Read through `label_progress.project_states`, which owns the three-state rule (`state_of`) and
-    the retrying search sweep, rather than a second look at the API's `annotations` field here.
+    Read through `label_progress`, which owns the three-state rule (`state_of`) and the retrying
+    search sweep, rather than a second look at the API's `annotations` field here - and both answers
+    come off **one** sweep, because the hard negatives are what `unmarked_background` refuses on and
+    a second read could be looking at a different project.
 
     A failed read is a *note*, not a dead run: this is a readout, and the two things that make the
     tool fail closed are about the class list, which the caller has already read. `SystemExit` is
@@ -254,9 +278,44 @@ def entering_counts(project: str, key: str) -> tuple[dict[str, int] | None, str 
     import label_progress  # deferred: the dataset tooling is only needed on the --yes path
 
     try:
-        return label_progress.project_states(project, key), None
+        index = label_progress.project_index(project, key)
     except SystemExit as exc:
-        return None, str(exc)
+        return None, [], str(exc)
+    return (
+        label_progress.project_states(project, key, index),
+        label_progress.background_batches(index),
+        None,
+    )
+
+
+def unmarked_background(rows: list[dict]) -> list[dict]:
+    """The background batches a version would drop frames from, in the order they were read.
+
+    Pure, so the refusal is testable without the network. The rule is `undecided > 0` rather than
+    "none of the batch is marked": a batch with 50 of its 52 frames marked and two forgotten loses
+    exactly those two, silently and by the same mechanism, so "some were marked" is not the state
+    worth passing. Every one of them is a frame the model was supposed to learn background from and
+    would never see - and the negative set is not decoration, it is the measured fix for the
+    empty-counter false positive (MODEL_TRAINING.md 2).
+
+    Scoped to the background batches on purpose. An unlabeled frame elsewhere in the project is a
+    legitimate intermediate - a partial version is a real move - and it is *visible*: the readout
+    prints it and the coverage grid has a cell for it. A background frame has neither, which is why
+    this one fails closed.
+    """
+    return [row for row in rows if row.get("undecided")]
+
+
+def describe_background(rows: list[dict]) -> str:
+    """The project's hard negatives as the one line the readout prints about them."""
+    if not rows:
+        return "none in the project (no frame carries the hard-negative class tag)"
+    images = sum(row["images"] for row in rows)
+    nulls = sum(row["null"] for row in rows)
+    undecided = sum(row["undecided"] for row in rows)
+    batches = f"{len(rows)} batch" + ("es" if len(rows) > 1 else "")
+    text = f"{images} frame(s) in {batches} - {nulls} marked null"
+    return text if not undecided else f"{text}, {undecided} with no decision"
 
 
 def classes_with_distance(classes: object) -> dict[str, list[str]]:
@@ -397,7 +456,16 @@ def inspect_project(args: argparse.Namespace, settings: dict, key: str, generate
     # declares this project's order, so the version would bake a head whose indices mean a different
     # product than the roster says, with nothing between here and the doctor noticing.
     generation = declaring_generation(args.project)
-    names = class_order(project_body.get("classes"))
+    declared = project_body.get("classes")
+    # The declared *order* and the class *names* are two different facts, and only the first is
+    # conditional: the project route may carry no positions at all (it answers a name -> count map),
+    # but its keys still name every class. Read separately so an unrankable map reports its
+    # membership instead of reading as "none declared" - and so the order check cannot be handed a
+    # list assembled from box counts.
+    names = class_order(declared)
+    member_names = (
+        list(names) if names else [str(name) for name in declared] if isinstance(declared, dict) else []
+    )
     if generation is not None and names:
         expected_order = order_mismatch(names, generation)
         if expected_order:
@@ -424,11 +492,13 @@ def inspect_project(args: argparse.Namespace, settings: dict, key: str, generate
             print("was generated, so no version number was spent.")
             return 2
 
-    # What this project's class list is against the roster - a *report*, not a third refusal: a
-    # class that is missing, extra or renamed is `label_classes.py`'s finding and its remedy is on
-    # the Classes tab, while this tool's two refusals are for the cases where the list is the
-    # roster and the *order* or the *count* is the mistake. It is still printed loudly, because a
-    # version bakes in every class it is given and the app then reports the outputs it cannot name.
+    # What this project's class list is against the roster, in two directions that are not the
+    # same finding and do not get the same treatment. A name the roster does **not** declare is
+    # drift into a state no version can be right in, so it is refused outright below - and a class
+    # that came back after being dropped (a *re-created* one, which is how the live project's
+    # eighth class reads) is exactly that case, which is why it is no longer a note under an ok row.
+    # A roster class the project has not created yet is work not done - created on the Classes tab
+    # and labeled afterwards - so that direction stays a loud report rather than a refusal.
     wanted = list(generation.classes) if generation is not None else []
     # Imported here rather than at the top because `generations.py` imports this module
     # (`REQUIRED_RESIZE_MODE`), which is why `declaring_generation` above does the same.
@@ -436,9 +506,45 @@ def inspect_project(args: argparse.Namespace, settings: dict, key: str, generate
 
     # The relation is `generations.class_gaps`' - the one owner of every class-list difference in
     # this tree - and the headings below are this caller's own words.
-    gaps = generations.class_gaps(names or [], wanted)
+    gaps = generations.class_gaps(member_names, wanted)
     extra = list(gaps.source_only)
     missing = list(gaps.target_only)
+
+    # Refused before the POST for the reason the order check above is: this list bakes one output
+    # per class, so a version generated from it carries a head output the app's roster cannot name
+    # - on every capture, for the life of the weights. And it is not an export anything downstream
+    # will take either: `train_model.check_export` compares names by membership and refuses this
+    # one by name at the first run. Both of those are loud and both are one version number too
+    # late, because a number cannot be reused.
+    if generation is not None and extra:
+        print(
+            f"refusing to generate: {args.project} declares {len(extra)} class(es) the roster "
+            "does not"
+        )
+        print("  extra    : " + ", ".join(extra))
+        print(
+            f"  expected : {len(wanted)} class(es) - {generation.name}'s roster and nothing else "
+            "(`generations.py`)"
+        )
+        print()
+        print("A version declares every class its project holds, so this one would bake an extra")
+        print("output into the export. The app's roster has no name for it, so every box the head")
+        print("emits under it comes back under a label nothing in the app can resolve - with no")
+        print("error, because nothing about a class *name* says the app has no output for it.")
+        print()
+        recreated = [n for n in extra if "palmolive" in n.lower()]
+        if recreated:
+            print(f"{', '.join(recreated)} was dropped from this roster and is present again, so")
+            print("it was *re-created* after being dropped. Deleting a class takes its annotations")
+            print("with it, so a re-created one is empty - and it arrives last in the creation order,")
+            print("which is the order a version's export declares. `sanity` reports this as a")
+            print("blocking problem too, at the other end of the chain: before a shoot instead of")
+            print("before a version.")
+            print()
+        print("Delete it on Settings -> Classes (moving its boxes onto a product class first if it")
+        print("has any - a class-list edit alone leaves them under a name nothing can resolve), then")
+        print("re-run this command. No version was generated, so no version number was spent.")
+        return 2
 
     # Everything the POST would bake in, in one read and before the number is spent: the class
     # list in the order the export will index it, the geometry being sent, and how many of the
@@ -446,33 +552,44 @@ def inspect_project(args: argparse.Namespace, settings: dict, key: str, generate
     # annotated images enter one. The refusals above come first: when the class list is the
     # problem, what is worth printing is the list, not a table around it.
     print(f"project {args.project}")
-    if names:
+    if member_names:
         if generation is None:
-            print(f"  classes  : {len(names)}")
-        elif extra or missing:
+            print(f"  classes  : {len(member_names)}")
+        elif missing:
+            # Only this direction reaches here: an unexpected name is refused above, before the
+            # readout, so "N extra" would be a count that can never be anything but zero.
             print(
-                f"  classes  : {len(names)} - {generation.name} declares {len(wanted)} "
-                f"({len(extra)} extra, {len(missing)} missing)"
+                f"  classes  : {len(member_names)} - {generation.name} declares {len(wanted)} "
+                f"({len(missing)} missing)"
             )
-        else:
+        elif names:
             print(f"  classes  : {len(names)}, in {generation.name}'s order")
-        for position, name in enumerate(names, start=1):
+        else:
+            print(
+                f"  classes  : {len(member_names)} - {generation.name}'s names, order unverified"
+            )
+        for position, name in enumerate(member_names, start=1):
             print(f"    {position:>2}  {name}")
-        if extra:
-            print("  extra    : " + ", ".join(extra))
         if missing:
             print("  missing  : " + ", ".join(missing))
     else:
         print("  classes  : none declared (`label_classes.py` is what reports that state)")
     if generation is None:
         print(f"  order    : not checked - no generation in generations.py uses {args.project!r}")
+    elif not member_names:
+        print("  order    : not checked - the project declares no classes to rank")
     elif names is None:
-        print("  order    : not checked - the classes carry no indices to rank")
-    elif not names:
-        print("  order    : not checked - there are no classes to order")
+        print("  order    : not verifiable here - this route answers a name -> annotation count map,")
+        print("             not name -> index, so there is no order to read. Ranking those counts as")
+        print("             positions is what used to refuse a correctly ordered project.")
+        print("             The order a version declares is readable off its export afterwards - its")
+        print("             data.yaml's `names`, which `dataset_doctor --dataset <export>` judges against")
+        print("             the roster - so generation is the read, and the doctor is the verdict.")
+        print("             If it comes back wrong, fix it on Settings -> Classes and generate again:")
+        print("             the number this one spent cannot be reused.")
     print(f"  settings : {describe(settings)}")
 
-    counts, note = entering_counts(args.project, key)
+    counts, background, note = project_readout(args.project, key)
     entering = 0
     if counts is None:
         print(f"  images   : not counted ({note})")
@@ -488,12 +605,39 @@ def inspect_project(args: argparse.Namespace, settings: dict, key: str, generate
             f"  entering : {entering} frame(s) - only annotated frames enter a version, and a null"
             " is a decision rather than an outstanding one"
         )
+        # Printed on every run, the clean case included: a batch whose frames were all marked has to
+        # read as *checked*, not as never looked at - and this is the only line that can show the
+        # difference, since the frames themselves have nothing to draw either way.
+        print(f"  negatives: {describe_background(background)}")
     expected = next_version(body)
     if expected is not None:
         print(
             f"  version  : this generation will be {expected} (the project is at {expected - 1} - "
             "trashed versions keep their numbers)"
         )
+
+    unmarked = unmarked_background(background)
+    if unmarked:
+        bare = sum(row["undecided"] for row in unmarked)
+        print()
+        print(f"refusing to generate: {bare} hard-negative frame(s) with no null annotation")
+        for row in unmarked:
+            print(
+                f"  {row['batch']}: {row['images']} frame(s) - {row['null']} marked null, "
+                f"{row['labeled']} labeled, {row['undecided']} not looked at yet"
+            )
+        print()
+        print("A hard negative enters a version only once it is marked null: it has nothing to draw,")
+        print("so an unmarked one is not background to Roboflow - it is an image nobody decided about,")
+        print("and it is left out of the version with no error anywhere. Nothing else here can see")
+        print("that either: in the class and distance tables it looks exactly like a marked one, and")
+        print("`sanity` counts the frames carrying the tag rather than the marks on them.")
+        print()
+        print("Mark each of them with the annotator's null tool (N) - `label_progress.py` reports how")
+        print("many are decided - then re-run this command.")
+        print()
+        print("Nothing was generated, so no version number was spent.")
+        return 2
 
     if counts is not None and not entering:
         print()
@@ -502,14 +646,14 @@ def inspect_project(args: argparse.Namespace, settings: dict, key: str, generate
         print("lists what is outstanding, from this same project or from the local labels.")
         print("Nothing was generated, so no version number was spent.")
         return 2
-    if generation is not None and (extra or missing):
+    if generation is not None and missing:
         print(
-            f"  [!] this is not {generation.name}'s list: a version declares every class it is "
-            "given, so the trained head carries outputs the app's roster cannot name - and the app "
-            "reports that as a finding on every capture"
+            f"  [!] this is not {generation.name}'s list: {len(missing)} of its class(es) are not "
+            "in the project, and a version only declares the classes it is given"
         )
-        print("      (`label_classes.py` reports this list, and can create a missing class; deleting")
-        print("      one, or moving its annotations, is the Settings -> Classes job.)")
+        print("      (`label_classes.py --create-classes` creates a missing one, and its frames are")
+        print("      then shot and labeled; `train_model.check_export` refuses the export of a")
+        print("      version that lacks a roster class, naming it.)")
     if counts is not None and counts["unlabeled"]:
         print(
             f"  [!] {counts['unlabeled']} frame(s) have no decision yet, so they will NOT enter "
@@ -552,7 +696,8 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help=(
             "read the project and print everything a generation would bake in - the class list in "
-            "order, the geometry, and how many images carry a decision - generating nothing"
+            "order, the geometry, how many images carry a decision, and the hard negatives - "
+            "generating nothing"
         ),
     )
     ap.add_argument(
@@ -587,7 +732,8 @@ def main(argv: list[str] | None = None) -> int:
     print()
     print("Notes:")
     print("  - Only *annotated* images enter a version, so generate this after labeling (and")
-    print("    after the Tier C2b frames are marked null - an unmarked one is excluded).")
+    print("    after the Tier C2b frames are marked null: an unmarked one is excluded, and a")
+    print("    background batch holding one is refused rather than generated).")
     print("  - A version number is consumed and cannot be reused; a trashed version keeps its")
     print("    number, so this project's next generation is 2 even though v1 is in the Trash.")
     print("  - `--check` reads the project and prints the whole decision - the class list in order,")

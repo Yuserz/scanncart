@@ -167,6 +167,18 @@ toolbar, keyboard shortcut **N** — and it then counts as annotated, so it is e
 generated version. A plain unannotated image is not: Roboflow excludes it from the version and
 counts it under the project's `unannotated` total.
 
+**Reaching the tool is its own fork, and it is where a background batch stalls.** Clicking
+**Annotate** — or **Start Annotating** on a selection — opens Roboflow's **Auto Label** screen
+(*"Choose how to label this batch"*), which offers **Auto Label** (recommended), **Label
+manually**, **Label with your team** and **Label with a professional team**. Only **`Label
+manually`** opens the annotation editor, and the null tool lives inside it — floating toolbar on
+the **right-hand side**, the `∅` empty-set button, keyboard shortcut **N**. From there it is **N**
+to mark the frame and **→** to advance; for a ~30-frame C2b set that is the whole cost. Do **not**
+take the Auto Label route, and do not hand this batch to a labeler: those paths exist to *find*
+objects to draw, and these frames are defined by having none — a box drawn on one teaches the model
+that a cart, a hand or a phone is a product. One trap while marking: **N** toggles, so pressing it
+twice on the same frame (while it is still in the annotating queue) marks it *Unannotated* again.
+
 The trap is the **"include images without annotations"** toggle at version generation: it sweeps
 in *every* unreviewed image, not just the ones you meant. Mark the ~30 frames individually with
 the null tool instead of using it.
@@ -236,7 +248,7 @@ sidecar/.venv/Scripts/python.exe sidecar/tools/clean_v2.py clean \
 
 # then upload them as their own session batch, and mark each null (N) in the annotator
 sidecar/.venv/Scripts/python.exe sidecar/tools/clean_v2.py upload \
-  --out sidecar/data/datasets/cleaned-negatives --session neg1
+  --out sidecar/data/datasets/cleaned-negatives --session neg1 --allow-public
 ```
 
 They are a **new session**, so upload them with a `--session` suffix: `negative_neg1` is then its
@@ -470,7 +482,7 @@ sidecar/.venv/Scripts/python.exe sidecar/tools/plan_split.py \
   --out sidecar/data/datasets/cleaned-v2 --include sidecar/data/datasets/cleaned-v2-s3 --holdout-session s3
 # 3. upload with that split, then retag
 sidecar/.venv/Scripts/python.exe sidecar/tools/clean_v2.py upload \
-  --out sidecar/data/datasets/cleaned-v2-s3 --session s3 \
+  --out sidecar/data/datasets/cleaned-v2-s3 --session s3 --allow-public \
   --split-plan sidecar/data/datasets/cleaned-v2/split_plan_c.json
 sidecar/.venv/Scripts/python.exe sidecar/tools/clean_v2.py retag \
   --out sidecar/data/datasets/cleaned-v2-s3 --session s3
@@ -549,7 +561,7 @@ sidecar/.venv/Scripts/python.exe sidecar/tools/clean_v2.py clean \
 
 # 2. upload into session-tagged batches (milo_mid_s2, not milo_mid)
 sidecar/.venv/Scripts/python.exe sidecar/tools/clean_v2.py upload \
-  --out sidecar/data/datasets/cleaned-v2-s2 --session s2
+  --out sidecar/data/datasets/cleaned-v2-s2 --session s2 --allow-public
 
 # 3. add the class tag, the session tag, and the distance/session metadata
 #    (only ONE tag survives the upload call, so the class and session land here)
@@ -561,6 +573,13 @@ Both `upload` and `retag` are resumable, so an interrupted run just continues. C
 first with `upload --dry-run`, and re-run `sanity --session s2` after `retag` to confirm the session
 tag landed on every image — `plan_split` reads the session from the manifest and assumes the tags
 agree.
+
+**`upload` refuses a public project without `--allow-public`, which is why every command above
+carries it.** `snc-grocery` is public — the free plan's default, and not a per-project toggle the
+API lets this tool flip — so sending captures of a real shop floor somewhere anyone can read is
+the operator's decision rather than the tool's. The refusal arrives *after* the plan and *before*
+the first image, so the flag is added knowing exactly which batches and how many frames it sends;
+`--dry-run` never needs it, which is what keeps it usable for deciding.
 
 ## Name the classes
 
@@ -673,10 +692,12 @@ for the weights says which of the two it is.
 - [ ] Tier C1: the bulk of the scenes at 4–6 items, not only pairs (v1's crowded bucket was mostly
       two-item frames, and that is the crowded case the model already handles)
 - [ ] Tier C2a: hard negatives shot as *one roster product + clutter* (hands, phone, bag, wallet)
-- [ ] Tier C2b: ~30 pure background frames, then mark each one with the null tool (**N**)
+- [ ] Tier C2b: ~30 pure background frames, then mark each one with the null tool (**N**) —
+      **Annotate → `Label manually` → right-hand toolbar → `N`**, never Auto Label
       (an earlier session left 60 StreamCam frames with empty labels in
       `sidecar/data/datasets/hard_negatives/` — eyeball those before shooting new ones)
-- [ ] Mark the C2b frames null **before** generating a version, or they are silently excluded —
+- [ ] Mark the C2b frames null **before** generating a version — `generate_version.py` refuses to
+      generate while one of them is unmarked, because an unmarked frame is excluded silently —
       and the empty-counter false positive they fix (19/25 clamped boxes on negatives vs 0/60 on real
       products) ships with the model instead
 - [ ] Confirm it registered: `label_progress.py` reports the expected number of null annotations
@@ -694,7 +715,10 @@ for the weights says which of the two it is.
       test split that happens to be mostly `close` while missing the item at `far` — which is the
       bucket this whole checklist exists to fill (MODEL_TRAINING.md §6). `-` in a cell means that
       distance held no instances of the class, `!` means it missed the floor there
-- [ ] Install: `train_model.py --install --version <n>` → `sidecar/models/scanncart-grocery-v2.pt`,
+- [ ] Install: `train_model.py --install --version <n>` → `sidecar/models/scanncart-grocery-v2.pt`
+      (a **retrain** of the same set is `--variant v2.1` on all four commands, which installs
+      `scanncart-grocery-v2.1.pt` beside it instead — same classes, same geometry, a later version
+      of the same project; MODEL_TRAINING.md §8.2),
       plus the `.json` record beside it carrying the `resize_mode` these weights need **and**
       `--val`'s per-class recall — the install prints the score it picked up, or says none was
       found, so a panel that shows nothing is never a surprise
@@ -761,12 +785,14 @@ So the marking below is not bookkeeping; it is what makes the fix exist.
 | Action | What happens to them |
 |---|---|
 | **Mark each null (`N`)** | ✅ Included in the version as negatives. This is the only correct action for all 50 |
-| Leave unannotated | ❌ **Excluded** from the version. The hard-negative set silently disappears — no error, no warning |
+| Leave unannotated | ❌ **Excluded** from the version, and `generate_version.py` now refuses to generate while a negatives batch holds such a frame — naming the batch, after the readout and before the POST. Before that gate existed the set simply disappeared: no error, no warning |
 | Draw a box on one | ❌ Teaches the model that a shelf, a hand, or a phone is a product |
 | Auto-label them | ❌ Same as above, at scale: a labeler searches for objects and these frames are defined by having none |
 
 `generate_version.py --verify <n>` refuses a version that filters nulls, so a version that quietly
-dropped all 50 is caught at the generate step rather than at training time. `label_progress.py`
+dropped all 50 is caught at the generate step rather than at training time. And the exclusion is
+gated one step earlier than that: `--yes`/`--check` refuses *before* the POST while any frame of a
+negatives batch is unmarked. `label_progress.py`
 reports them as a separate line (*"mark each null (N), do not draw"*) and counts them in the total,
 which is why the snapshot reads `0/1433` rather than `0/1383`: the 50 nulls are part of the target,
 not an allowance.

@@ -375,6 +375,30 @@ export interface ValidationRecord {
   per_distance: DistanceRecall[]
 }
 
+// One fact the record beside a weight either states or leaves out, and who writes it.
+//
+// The completeness *view* is the panel's; the facts are the sidecar's — which fields a record can
+// carry and which tool writes each one are both defined beside the file (the reader in
+// `app/models.py`, the writers in `tools/train_model.py` and in the app's own record button), so
+// this side renders the list rather than assembling one. The same split as `class_warnings`
+// (judged there, rendered here) and `auto_resolves_to` (a rule there, a value here).
+//
+// `value` is the recorded fact as one line, `''` when the record does not state it — the one state
+// that needs `writer`, which is a field rather than prose because "not recorded" is only
+// actionable as "not recorded, and this command fills it in". `writer` arrives for every fact and
+// is shown only where the value is empty. `detail` is the sentence either state needs and the
+// value cannot carry (for a stated geometry, that `auto` uses it; for a missing one, the geometry
+// `auto` falls back to — the two halves of one fact, and only one of them was chosen).
+//
+// Mirrors sidecar/app/schemas.py::RecordFact.
+export interface RecordFact {
+  key: string
+  label: string
+  value: string
+  writer: string
+  detail: string
+}
+
 // One weight that exists under sidecar/models/, plus what is known about running it.
 //
 // `resize_mode` is the *requirement* — what these weights were trained to expect — and it is
@@ -399,6 +423,18 @@ export interface InstalledModel {
   imgsz: number | null
   auto_resolves_to: string
   source: string
+  // What this *machine*'s source index says trained these weights, `''` when it has nothing for
+  // them — and read by the sidecar only where `source` is empty, so a machine-local file never
+  // second-guesses the record beside the weights. The index is written while the run that produced
+  // a checkpoint still exists (`app/source_index.py`), so it is what answers after that run has
+  // been deleted, rebuilt elsewhere or pruned — the one case both of the record's own sources fail
+  // in: `--install`'s derivation from the run, and `backfill_provenance.py`'s byte match, which
+  // needs the run project too.
+  //
+  // A separate field rather than being folded into `source`, because the two are different facts:
+  // `source` is what is *written down* beside the weights, this is what is known on this machine.
+  // The panel renders it as the index's answer and names the tool that turns it into a record.
+  indexed_source: string
   // The class list these weights predict, as recorded beside them by `train_model.py --install`.
   // Empty means *not recorded* — a hand-copied weight, or a record written before the field
   // existed — and never "predicts nothing", so an empty list produces no findings below.
@@ -419,6 +455,15 @@ export interface InstalledModel {
   // recorded. An empty list is "not measured" — which is the normal state for a hand-copied
   // weight or a baseline kept from an earlier generation — and never a score of zero.
   validation: ValidationRecord[]
+  // The record's four facts — geometry, generation, validation, source — each either stated or
+  // empty with the writer that fills that one in, in the order the panel's completeness view
+  // renders them. Four separate notes would leave the operator to assemble the completeness
+  // themselves, and each fact goes missing in a different place; one list makes "0 of 4 recorded"
+  // legible at a glance. Built by the sidecar, because the writers are `sidecar/tools/` commands
+  // plus the app's own record button — not something this side could name without a second copy of
+  // the mapping. The *count* is derived here (`record_facts.filter(...).length`), like every other
+  // number this side computes, so it cannot disagree with the rows under it.
+  record_facts: RecordFact[]
 }
 
 // Weights the operator can select. `stock` are the built-in models that auto-download on
@@ -579,8 +624,7 @@ export function createApiClient(port: number): ApiClient {
       // "Calibration is in progress; the camera is exclusive", "Cannot change
       // [...] while capture is running; stop capture first". Throwing the bare
       // status discarded exactly the sentence that tells an operator what to
-      // do, leaving them with "failed: 409". FastAPI's own validation errors
-      // put a list there instead, which is for us, not them — fall back.
+      // do, leaving them with "failed: 409".
       let detail: unknown
       try {
         detail = (await res.json())?.detail
@@ -588,6 +632,28 @@ export function createApiClient(port: number): ApiClient {
         // Not a JSON body; the status line is all there is.
       }
       if (typeof detail === 'string' && detail !== '') throw new Error(detail)
+      // FastAPI's own validation errors put a list there instead — one entry
+      // per rejected field, with the field path in `loc` and the reason in
+      // `msg`. Naming the field is what turns "failed: 422" into something a
+      // careless typist can act on, so join those entries into sentences here
+      // rather than falling back to the bare status.
+      if (Array.isArray(detail)) {
+        const reasons = detail
+          .filter(
+            (entry): entry is { loc: unknown[]; msg: string } =>
+              typeof entry === 'object' &&
+              entry !== null &&
+              typeof (entry as { msg?: unknown }).msg === 'string'
+          )
+          .map((entry) => {
+            const loc = entry.loc.filter(
+              (part) => part !== 'body' && part !== 'query' && part !== 'path'
+            )
+            const where = loc.length > 0 ? `${loc.join('.')}: ` : ''
+            return `${where}${entry.msg}`
+          })
+        if (reasons.length > 0) throw new Error(reasons.join('; '))
+      }
       throw new Error(`sidecar ${method} ${path} failed: ${res.status}`)
     }
     return (await res.json()) as T

@@ -250,7 +250,8 @@ SITES: tuple[Site, ...] = (
     _site(
         "the §12 classlist expectations",
         RUN_SHEET,
-        r"`… — (?P<admin>\d+) classes` with ⚠ `(?P<names>\d+) of (?P<total>\d+) class name\(s\)",
+        r"`(?P<admin>\d+) classes` on the weight's row, with ⚠ `(?P<names>\d+) of (?P<total>\d+) "
+        r"class name\(s\)",
         lambda match: {
             "admin": str(_head("v2")),
             "names": str(_head("v2")),

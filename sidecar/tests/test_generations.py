@@ -138,6 +138,47 @@ def test_the_generation_names_are_the_ones_the_picker_looks_for():
     assert generations.DEFAULT.name == "v2"
     with pytest.raises(SystemExit, match="unknown generation"):
         generations.get("v3")
+    # A *variant* is not one of these, and `--generation v2.1` must stay a typo rather than
+    # becoming a second way to say something: the flag selects a dataset convention, and a variant
+    # shares its generation's (same classes, same order, same geometry). It is `--variant v2.1`,
+    # which is a naming layer over the generation rather than an entry in this table.
+    assert "v2.1" not in generations.GENERATIONS
+    with pytest.raises(SystemExit, match="unknown generation"):
+        generations.get("v2.1")
+
+
+def test_a_variant_is_a_naming_layer_over_its_generation(tmp_path):
+    """The retrain's four artifact names, and the one field that is *not* allowed to move.
+
+    One generation can keep more than one weight, and the retrain case is the one a plain
+    `--install --name` cannot cover: two runs of one generation write to the same run directory, so
+    a retrain would silently replace the run the current weight came from. So a variant moves the
+    run name, the `--val` run name, the export directory the regenerated version downloads into,
+    and the installed weight's name - and leaves `classes`, `manifest` and `resize_mode` exactly as
+    they are, because those are what make it the same generation. The record keeps the
+    `generation`'s name too (asserted on the CLI path below), since a roster is judged per
+    generation.
+    """
+    assert generations.V2.variant("") is generations.V2
+
+    retrain = generations.V2.variant("v2.1")
+    assert retrain.weight_name == "scanncart-grocery-v2.1.pt"
+    assert retrain.run_name == "scanncart-grocery-v2.1"
+    assert train_model.val_name(retrain) == "scanncart-grocery-v2.1-val"
+    # A retrain is trained from a regenerated version, so its export cannot be its sibling's -
+    # otherwise `--download` would report the sibling's export as already downloaded and fetch
+    # nothing. `--dataset-dir` still answers first, for a variant that really does share one.
+    assert retrain.export_dir.name == "export-v2.1"
+    assert retrain.export_dir.parent == generations.V2.export_dir.parent
+    for field in ("classes", "manifest", "resize_mode", "roboflow_project"):
+        assert getattr(retrain, field) == getattr(generations.V2, field), field
+    # And the generation itself is untouched - specs are frozen rather than mutated in place.
+    assert generations.V2.name == "v2" and generations.V2.export_dir.name == "export-v2"
+    # A variant of a variant names nothing that exists at either level, so the value has to be a
+    # filename component: it lands in `models/`, which is the directory the picker lists.
+    for bad in ("../escape", "has space", "-leading-dash", "v2/1"):
+        with pytest.raises(SystemExit, match="cannot be part of a filename"):
+            generations.V2.variant(bad)
 
 
 def test_a_v1_export_is_judged_against_v1s_class_list(tmp_path):
@@ -426,3 +467,55 @@ def test_cli_v1_installs_under_v1s_own_name_with_its_own_class_list(tmp_path, ca
     assert record["class_names"] == list(generations.V1.classes)
     assert "Palmolive Naturals Bar Soap 85g" not in record["class_names"]
     assert "scanncart-grocery-v1" in out
+
+
+def test_cli_variant_installs_a_retrain_beside_the_weights_it_retrains(tmp_path, capsys):
+    """`--variant v2.1` end to end: the whole point is that a retrain can be trained, validated and
+    installed without touching the run or the weight it retrains, and that what it leaves behind is
+    readable - the panel shows a weight's class list and its measured score from this record.
+
+    The record's `generation` staying `v2` is the assertion worth having: the class list it is
+    judged by has no `v2.1` vocabulary (`app/roster.py` holds one roster per *roster*, and both of
+    these declare the same seven names), so writing the variant name there would leave the runtime
+    unable to place the weight while looking more specific. What distinguishes the retrain is the
+    filename and this `source` - which is exactly why `--version` is not optional for one.
+    """
+    root = _fake_export(tmp_path / "export-v2.1", names=list(generations.V2.classes))
+    models = tmp_path / "models"
+    runs = tmp_path / "runs"
+    # The run `--variant` writes. `<name>-2` would be what a colliding retrain produced instead.
+    _finished_run(runs, "scanncart-grocery-v2.1")
+
+    code = train_model.main(
+        [
+            "--variant",
+            "v2.1",
+            "--dataset-dir",
+            str(root),
+            "--run-project",
+            str(runs),
+            "--models-dir",
+            str(models),
+            "--version",
+            "3",
+            "--install",
+        ]
+    )
+    out = capsys.readouterr().out
+
+    assert code == 0
+    assert "variant:    v2.1" in out and "record still generation v2" in out
+    assert (models / "scanncart-grocery-v2.1.pt").read_bytes() == b"weights"
+    # Nothing under the name it retrains: that file is the weight the app is configured with.
+    assert not (models / generations.V2.weight_name).exists()
+
+    record = json.loads((models / "scanncart-grocery-v2.1.json").read_text("utf-8"))
+    assert record["generation"] == "v2"
+    assert record["source"] == "snc-grocery version 3"
+    assert record["class_names"] == list(generations.V2.classes)
+    # Both halves of what the panel reads: which classes these weights are *on*, and what they
+    # measured. An install that recorded neither would select fine and explain nothing.
+    assert len(record["class_names"]) == len(generations.V2.classes)
+    # The record is written beside the weight, and the reminder names that file rather than the
+    # generation's - a path one segment wrong is one an operator would paste and fail on.
+    assert "scanncart-grocery-v2.1.json" in out

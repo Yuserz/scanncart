@@ -3,7 +3,7 @@
 The three docs this repo runs from (`CLAUDE.md`, `docs/RUN_SHEET.md`, `docs/MODEL_TRAINING.md`) plus
 the run-desktop skill (`SKILL.md`, which describes the §12 verification procedure the other two point
 at) are prose, and most of what they say cannot be checked at all. This module deliberately does not
-try. What it pins is the four kinds of sentence that are really a *copy* of a code fact, because
+try. What it pins is the five kinds of sentence that are really a *copy* of a code fact, because
 those are the ones that survive a rename looking true:
 
 1. **A class count.** `24 classes`, `24-output`, `the seven names`, `6 cells` - a head width, a
@@ -19,19 +19,35 @@ those are the ones that survive a rename looking true:
 4. **A split name or an artifact name.** The splits published in `label_classes.SPLIT_NAMES`, and
    every backticked file name the docs use, which has to be something this repo's code or disk
    actually has.
+5. **A contract table's own size.** `thirteen surfaces in one table` is `len(table.surfaces)`
+   written out in prose, and `AGREEMENTS`'s two rows is `len(AGREEMENTS)` - adding a row to either
+   table is the quietest way to make such a sentence wrong, and a table's *own* row count is the one
+   thing every other guard here cannot see, since each of them checks the rows and never how many
+   there are. Both counts are attributed to the table by name (the constant the guard declares it
+   as), which is what makes them checkable rather than merely adjacent.
 
 Everything asserted here is a fact about the *code*, never about the workspace: the live dataset
 counts the run sheet also carries (`858/1433 decided`, `132 of 186 across 6 cells`) move with the
 data and are deliberately not pinned - a guard on those would fail on a labeling session, which is
 how a guard stops being read. Where a doc number looks like a claim but is not one (a diagnostic's
-own count, a UI value the docs say must never appear), the exemption lives in `EXEMPT` below with
-its reason, and `test_the_docs_guard_exemptions_are_still_live` fails when the phrase it covers is
-edited away - so an exemption cannot quietly cover new text.
+own count, a UI value the docs say must never appear), the exemption lives in `EXEMPT` at the foot of
+this file: one row per phrase, with the reason it is allowed, the docs it was written about and the
+*one claim shape* it is excused from - the row itself being `tests/exemptions.py`'s shape, shared with
+the two other guards that keep such a table. A shape here is an arm *and* the pattern that matched,
+because this arm has several: a phrase written for the count shape cannot silence the subset or the
+roster-pair shape. `test_the_docs_guard_exemptions_are_still_live` fails when the phrase it covers is
+edited away, when it stops excusing a claim its own shape still flags, or when any other shape it does
+not name would be silenced by it - so an exemption cannot quietly cover new text, nor another shape's.
 
-One more check sits beside those four: the §12 fixture the docs describe (`driver.mjs classlist`) has
+One more check sits beside those five: the §12 fixture the docs describe (`driver.mjs classlist`) has
 to keep being the thing they say it is - a head sized by the roster x the distance axis. It is the
 root of this round's stale counts, because prose describing a fixture nothing builds stays accurate
 right up until the fixture stops being that.
+
+And one check is not about a sentence at all, the tables themselves: a contract table that no doc
+names and no check calls is a declaration that *reads* as maintained - its rows are validated at
+construction, so it looks wired up - while nothing can fail on it and no reader was told it exists.
+Which tables exist is read from the module they live in, so that arm needs no upkeep of its own.
 
 Same shape as the other drift guards in this suite, and the same failure mode it exists for: a stale
 doc reads as a healthy project, and prose is where a rename goes to be forgotten.
@@ -39,6 +55,7 @@ doc reads as a healthy project, and prose is where a rename goes to be forgotten
 
 from __future__ import annotations
 
+import ast
 import dataclasses
 import re
 from functools import lru_cache
@@ -55,6 +72,8 @@ import clean_v2
 import label_classes
 import plan_split
 import train_model
+
+from tests.exemptions import Exemption, Exemptions, Waiver, assert_still_present, waived_note
 
 pytestmark = pytest.mark.docs
 
@@ -114,33 +133,21 @@ NUMBER_WORDS = {
     "ten": 10,
     "eleven": 11,
     "twelve": 12,
+    "thirteen": 13,
+    "fourteen": 14,
+    "fifteen": 15,
+    "sixteen": 16,
+    "seventeen": 17,
+    "eighteen": 18,
+    "nineteen": 19,
+    "twenty": 20,
 }
 
-# (doc, snippet, reason). The snippet must still be present - `test_the_docs_guard_exemptions_are_still_live`
-# holds that end - so an exemption cannot outlive the sentence it was written for and start covering
-# whatever replaces it.
-EXEMPT: tuple[tuple[str, str, str], ...] = (
-    (
-        "docs/MODEL_TRAINING.md",
-        "`0 classes` would be a claim",
-        "a UI value the docs say must never appear, not a roster size",
-    ),
-    (
-        "desktop/CLAUDE.md",
-        "`0 classes` would be a claim",
-        "the same UI value, stated in the Live view's paragraph",
-    ),
-    (
-        "docs/MODEL_TRAINING.md",
-        "`note: 1 class(es)",
-        "the tool's own diagnostic, whose count varies with the dataset rather than describing a roster",
-    ),
-    (
-        "docs/MODEL_TRAINING.md",
-        "the 8-class roster",
-        "history: the constant that was in the trainer before `generations.py`, described in the past tense",
-    ),
-)
+# The exemptions - the phrases these docs are allowed to carry, the reason for each, and the one claim
+# shape each is excused from - are in one place at the foot of this file (§7), with the check that holds
+# them live and the shapes the arms produce. The arms below ask through `_exempt`, passing their own
+# name and the pattern that matched, which is what keeps a phrase written for one shape from silencing
+# another's.
 
 
 @lru_cache(maxsize=None)
@@ -155,14 +162,6 @@ def _line(doc: str, index: int) -> int:
 def _snippet(doc: str, start: int, end: int, pad: int = 30) -> str:
     text = _text(doc)
     return text[max(0, start - pad) : end + pad]
-
-
-def _exempt(doc: str, snippet: str) -> str | None:
-    """The reason this snippet is not a claim, if any exemption covers it."""
-    for exempt_doc, phrase, reason in EXEMPT:
-        if exempt_doc == doc and phrase in snippet:
-            return reason
-    return None
 
 
 # --------------------------------------------------------------------------
@@ -224,9 +223,14 @@ def test_every_class_count_in_the_docs_is_one_the_code_can_produce():
     Palmolive, and after the drop it is 7 x 3 - a sentence nothing in the app reads, so it stayed
     on the page through a dataset change, a retrain and a weight drop. The remedy is the doc's, not
     a setting's.
+
+    What it skipped is collected as it goes (`waived`) and stated at the end, and carried in the failure
+    message if there is one: those sentences are the ones a reader would otherwise have to know the
+    table to find, and a row this scan never reaches is a waiver nobody is using.
     """
     problems = []
     checked = 0
+    waived: list[Waiver] = []
     for doc in DOCS:
         text = _text(doc)
         for match in COUNT_CLAIM.finditer(text):
@@ -237,7 +241,7 @@ def test_every_class_count_in_the_docs_is_one_the_code_can_produce():
                 checked += 1
                 continue
             snippet = _snippet(doc, match.start(), match.end())
-            if _exempt(doc, snippet):
+            if _exempt(ARM_CLASS_COUNTS, COUNT_CLAIM, doc, snippet, waived):
                 checked += 1
                 continue
             problems.append(
@@ -267,7 +271,20 @@ def test_every_class_count_in_the_docs_is_one_the_code_can_produce():
                     )
     # A guard that stops matching anything passes silently; the docs state class counts today.
     assert checked > 20, f"the class-count scan matched only {checked} claims - did the shape change?"
-    assert not problems, "stale class count(s) in the docs:\n" + "\n".join(problems)
+    # The trace, stated: every row this scan can apply was applied. A row that is live - its phrase
+    # present, its claim still flagged - but which this scan never reached is a waiver nobody is using,
+    # and a problem list cannot report that, because it is empty exactly when the exemptions work.
+    count_shape = _shape(ARM_CLASS_COUNTS, COUNT_CLAIM)
+    applied = {waiver.phrase for waiver in waived}
+    rows_of_shape = {row.phrase for row in EXEMPT.rows if row.shape == count_shape}
+    assert applied == rows_of_shape, (
+        f"this scan applied {sorted(applied) or 'no'} exemption(s) where the {count_shape!r} rows are "
+        f"{sorted(rows_of_shape)}: a row this scan consults and never reaches is a waiver nobody is "
+        "using - drop it, or point it at the sentence that replaced the one it was written for"
+    )
+    assert not problems, (
+        "stale class count(s) in the docs:\n" + "\n".join(problems) + waived_note(waived)
+    )
 
 
 # --------------------------------------------------------------------------
@@ -549,7 +566,333 @@ def test_artifact_names_in_the_docs_are_names_this_repo_has():
 
 
 # --------------------------------------------------------------------------
-# 5. the fixture the docs describe
+# 5. the contract tables: the size a doc states, and whether anything reads them
+# --------------------------------------------------------------------------
+
+# `thirteen surfaces in one table`, `13 surfaces in the table`, `a 13-surface table`. Two things
+# keep ordinary prose out, both of them the clause the docs use for a table's size: the word `table`
+# beside the count, and the plural - `the one surface an operator reads` (next to a table, even) is
+# a single surface a rule is about, never a table's size, so it is not read as one. That is the same
+# anchoring the class-count arm does on its count nouns.
+# The number word is matched case-insensitively - a count opening a sentence is still a count - and
+# read through `_number` below, which is the one place the spelling is turned into a value.
+TABLE_NEAR = 40
+SURFACE_COUNT = re.compile(
+    r"(?<![A-Za-z0-9_-])(?P<value>\d+|(?i:\b(?:" + WORDS + r")\b))\s+surfaces\b"
+    r"|(?<![A-Za-z0-9_-])(?P<dash>\d+|(?i:\b(?:" + WORDS + r")\b))-surface\b"
+)
+# Which table a count is about: the *constant* the doc spells it as. That is why the size is read
+# through the module rather than from a second list of table names here - a row added to the table
+# moves this number with nothing to update on the guard's side, which is the point.
+TABLE_REFERENCE = re.compile(r"`(?P<name>[A-Z][A-Z0-9_]+)`")
+# A sentence, for attributing a count to the table it names. These docs wrap mid-sentence, so this
+# breaks on whitespace rather than on line ends, and `settings.py` and `0.85` are not ends (a
+# lower-case letter or a digit follows). A sentence opening on a backticked name is one.
+SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+(?=[A-Z`*])")
+# A count of *rows* has to be attached to the table it counts (`AGREEMENTS`'s two rows, two rows in
+# `AGREEMENTS`), because unlike `surfaces` this noun is how these docs talk about every table they
+# have - `one row per gate`, `the §3 rows`, `111 rows are that shape` - so a bare count of them
+# cannot be told from prose, and a guard that tried would be turned off within a week.
+ROW_NUMBER = r"(?P<value>\d+|(?i:\b(?:" + WORDS + r")\b)) rows?\b"
+ROW_CLAIM = re.compile(
+    r"`(?P<name>[A-Z][A-Z0-9_]+)`(?:'s| holds| has| lists) " + ROW_NUMBER +
+    r"|(?P<value_after>\d+|(?i:\b(?:" + WORDS + r")\b)) rows? (?:in|of) "
+    r"`(?P<name_after>[A-Z][A-Z0-9_]+)`"
+)
+
+
+def _number(raw: str) -> int:
+    """One count as a value: a digit run as itself, a number word through the table above."""
+    return int(raw) if raw.isdigit() else NUMBER_WORDS[raw.lower()]
+
+
+@lru_cache(maxsize=None)
+def _sentences(text: str) -> tuple[tuple[int, str], ...]:
+    """`(offset, sentence)` pairs, so a count can be read against the table its own sentence names."""
+    sentences = []
+    start = 0
+    for end in SENTENCE_BREAK.finditer(text):
+        sentences.append((start, text[start : end.start()]))
+        start = end.end()
+    sentences.append((start, text[start:]))
+    return tuple(sentences)
+
+
+@lru_cache(maxsize=None)
+def _tables() -> dict[str, object]:
+    """The tables this suite declares, by the constant name the docs spell: each contract, and each
+    tuple of them (`AGREEMENTS`, the table a doc counts rows of).
+
+    Read from the module that owns them (`test_desktop_contracts.py`), and read as the objects
+    rather than parsed out of its source: `len(table.surfaces)` is the fact, and a second list of
+    names and numbers here would be one more copy to keep.
+    """
+    from tests import test_desktop_contracts as contracts
+    from tests.wording import AgreementContract, WordingContract
+
+    rows = (WordingContract, AgreementContract)
+    tables: dict[str, object] = {}
+    for name, value in vars(contracts).items():
+        if isinstance(value, rows):
+            tables[name] = value
+        elif (
+            isinstance(value, (tuple, list))
+            and value
+            and all(isinstance(row, rows) for row in value)
+        ):
+            tables[name] = value
+    return tables
+
+
+def _sizes(table: object) -> dict[str, int]:
+    """What a doc may state about one table, by the noun it counts.
+
+    A `WordingContract`'s rows *are* its surfaces, one file and its fragments each; an
+    `AgreementContract` is a single row whose surfaces are the copies it compares; and a tuple of
+    rows is the table a doc counts the rows of.
+    """
+    from tests.wording import AgreementContract
+
+    if isinstance(table, (tuple, list)):
+        return {"rows": len(table), "surfaces": sum(len(row.surfaces) for row in table)}
+    if isinstance(table, AgreementContract):
+        return {"rows": 1, "surfaces": len(table.surfaces)}
+    return {"rows": len(table.surfaces), "surfaces": len(table.surfaces)}
+
+
+def _table_size_verdict(doc: str, text: str, tables: dict[str, object]) -> tuple[int, list[str]]:
+    """`(counts about a table, problems)` for one doc's text - the arm's whole body, so the canary
+    below can feed it sentences rather than edit a real doc.
+    """
+    known = ", ".join(f"`{name}`" for name in sorted(tables)[:3])
+    problems: list[str] = []
+    seen = 0
+    for start, sentence in _sentences(text):
+        named = {name: tables[name] for name in TABLE_REFERENCE.findall(sentence) if name in tables}
+        for match in SURFACE_COUNT.finditer(sentence):
+            # What makes it a table's size rather than prose about one: the clause these docs use for
+            # a count of a table's rows.
+            near = text[
+                max(0, start + match.start() - TABLE_NEAR) : start + match.end() + TABLE_NEAR
+            ]
+            if "table" not in near:
+                continue
+            seen += 1
+            value = _number(match.group("value") or match.group("dash"))
+            # The line number is counted from the text handed in rather than through `_line`, which
+            # reads the file by name: the canary below passes sentences, not a doc on disk.
+            where = f"{doc}:{text[: start + match.start()].count('\n') + 1}"
+            if len(named) != 1:
+                problems.append(
+                    f"{where}: {match.group(0)!r} counts a table's surfaces but its sentence "
+                    f"names {len(named)} table(s) of this suite, so nothing can check it against "
+                    f"the code - name the one it counts (e.g. {known}), or reword it if it is not "
+                    "a table's size"
+                )
+                continue
+            name, table = next(iter(named.items()))
+            surfaces = _sizes(table)["surfaces"]
+            if value != surfaces:
+                problems.append(f"{where}: {match.group(0)!r} - `{name}` has {surfaces} surfaces")
+    # The row counts, which need no sentence to be attributed in: their table's name is attached.
+    for match in ROW_CLAIM.finditer(text):
+        seen += 1
+        name = match.group("name") or match.group("name_after")
+        value = _number(match.group("value") or match.group("value_after"))
+        where = f"{doc}:{text[: match.start()].count('\n') + 1}"
+        if name not in tables:
+            problems.append(
+                f"{where}: {match.group(0)!r} counts the rows of `{name}`, which is not a table "
+                f"this suite declares - so nothing can check it (e.g. {known})"
+            )
+            continue
+        rows = _sizes(tables[name])["rows"]
+        if value != rows:
+            problems.append(f"{where}: {match.group(0)!r} - `{name}` has {rows} row(s)")
+    return seen, problems
+
+
+def test_table_sizes_in_the_docs_match_the_tables_they_name():
+    """A table's size stated in prose is `len(table.surfaces)` or `len(table)` written out, and it has
+    one failure mode: a row added to the table, which leaves the sentence reading true while the
+    table moved. A table's own count is the one thing no other guard in this suite looks at, since
+    each of them checks the rows and never how many there are.
+
+    The two nouns are anchored differently, because they are not equally tellable apart from prose.
+    `surfaces` is rare enough that the word `table` beside the count identifies it, and then the
+    count's own *sentence* has to name exactly one table of this suite - the constant the guard
+    declares it as - because a number that names nothing is the shape this whole module exists to
+    catch (and a count beside two tables fails too: the reader could not tell which number moved).
+    `rows` is how these docs talk about every table they have, so that count has to be attached to
+    the name it counts; an attached count naming something this suite does not declare fails, since
+    nothing could check it.
+    """
+    tables = _tables()
+    problems: list[str] = []
+    seen = 0
+    for doc in DOCS:
+        found, found_problems = _table_size_verdict(doc, _text(doc), tables)
+        seen += found
+        problems += found_problems
+    # A guard that stops matching anything passes silently, so the shape has to still be there - and
+    # the count of what was *found* rather than of what was checkable, because a count that names no
+    # table is a problem below and must be reported as one rather than absorbed here.
+    assert seen >= 1, (
+        "no doc states a contract table's size any more - if that is deliberate, this arm has "
+        "nothing left to check, and the paragraph it was written for is what it should lose"
+    )
+    assert not problems, "table size(s) in the docs the code disagrees with:\n" + "\n".join(problems)
+
+
+# Where a table's name can be referred to: the docs that describe the conventions, and the suite's
+# own source - the checks that call it, the tuples that walk it, and the docstrings beside them. The
+# app, the tools and the desktop are out because a contract table is a sidecar-test object (nothing
+# outside `sidecar/tests/` can read one, and today nothing there names one).
+REFEREE_GLOBS = ("sidecar/tests/**/*.py",)
+
+
+@lru_cache(maxsize=None)
+def _referee_texts() -> tuple[tuple[str, str], ...]:
+    """`(relative path, text)` for everything a table's name can be referred to in, read once."""
+    paths = [REPO_ROOT / doc for doc in DOCS]
+    for pattern in REFEREE_GLOBS:
+        paths += sorted(REPO_ROOT.glob(pattern))
+    return tuple(
+        (path.relative_to(REPO_ROOT).as_posix(), path.read_text(encoding="utf-8", errors="replace"))
+        for path in paths
+        if path.is_file()
+    )
+
+
+def _mentions(name: str) -> list[str]:
+    """Every place that names one table, other than the line that declares it.
+
+    The declaration is excluded because a constant always spells itself there - which is exactly the
+    sense in which a table can look maintained while nothing reads it. A call
+    (`assert_fragments_present(NULL_CONTROL_CONTRACT)`), a walk over a tuple of rows, and a sentence
+    in a doc all count, since all three are a reader or a check reaching for it.
+    """
+    pattern = re.compile(r"(?<![\w-])" + re.escape(name) + r"(?![\w-])")
+    declaration = re.compile(r"\s*" + re.escape(name) + r"\s*(?::[^=]+)?=")
+    places = []
+    for relative, text in _referee_texts():
+        for number, line in enumerate(text.splitlines(), start=1):
+            if pattern.search(line) and not declaration.match(line):
+                places.append(f"{relative}:{number}")
+    return places
+
+
+def test_every_declared_table_is_read_by_something():
+    """No table may be declared and then referred to by nothing - not by a doc, not by a check.
+
+    This is the failure the *other* arms cannot see, because every one of them reads the tables that
+    exist: a `WordingContract` whose rows are all still phrased correctly, whose canary fires, and
+    which no test ever calls is green everywhere in this file and dead in the suite. The rows being
+    validated at construction is what makes it look wired up, which is the trap - so the check is
+    `_mentions`, and its two remedies are the two ways a table is meant to be reached for: name it
+    where the convention is written, or call it from the check it was declared for.
+    """
+    tables = _tables()
+    assert tables, "the suite declares no contract tables any more - did `_tables()` stop scanning?"
+    unread = [name for name in sorted(tables) if not _mentions(name)]
+    assert not unread, (
+        "these tables are declared and nothing refers to them - no doc explains them and no check "
+        "calls them, so they read as maintained while nothing can fail on them (the scan reads "
+        f"{', '.join(REFEREE_GLOBS)} and the docs). Name each where its convention is written, "
+        "wire it into the check it was declared for, or drop it:\n  " + "\n  ".join(unread)
+    )
+
+
+def test_the_table_reference_scan_knows_a_name_from_a_name_it_cannot_find():
+    """Both ends of that scan: names the corpus has, and a name it cannot have.        Without this the guard's own failure mode is silent - a moved glob or a renamed doc leaves every
+        table looking unread at once (loud, and the message says so), but a corpus that matched a single
+        stray word would keep it green while it checked nothing.
+    """
+    assert _mentions("AGREEMENTS"), "the reference scan cannot see a table named in a doc and a test"
+    assert _mentions("NULL_CONTROL_CONTRACT"), "the scan cannot see a table a check calls"
+    # A name the corpus cannot have, written in two pieces on purpose: this file is scanned too, so
+    # spelling it whole here is how it would be found.
+    undeclared = "A_TABLE_NOBODY_" + "EVER_DECLARED"
+    assert _mentions(undeclared) == [], "the scan reported a name the suite does not declare"
+    # And it matches a whole name rather than a piece of one: the declared `NULL_CONTROL_CONTRACT`
+    # cut short at its last underscore is not a name, and must find nothing. Built in two pieces too.
+    partial = "NULL_CONTROL" + "_"
+    assert _mentions(partial) == [], "the scan is matching part of a name as a name"
+
+
+def _fixture_table(rows: int):
+    """A table of `rows` rows, for the canary - the smallest thing that has a size."""
+    from tests.wording import WordingContract
+
+    return WordingContract(
+        name="the canary's own table",
+        owner="tests/test_docs_claims.py",
+        claim="a surface of the canary's table lost its wording.",
+        facts="It is a fixture, stated so the engine accepts it.",
+        surfaces=tuple(("sidecar/tests/CLAUDE.md", ("a fixture fragment",)) for _ in range(rows)),
+        canary_fragments=("a fixture fragment",),
+    )
+
+
+def test_the_table_size_arm_fires_on_every_way_a_stated_size_can_be_wrong():
+    """The arm's own canary, because a guard whose only proof is that it passes is a guard nobody
+    knows the teeth of - and the real docs cannot be broken on purpose in the suite.
+
+    One contract of ten rows, a second of four, and a table of two of them: the count that agrees,
+    the count that is one row behind the table, a count that names no table, a count naming two, and
+    the row form - in both spellings, and for a table of rows and a single row's spans.
+    """
+    tables = {
+        "FIXTURE_CONTRACT": _fixture_table(10),
+        "OTHER_CONTRACT": _fixture_table(4),
+        "FIXTURE_TABLE": (_fixture_table(3), _fixture_table(3)),
+    }
+
+    def verdict(text: str):
+        return _table_size_verdict("docs/MODEL_TRAINING.md", text, tables)
+
+    # The one that holds: the sentence is a table's size, it names that table, and it equals it.
+    assert verdict("The table `FIXTURE_CONTRACT` holds ten surfaces in one table.") == (1, [])
+    # The failure this arm exists for: a row added to the table and the sentence left reading true.
+    seen, problems = verdict("`FIXTURE_CONTRACT` is a table of eleven surfaces, per the guard.")
+    assert seen == 1 and len(problems) == 1
+    assert "`FIXTURE_CONTRACT` has 10 surfaces" in problems[0], problems
+    # A count about a table that names none of this suite's tables: nothing to check it against.
+    seen, problems = verdict("The same table holds thirteen surfaces in one table.")
+    assert seen == 1 and len(problems) == 1
+    assert "names 0 table(s)" in problems[0], problems
+    # A count beside two tables: checkable, but not attributable to one of them.
+    seen, problems = verdict(
+        "`FIXTURE_CONTRACT` and `OTHER_CONTRACT` are tables of four surfaces each."
+    )
+    assert seen == 1 and len(problems) == 1
+    assert "names 2 table(s)" in problems[0], problems
+    # And the singular is prose, not a size - even with the word `table` right beside it, which is
+    # what keeps `the one surface an operator reads` out of this arm.
+    assert verdict("The table's one surface is the one an operator reads.") == (0, [])
+
+    # The row form, which is anchored by the name instead: both spellings, and the table it counts
+    # is the tuple of rows rather than one row of a contract.
+    assert verdict("`FIXTURE_TABLE` holds two rows, one per door.") == (1, [])
+    assert verdict("Two rows in `FIXTURE_TABLE` are the claims.") == (1, [])
+    # One row added to the table, with the sentence left reading true - the same failure as above.
+    seen, problems = verdict("`FIXTURE_TABLE`'s three rows are the claims.")
+    assert seen == 1 and len(problems) == 1
+    assert "`FIXTURE_TABLE` has 2 row(s)" in problems[0], problems
+    # A row count is a table's size too, so the attribution is checked the same way - and a
+    # contract's own row count is its surfaces, not the rows of the tuple it would be in.
+    seen, problems = verdict("`NOT_A_TABLE` has two rows.")
+    assert seen == 1 and len(problems) == 1
+    assert "is not a table this suite declares" in problems[0], problems
+    seen, problems = verdict("`FIXTURE_CONTRACT` has one row.")
+    assert seen == 1 and len(problems) == 1
+    assert "`FIXTURE_CONTRACT` has 10 row(s)" in problems[0], problems
+    # Prose about rows in general is not a count of any table's rows, so it is not read at all.
+    assert verdict("One row per gate, and the table below says which.") == (0, [])
+
+
+# --------------------------------------------------------------------------
+# 6. the fixture the docs describe
 # --------------------------------------------------------------------------
 
 DRIVER = ".claude/skills/run-desktop/driver.mjs"
@@ -580,20 +923,305 @@ def test_the_classlist_fixture_builds_its_head_from_the_roster_and_the_axis():
 
 
 # --------------------------------------------------------------------------
-# 6. the exemptions themselves
+# 7. the exemptions, in one place
 # --------------------------------------------------------------------------
+
+# The arms of this guard, by the name a row uses to say which scan step it is excused from: a name
+# rather than the test function, so the table stays data and can be read without the arms' bodies,
+# while every arm still has to pass its own name to `_exempt` - which is the only way in.
+ARM_CLASS_COUNTS = "class counts"
+
+
+@dataclasses.dataclass(frozen=True)
+class Arm:
+    """One arm of this guard: the test that runs its scan, and the patterns it scans the docs with.
+
+    `test` is the function's name in this module rather than the function itself, so the table stays
+    data - and so the check below can read that function's body and hold these patterns to it.
+    """
+
+    test: str
+    patterns: tuple[re.Pattern[str], ...]
+
+
+# What each arm scans with, so an exemption can be proved *load-bearing* and attributed to the exact
+# shape it was written for: a row whose phrase no longer falls inside a claim *that pattern* would flag
+# has outlived the sentence it was written for. A map that had drifted from the arm it describes would
+# make that proof meaningless, so it is read off the arm rather than written down beside it - the
+# patterns are held to `Arm.test`'s own body by the check at the end of this section.
+ARMS: dict[str, Arm] = {
+    ARM_CLASS_COUNTS: Arm(
+        test="test_every_class_count_in_the_docs_is_one_the_code_can_produce",
+        patterns=(COUNT_CLAIM, SUBSET_CLAIM, ROSTER_PAIR),
+    ),
+}
+
+# The name each of this module's patterns is known by, read off the module rather than written down:
+# a shape names a pattern's own identifier, so renaming one moves the shape with it.
+PATTERN_NAMES: dict[re.Pattern[str], str] = {
+    value: name for name, value in globals().items() if isinstance(value, re.Pattern)
+}
+
+
+def _shape(arm: str, pattern: re.Pattern[str]) -> str:
+    """One claim shape of one arm, as a row names it: the arm and the pattern its scan matched on.
+
+    This is the granularity a row is written at, and it is what keeps an exemption from spreading
+    *within* an arm: a phrase that excuses a count cannot excuse the same words under another of that
+    arm's patterns - the subset shape and the roster-pair shape being the two this arm also has.
+    """
+    return f"{arm} / {PATTERN_NAMES[pattern]}"
+
+
+# Every shape this guard's arms produce, by the name a row writes - what a row's `shape` has to be one
+# of, and what the liveness check below asks each row's own text through.
+SHAPES: dict[str, tuple[str, re.Pattern[str]]] = {
+    _shape(arm, pattern): (arm, pattern)
+    for arm, spec in ARMS.items()
+    for pattern in spec.patterns
+}
+
+# The row - phrase, reason, places, shape - is `tests/exemptions.py`'s, shared with the two other
+# guards that keep such a table, and so is the rule that keeps it live (`assert_still_present`, called
+# with this module's own reader). What is this module's: the phrase is the row's identity, so a phrase
+# and the reason it is allowed travel together and the same phrase excused for the same reason in two
+# docs is one row rather than two; and every row names a *shape* rather than an arm, because this arm
+# matches three of them - a phrase written for one is asked for by that one alone, so adding one cannot
+# leave another pattern of the same arm covering text it was not written for.
+EXEMPT = Exemptions(
+    Exemption(
+        phrase="`0 classes` would be a claim",
+        reason="a UI value the docs say must never appear, not a roster size",
+        shape=_shape(ARM_CLASS_COUNTS, COUNT_CLAIM),
+        places=("docs/MODEL_TRAINING.md", "desktop/CLAUDE.md"),
+    ),
+    Exemption(
+        phrase="`note: 1 class(es)",
+        reason="the tool's own diagnostic, whose count varies with the dataset rather than "
+        "describing a roster",
+        shape=_shape(ARM_CLASS_COUNTS, COUNT_CLAIM),
+        places=("docs/MODEL_TRAINING.md",),
+    ),
+    Exemption(
+        phrase="the 8-class roster",
+        reason="history: the constant that was in the trainer before `generations.py`, described "
+        "in the past tense",
+        shape=_shape(ARM_CLASS_COUNTS, COUNT_CLAIM),
+        places=("docs/MODEL_TRAINING.md",),
+    ),
+)
+
+
+def _exempt(
+    arm: str,
+    pattern: re.Pattern[str],
+    doc: str,
+    snippet: str,
+    waived: list[Waiver] | None = None,
+) -> str | None:
+    """The reason this snippet is not a claim *for the shape this pattern matched*, if a row excuses it.
+
+    The pattern is a required argument and not only the arm, so a phrase written for one of an arm's
+    claim shapes cannot silence another: an exemption is a fact about one shape, and the shape is the
+    arm *and* the pattern. The shared lookup does the matching; this module adds the one rule only it
+    can make - the arm has to be one of the arms it declared above, an arm that never declared itself
+    reading as the same failure as a row it forgot.
+    """
+    assert arm in ARMS, (
+        f"{arm!r} asks `_exempt` without being declared - the declared arms are {sorted(ARMS)}"
+    )
+    return EXEMPT.reason(_shape(arm, pattern), doc, snippet, waived)
+
+
+def _functions() -> dict[str, ast.AST]:
+    """This module's top-level functions by name, for the checks that read one arm's own body."""
+    return {
+        node.name: node
+        for node in ast.parse(SELF.read_text(encoding="utf-8")).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+
+def _exempt_calls() -> list[tuple[str, ast.Call]]:
+    """`(function, call)` for every `_exempt(...)` call in this file, read with `ast` rather than as
+    text: this file explains the table in prose, so `_exempt` appears in docstrings and comments it
+    must not be read from. The enclosing function comes along so a call site can be held to the arm
+    whose test it sits in.
+    """
+    calls = []
+    for node in ast.parse(SELF.read_text(encoding="utf-8")).body:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for child in ast.walk(node):
+            if (
+                isinstance(child, ast.Call)
+                and isinstance(child.func, ast.Name)
+                and child.func.id == "_exempt"
+            ):
+                calls.append((node.name, child))
+    return calls
+
+
+def _patterns_reached(
+    node: ast.AST, functions: dict[str, ast.AST], through_calls: bool = True
+) -> set[re.Pattern[str]]:
+    """The compiled patterns one piece of code reaches for: the module's pattern names it uses, and the
+    same one level into the functions it calls, because an arm scans through its helpers as often as
+    in its own lines - what the table describes is a scan, not a body.
+    """
+    reached = {
+        globals()[child.id]
+        for child in ast.walk(node)
+        if isinstance(child, ast.Name)
+        and isinstance(globals().get(child.id), re.Pattern)
+    }
+    if through_calls:
+        for child in ast.walk(node):
+            if (
+                isinstance(child, ast.Call)
+                and isinstance(child.func, ast.Name)
+                and child.func.id in functions
+                and functions[child.func.id] is not node
+            ):
+                reached |= _patterns_reached(functions[child.func.id], functions, through_calls=False)
+    return reached
 
 
 def test_the_docs_guard_exemptions_are_still_live():
-    """An exemption is a claim too, and it is the one that could rot: the phrase it was written for
-    disappearing leaves an exemption covering text nobody read. Both ends, like every other guard
-    here - the phrase is still there, and it is still the number the exemption describes.
+    """An exemption is a claim too, and it is the one that could rot - so both ends of it, and both
+    ends of the *scope*: the phrase is still in every doc the row names (the shared rule, in
+    `tests/exemptions.py`), the row still names a shape this guard's arms produce, that shape still
+    flags a claim this phrase is what excuses (otherwise the row is one nobody needs), and the text it
+    excuses is excused only for that shape.
+
+    The last end is the one this shape exists for: an exemption written for one claim shape cannot make
+    another skip text it was never written about, and that now includes another *pattern* of the same
+    arm - which is what a row naming only its arm used to allow, silently, since every pattern of the
+    arm matched the same row.
     """
-    for doc, phrase, reason in EXEMPT:
-        assert phrase in _text(doc), (
-            f"{doc} no longer says {phrase!r}, so the exemption ({reason}) covers nothing - "
-            "drop it, or re-point it at the sentence that replaced this one"
+    assert_still_present(EXEMPT, _text)
+    for row in EXEMPT.rows:
+        assert row.shape in SHAPES, (
+            f"the exemption for {row.phrase!r} names {row.shape!r}, which is not a claim shape of "
+            f"this guard ({sorted(SHAPES)}) - a row no scan asks with excuses nothing"
         )
-    # And the class-count exemption is bounded to what it claims: `1 class(es)` as a diagnostic's
-    # own output, never a roster readout like `1 classes`.
-    assert _exempt("docs/MODEL_TRAINING.md", "see `note: 1 class(es)`") is not None
+        arm, pattern = SHAPES[row.shape]
+        for doc in row.places:
+            assert doc in DOCS, f"the exemption for {row.phrase!r} names {doc!r}, which no scan reads"
+            excused = [
+                match.group(0)
+                for match in pattern.finditer(_text(doc))
+                if _exempt(arm, pattern, doc, _snippet(doc, match.start(), match.end()))
+            ]
+            assert excused, (
+                f"the exemption for {row.phrase!r} in {doc} excuses nothing any more: the "
+                f"{row.shape!r} shape flags no claim whose sentence carries that phrase, so the row "
+                "is one nobody needs - drop it, or re-point it at the claim that replaced the one it "
+                "was written for"
+            )
+            # Scoped to its own shape, asked as every other shape this guard knows: the very text it
+            # excuses is not excused for any of them. Every other shape rather than a stand-in, because
+            # the two the class-count arm also has are exactly the ones a phrase written for this one
+            # could silence without this.
+            for other, (other_arm, other_pattern) in SHAPES.items():
+                if other == row.shape:
+                    continue
+                assert _exempt(other_arm, other_pattern, doc, row.phrase) is None, (
+                    f"the exemption for {row.phrase!r} silences the {other!r} shape, which it does "
+                    "not name"
+                )
+    # An entry is a phrase, not a topic: the trainer's own diagnostic is excused where the same
+    # count written as a roster readout is not.
+    assert _exempt(ARM_CLASS_COUNTS, COUNT_CLAIM, "docs/MODEL_TRAINING.md", "see `note: 1 class(es)`")
+    assert (
+        _exempt(ARM_CLASS_COUNTS, COUNT_CLAIM, "docs/MODEL_TRAINING.md", "prints `1 classes`") is None
+    )
+
+
+def test_each_arm_scans_with_exactly_the_patterns_the_table_lists():
+    """`ARMS` says which test runs each arm and what it scans with, and this reads the test to check
+    the second half.
+
+    That map is what an exemption's *load-bearing* end is proved against, so one that had drifted from
+    the arm it describes would make that proof meaningless: it would show a phrase sitting inside a
+    pattern the arm no longer uses, or miss the pattern it does. Read with `ast` from the arm's own
+    body, one level into the helpers it calls, so a pattern added to an arm - or dropped from it -
+    fails here instead of leaving the table quietly wrong. An arm that defines a pattern inside itself
+    is one this table cannot describe at all, and it fails here too rather than reading as covered.
+    """
+    functions = _functions()
+    by_pattern = {value: name for name, value in globals().items() if isinstance(value, re.Pattern)}
+    for name, arm in ARMS.items():
+        assert arm.test in functions, (
+            f"{name!r} names {arm.test!r} as the test that runs it, and this module has no such "
+            "function"
+        )
+        reached = _patterns_reached(functions[arm.test], functions)
+        assert reached == set(arm.patterns), (
+            f"{name!r} does not scan with the patterns ARMS lists: `{arm.test}` reaches for "
+            f"{sorted(by_pattern.get(pattern, repr(pattern)) for pattern in reached)} while the "
+            f"table declares {sorted(by_pattern.get(pattern, repr(pattern)) for pattern in arm.patterns)}"
+            " - the two are updated together, and a pattern the test defines inside itself is not "
+            "something this table can describe"
+        )
+
+
+def test_every_pattern_of_an_arm_has_its_own_shape():
+    """One shape per (arm, pattern), which is what a row is written against.
+
+    A spelling that dropped the pattern would put every pattern of an arm back onto one row - the exact
+    spreading this arrangement exists to prevent - and it would stay green everywhere else, because the
+    row would still be load-bearing for the arm. The count per arm is what makes the spelling checkable,
+    and the arm in the shape is what keeps two arms' shapes apart.
+    """
+    for arm, spec in ARMS.items():
+        shapes = sorted(shape for shape, (row_arm, _) in SHAPES.items() if row_arm == arm)
+        assert len(shapes) == len(spec.patterns), (
+            f"{arm!r} has {len(spec.patterns)} pattern(s) and {len(shapes)} shape(s) ({shapes}) - a "
+            "shape names one arm and one pattern, so a phrase written for one of them cannot silence "
+            "another"
+        )
+        assert all(SHAPES[shape][1] in spec.patterns for shape in shapes), (
+            f"{arm!r}'s shapes are {shapes}, which do not resolve back to its own patterns"
+        )
+
+
+def test_every_arm_that_excuses_a_snippet_is_declared_with_the_patterns_it_scans():
+    """The table and the arms that use it, held to one place: every arm asks `_exempt` from its own test
+    under its own name, and the names asked that way are exactly the declared arms (the rows' shapes
+    being a subset of what those arms produce, which each row above is asserted against).
+
+    Only the arms' own tests are read here. The table's own checks ask the lookup too - as another
+    shape, on purpose - and what they pass is theirs to choose. Without this the two drift in silence:
+    an arm excusing snippets against a row written for another shape, a declared arm nothing asks with,
+    or a call site inside one arm passing another arm's constant, which would excuse text for a scan
+    the row was not written for.
+    """
+    by_test = {arm.test: name for name, arm in ARMS.items()}
+    calls = [(function, call) for function, call in _exempt_calls() if function in by_test]
+    assert calls, "no arm asks `_exempt` any more - did the call shape change?"
+    for function, call in calls:
+        assert call.args and isinstance(call.args[0], ast.Name), (
+            f"`{function}` asks `_exempt` with something other than an arm - the arm has to be one of "
+            "the constants this module declares, so it can be held to the table"
+        )
+        assert call.args[0].id in globals(), (
+            f"`{function}` asks `_exempt` with {call.args[0].id!r}, which this module does not define"
+        )
+    # Through `globals()`, because what the call sites pass is the constants and what the map is keyed
+    # by is what they hold.
+    asked = {globals()[call.args[0].id] for _, call in calls}
+    assert asked == set(ARMS), (
+        f"the arms that ask are {sorted(asked)} while ARMS declares {sorted(ARMS)}: an arm that asks "
+        "without being declared, or a declared arm nothing asks with, is the second place this would "
+        "have to be kept in step"
+    )
+    wrong = {
+        function: globals()[call.args[0].id]
+        for function, call in calls
+        if globals()[call.args[0].id] != by_test[function]
+    }
+    assert not wrong, (
+        f"{wrong} - an arm asks under its own name, so a call site inside one arm passing another "
+        "arm's constant would excuse text for a scan the row was not written for"
+    )

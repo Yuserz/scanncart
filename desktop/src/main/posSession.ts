@@ -201,6 +201,18 @@ export const SYNC_HEARTBEAT_MS = 15000
 export const CAPTURE_HEALTH_POLL_MS = 2000
 /** Ceiling on the retry backoff while the webapp is unreachable, so a long outage still probes (ms). */
 export const RETRY_BACKOFF_CAP_MS = 30_000
+/**
+ * How long after pushcart-web last answered (`lastContactMs`) this loop may still take the
+ * sidecar's camera for it unbound. An answering webapp with no session is the store being open —
+ * the camera belongs to the counter. A webapp that has *not* answered has no session and no
+ * tablet to serve, while taking the camera there is how a configuration left over from another
+ * counter (one whose `pos.json` still names a base URL that answers nothing) steals the device
+ * from the operator's own Live tab at every boot: Start is theirs, a Stop cannot stick because
+ * this loop re-takes the camera within a tick, and every restart-required settings save comes
+ * back 409 against a capture they never asked to run. A bound session claims the camera without
+ * this freshness — recovering its own capture is what `startCapture` exists for.
+ */
+export const POS_CONTACT_FRESH_MS = 60_000
 
 const nowSeconds = (): number => Date.now() / 1000
 
@@ -451,6 +463,14 @@ export class PosSessionOrchestrator {
       this.setError('capture is down — corrections happen on the tablet')
       return
     }
+
+    // The camera is the integration's while it has somewhere to serve it: the webapp just answered
+    // (`POS_CONTACT_FRESH_MS`'s reason), or a session is bound. With the webapp unanswered there
+    // is no counter and no tablet — and the take would be the stale-config theft named there.
+    const contactFresh =
+      this.bound ||
+      (this.lastContactMs !== null && nowMs - this.lastContactMs < POS_CONTACT_FRESH_MS)
+    if (!contactFresh) return
 
     const result = await this.deps.startCapture()
     if (result.status === 409) {

@@ -27,7 +27,11 @@ Four one-shot decisions meet here, and each one has already bitten this project:
    beside it (`models/scanncart-grocery-<generation>.json`) carrying the `resize_mode` these
    weights require, because nothing else knows it: the checkpoint stores the training run, not
    the dataset geometry, and `auto` resolves to the *wrong* geometry for a locally trained
-   `.pt`. The Admin Panel's Model field reads that record and flags a mismatch.
+   `.pt`. The Admin Panel's Model field reads that record and flags a mismatch. Its `source` -
+   which dataset produced these weights - is written out of `--version` when one was given, and
+   otherwise derived from *the run's own* `data=`: a weight trained from a local merge has no version
+   number to record, so that path names the dataset itself (`local merge <directory>`), and an
+   install that can answer neither writes the field empty and says what it is empty of.
 
 `--val` is the fourth step, and it is here because the two numbers a training log carries are
 **means**. A run can clear both while failing one whole class - which is the failure this dataset
@@ -73,6 +77,20 @@ comes back as an error body rather than a bad download, and `--format` retries i
     # then the same recall split by distance (three extra passes - `--no-per-distance` skips it)
     sidecar/.venv/Scripts/python.exe sidecar/tools/train_model.py --val
 
+A **retrain of the same generation** is the same four commands with `--variant v2.1` on each: v2.1 is
+v2's seven classes and v2's geometry trained from a later version of the same project (the capture
+gap filled), so it is a variant rather than a generation. The one flag moves every artifact name
+that would otherwise collide with the run it retrains - `export-v2.1`, the run
+`scanncart-grocery-v2.1`, its `--val` run, and the installed `models/scanncart-grocery-v2.1.pt` -
+while the *record* keeps `generation: v2`, because a roster is judged per generation and this is the
+same class list. What tells the two weights apart there is `source`, so `--version` (the regenerated
+version's number) is what makes a retrain distinguishable at all:
+
+    sidecar/.venv/Scripts/python.exe sidecar/tools/train_model.py --variant v2.1 --download --version 3
+    sidecar/.venv/Scripts/python.exe sidecar/tools/train_model.py --variant v2.1 --yes
+    sidecar/.venv/Scripts/python.exe sidecar/tools/train_model.py --variant v2.1 --val
+    sidecar/.venv/Scripts/python.exe sidecar/tools/train_model.py --variant v2.1 --install
+
 v1 is the same four commands with `--generation v1`, and two differences follow from the spec
 rather than from a flag: its seven-class export is judged against *its* class list (the two lists
 are the same seven names today, but the per-generation check is what keeps them trainable when a
@@ -95,7 +113,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import hashlib
 import json
 import shutil
 import sys
@@ -119,8 +136,16 @@ from generations import Generation
 from label_classes import DISTANCE_ORDER, SPLIT_NAMES, distance_tokens_in, load_key
 from label_classes import WORKSPACE as ROBOFLOW_WORKSPACE
 from workspace import DATA_YAML_NAME, MERGE_REPORT_NAME, SCANNCART_DATA_YAML_NAME
-from workspace import SIDECAR_ROOT
+from workspace import REPO_ROOT, SIDECAR_ROOT
 from workspace import WORKSPACE as DATASET_ROOT
+
+# The app's source index - where a weight's provenance is written while the run that can name the
+# dataset is still on disk (`app/source_index.py`). `sidecar/` is not on `sys.path` when this file
+# is run as a script (`sys.path[0]` is `tools/`), so it is added here rather than relied on by import
+# order, exactly as `accept_v2.py` and `dataset_doctor.py` do it; the app module itself is imported
+# inside the functions that need it, like every other tool-to-app read in this tree.
+if str(SIDECAR_ROOT) not in sys.path:  # pragma: no cover - import plumbing
+    sys.path.insert(0, str(SIDECAR_ROOT))
 
 # ---------------------------------------------------------------------------
 # The run's hyperparameters (MODEL_TRAINING.md 6). Which *generation* they are for
@@ -984,12 +1009,16 @@ def weights_sha256(weights: Path) -> str:
     measurement reads exactly like a fresh one. Attaching one would put a number in front of
     an operator that these weights never scored - the failure this record exists to prevent,
     so the record checks rather than assumes.
+
+    The implementation is `app.source_index.weights_sha256`, called from here, because two things
+    are now keyed by this identity: this measurement, and the source index's entries (a weight's
+    provenance). One implementation, so a score and a provenance cannot be filed against two
+    different ideas of which bytes they describe - the lookup that found nothing would look exactly
+    like a weight nothing has recorded.
     """
-    digest = hashlib.sha256()
-    with weights.open("rb") as fh:
-        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    from app.source_index import weights_sha256 as digest_of
+
+    return digest_of(weights)
 
 
 def val_metrics_path(best: Path) -> Path:
@@ -1491,6 +1520,198 @@ def run_args(run: Path) -> dict:
     return body if isinstance(body, dict) else {}
 
 
+def read_json(path: Path) -> object:
+    """The document at `path`, or `None` for missing, unreadable and malformed alike.
+
+    The three are one answer here, and they mean the same thing to every caller: there is nothing
+    usable to read a fact out of. Raising would take a command down on a half-written file it is only
+    asking an optional question of. Shared with `backfill_provenance.py`, which asks the same
+    question of a weight's record.
+    """
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def dataset_dir(recorded: str) -> Path | None:
+    """The directory a run's `data=` names, or `None` when it is not on disk any more.
+
+    Resolved the way the run's own working directory would have resolved it. Ultralytics records the
+    path as it was handed it, and these tools hand it either an absolute path or one relative to
+    where the operator stood: one of these runs recorded
+    `sidecar\\data\\datasets\\merged-v2\\...` and another the same dataset as
+    `data\\datasets\\merged-v2\\...`, from two runs of one generation started in two directories.
+    So an absolute path is taken as given, a relative one is tried against the sidecar root and the
+    repo root, and the *name* is then tried under the workspace - because the recorded path is only
+    as good as the day it was written, and the workspace is relocatable (`SCANNCART_DATASET_ROOT`),
+    which would leave every one of them stale.
+
+    The directory itself rather than the yaml: the yaml may have been tidied away, and what is needed
+    of the directory is the merge report inside it. Both spellings are tried - the `data=` path
+    `write_data_yaml` recorded, and its parent folder - because they name the same directory and a
+    run whose `args.yaml` was normalised or edited to the folder should not read as a set that has
+    gone.
+    """
+    raw = Path(recorded)
+    spellings = [raw, raw.parent] if raw.parent != raw else [raw]
+    candidates: list[Path] = []
+    for spelling in spellings:
+        if spelling.is_absolute():
+            candidates.append(spelling)
+        else:
+            candidates.append(SIDECAR_ROOT / spelling)
+            candidates.append(REPO_ROOT / spelling)
+        # Read at call time rather than at import, so a relocated workspace is honoured instead of a
+        # path frozen when this module loaded. By *name*, because an absolute path recorded months
+        # ago is only worth trying first - the workspace is relocatable and a set can be rebuilt
+        # elsewhere, so what this finds can be a later build of the same set rather than the exact
+        # one the run read. That is why the caller prints the path it used: the `source` names a
+        # dataset, and the line beside it says which directory that name was standing on.
+        candidates.append(DATASET_ROOT / spelling.name)
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def dataset_source(dataset: Path, generation: str) -> tuple[str, str]:
+    """`("local merge <name>", "")` for a built set, or `("", why not)`.
+
+    The one rule for what a *dataset* is called in a record, and it has two callers that reach it
+    from opposite directions: `--install`, which is holding the run it is installing, and
+    `backfill_provenance.py`, which has only a weight's bytes and has just matched them to one. A set
+    `build_dataset.py` built carries `merge_report.json`, and *`local merge <directory>`* is this
+    repo's own word for such a set - so the name is read off the artifact rather than typed by
+    whoever runs the command.
+    """
+
+    def refuse(why: str) -> tuple[str, str]:
+        return "", why
+
+    report = read_json(dataset / MERGE_REPORT_NAME)
+    if not isinstance(report, dict):
+        return refuse(
+            f"{dataset} carries no readable {MERGE_REPORT_NAME}, so nothing names it as a build "
+            "output - a generated version's export looks the same and its version number is not in "
+            "the run, which is what `--install --version N` is for"
+        )
+    named = report.get("generation")
+    # Only a disagreement between two *present* values is a finding. A report from before the field
+    # existed is silent, not wrong - the same reading `dataset_doctor` takes of a report with no
+    # machine-only field at all.
+    if isinstance(named, str) and generation and named != generation:
+        return refuse(
+            f"the merge report says generation {named!r} and the record says {generation!r} - one of "
+            "them is wrong, and the record's is what the class list is judged against, so this is "
+            "for a person to settle rather than for this to overwrite"
+        )
+    return f"local merge {dataset.name}", ""
+
+
+def run_dataset_source(
+    run: Path, generation: str, also: Path | None = None
+) -> tuple[str, str]:
+    """What a run says about the dataset it trained on: `(source, note)`, one of them always empty.
+
+    The whole of what can be said about a dataset nobody named on the command line, and the reason a
+    new weight no longer needs `backfill_provenance.py` run over it. Ultralytics writes the run's
+    arguments beside its weights (`args.yaml`) and `write_data_yaml` put the `data=` into it, so
+    *which dataset trained these weights* is written down in the run itself, months after the
+    terminal that typed it is gone. `source` is empty and `note` is the reason when it cannot be
+    answered - a state to report rather than to fill in with something plausible, since a wrong
+    `source` is a claim about provenance that nothing downstream can tell from a real one.
+
+    `also` is the directory *this* command trained from, passed only by `main` when `--yes` is what
+    created the run. That file is ultralytics' to write, so a run it did not leave one for - or left
+    unreadable - would otherwise report a gap while the set is in hand: `write_data_yaml` put the
+    `data=` there, which makes it the same directory by construction rather than a guess. It is only
+    ever a *fallback*, because a bare `--install` is pointed at its generation's export directory by
+    default, and for a locally-merged run that is not the set these weights trained on - naming it
+    would be a wrong provenance rather than a missing one.
+
+    One implementation for the two callers that reach it from opposite ends (`--install` holding the
+    run, `backfill_provenance.py` holding a weight's bytes), and the sentences are this file's for
+    that reason: each caller prints them as they come rather than paraphrasing them.
+    """
+    recorded = run_args(run).get("data")
+    dataset: Path | None = None
+    if isinstance(recorded, str) and recorded:
+        dataset = dataset_dir(recorded)
+        missed = (
+            f"{run.name} trained on {recorded}, which is not on disk any more - the directory has "
+            "to still carry its merge report for this to name a dataset rather than a path"
+        )
+    else:
+        missed = (
+            f"{run.name} kept no readable `data=` in its args.yaml, so it does not say what dataset "
+            "it trained on"
+        )
+    if dataset is None:
+        if also is None:
+            return "", missed
+        source, why_also = dataset_source(also, generation)
+        if not source:
+            # The run's own finding is the more specific one, so it is kept when there is one; the
+            # fallback's is what is left when the run said nothing at all.
+            return "", missed if recorded else why_also
+        return source, f"the set this command trained on, {also}"
+    source, why = dataset_source(dataset, generation)
+    if not source:
+        return "", f"{run.name}: {why}"
+    return source, f"{run.name}/args.yaml names {dataset}"
+
+
+def write_source_index(
+    weight: Path,
+    source: str,
+    run: Path,
+    generation: str,
+    dataset: Path | None = None,
+) -> tuple[Path | None, str]:
+    """Record `source` against a weight's bytes in the app's source index: `(path, sentence)`.
+
+    `(None, why not)` when there is nothing to write, and the caller prints the sentence - so the two
+    call sites below stay two lines each and neither rewords anything.
+
+    The index is `app/source_index.py`: a machine-local map from a weight's bytes to the dataset it
+    came from, read by `--install` as its last resort and by the Admin Panel's model list. It is
+    written here because this file holds both moments the answer is a fact on disk - a run being
+    trained, and one being installed - and because both of the record's own sources can be gone by
+    the time anyone asks: `--version` is a number the operator has to remember, and the derived half
+    reads the *run* and the dataset directory the run names. `--install` is usually a later command
+    than training (MODEL_TRAINING.md's sequence runs `--val` and then `--install`), so a pruned run,
+    a workspace rebuilt elsewhere or a deleted set leaves the record with an empty `source` - the
+    state three installed weights are in today, and the one `backfill_provenance.py` cannot repair
+    either, since matching a weight's bytes needs the run project to match them against.
+
+    `dataset` is recorded as evidence and only passed when it is *this command's* fact (`--yes`, which
+    has just written its `data.yaml` into that directory and trained from it). For a bare `--install`
+    the directory in hand is the generation's export default rather than the set the run read, and
+    recording it would be evidence about the wrong set rather than no evidence - so it is left out,
+    and the `run` is always recorded because that is what was just matched.
+
+    Never fatal. An index is a convenience beside a record that has already been written and weights
+    that already work, so a read-only `data/` or a disk that filled up must report itself and not
+    fail the command.
+    """
+    from app import source_index
+
+    if not source:
+        return None, "nothing named this weight's dataset, so there is no entry to write"
+    try:
+        written = source_index.record_source(
+            weight,
+            source,
+            dataset=dataset or "",
+            run=run,
+            generation=generation,
+        )
+    except OSError as exc:  # pragma: no cover - a machine-local side file, not the record itself
+        return None, f"could not write {source_index.INDEX_PATH}: {exc}"
+    return written, f"these bytes now name {source!r} ({written})"
+
+
 def trained_value(args: dict, key: str, fallback: float) -> float:
     """`args[key]` when it is a real number, else `fallback`.
 
@@ -1554,6 +1775,7 @@ def weight_record(
     imgsz: int = 0,
     resize_mode: str | None = None,
     augmentation: dict[str, float] | None = None,
+    source: str = "",
 ) -> dict:
     """What travels with the weights, as a dict. Written beside them by `install()`.
 
@@ -1613,6 +1835,15 @@ already-generated version was made with (the measurement is in `generations.py`)
     and it exists so "which run produced these weights" has an answer that survives the terminal,
     for the one augmentation whose absence was measurable (rotation) and for the three exclusions
     the doc names.
+
+    `source` has two paths into it, and `--version` wins when it was given - a version number is a
+    claim only the operator can make, about a snapshot nothing on this machine can identify. The
+    other path is derived, and it is the one that closed the gap this field used to have:
+    `run_dataset_source` reads the run's own `data=` and names the dataset it points at, when that
+    dataset carries a merge report (`local merge <directory>`). A weight trained from
+    `build_dataset.py`'s local merge has no version number at all, so before that the field was
+    simply left empty for one - which the Admin Panel prints as a weight with nothing in parentheses
+    after its name.
     """
     record = {
         "generation": generation.name,
@@ -1621,7 +1852,7 @@ already-generated version was made with (the measurement is in `generations.py`)
         "resize_mode": resize_mode or generation.resize_mode,
         # Where it came from, so the panel can say which dataset produced these weights
         # rather than only what they need.
-        "source": f"{project} version {source_version}" if source_version else "",
+        "source": f"{project} version {source_version}" if source_version else source,
         "installed_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
     }
     if class_names:
@@ -1642,7 +1873,8 @@ def default_weights(generation: Generation, models_dir: Path, settings_path: Pat
 
     `models/<generation weight name>` when it exists - the one name `--install` used to give every
     weight. Since `--name` lets one generation keep two weights side by side (v2 stretch and v2
-    letterbox), that file may not exist, and then the weight is found by its *record*: the installed
+    letterbox), and `--variant` does the same thing with the run and `--val` names following it
+    (v2.1), that file may not exist, and then the weight is found by its *record*: the installed
     weights whose `generation` is this one, and of those the app's own `active_model` when it is one
     of them (that is the weight the operator is running), else the only one. Two or more with no way
     to choose is a refusal naming them, because measuring the wrong one silently is the failure.
@@ -1680,6 +1912,30 @@ def default_weights(generation: Generation, models_dir: Path, settings_path: Pat
     )
 
 
+def write_record(weight: Path, record: dict) -> Path:
+    """Write `record` to `models/<stem>.json`, beside the weight it describes.
+
+    The one writer of these files in the tools, so that `--install` and
+    `backfill_provenance.py`'s merge cannot disagree about the path, the indentation or the
+    trailing newline: `json.dumps(record, indent=2) + "\n"` is the format `models/README.md`
+    documents, and a second copy of it would make a re-install of unchanged weights a diff. The
+    app has the other writer, `app/models.record_requirement` - the Admin Panel's *Record it now*
+    button, which cannot import this module - and it is deliberately the same three lines: a
+    temporary file, the same serializer, `os.replace`.
+
+    Through a temporary file and `Path.replace` rather than a plain write, because a record is
+    read as a whole: a process killed mid-write leaves a *truncated* file, and every reader
+    treats an unreadable record as no record at all - so the loss is silent, and what it loses
+    is the resize requirement the weights cannot be run correctly without. The temporary name
+    is outside the `*.json` the readers glob, so nothing can pick it up as a record.
+    """
+    path = weight.with_suffix(".json")
+    temp = path.with_name(path.name + ".tmp")
+    temp.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    temp.replace(path)
+    return path
+
+
 def install(
     source: Path,
     models_dir: Path,
@@ -1707,9 +1963,7 @@ def install(
         )
     shutil.copy2(source, target)
     if record is not None:
-        (models_dir / f"{target.stem}.json").write_text(
-            json.dumps(record, indent=2) + "\n", encoding="utf-8"
-        )
+        write_record(target, record)
     return target
 
 
@@ -1770,6 +2024,65 @@ def print_validation_note(validation: list[dict]) -> None:
         print(line)
     print("  Recorded beside the weights, so the Admin Panel shows what this model scored as")
     print("  well as what it needs.")
+
+
+def print_provenance_note(version: int, record: dict, project: str, evidence: str) -> None:
+    """Report what the record's `source` holds - and, when it holds nothing, what it is empty of.
+
+    Printed at install time for the same reason `print_validation_note` is: the record is what the
+    Admin Panel reads, so this is the last moment a gap can be closed deliberately rather than
+    discovered as a blank in the listing. `source` is the only place "which dataset produced these
+    weights" is written down anywhere, and the panel prints it in parentheses after the weight's
+    name.
+
+    Silent when `--version` was passed: the field then holds a claim the operator just made about a
+    snapshot nothing on this machine can identify, and there is nothing to report about it.
+    Otherwise it prints which of the two readings happened - the dataset derived from the run
+    (`evidence` is the gate's own sentence, naming the file it was read from), or the reason that
+    derivation had no answer.
+
+    The gap is reported rather than refused. A weight whose dataset cannot be recovered is a state
+    the operator has to know about, but withholding working weights over a label for them would be
+    the wrong trade - and a `--version` invented for a local merge would be a *fabricated* provenance
+    that nothing downstream could tell from a real one.
+    """
+    if version:
+        return
+    print()
+    source = str(record.get("source") or "").strip()
+    if source:
+        print(f"  source: {source}")
+        print("  Derived, since no --version was passed:")
+        print(f"    {evidence}")
+        return
+    print("  The record just written has an empty `source`: nothing in it names the dataset")
+    print("  these weights came from. It is written out of --version, which this install did")
+    print("  not pass, and deriving it from the run did not answer either:")
+    print(f"    {evidence}")
+    print()
+    # Named rather than assumed away: the index was just consulted (see the install block) and had
+    # nothing, so this says which file was asked and what it would have held - the difference
+    # between "no run holds these bytes" and "nowhere to look" is the difference between waiting
+    # for a run to turn up and checking the machine this record was made on.
+    from app.source_index import index_path
+
+    print("  The source index has nothing for these bytes either, so no run recorded on this")
+    # `index_path()` rather than the module constant: which file was consulted is the whole content
+    # of this sentence, so a redirected index has to be the one printed here.
+    print(f"  machine produced them: {index_path()}")
+    print("  (that file is written while a run is still on disk - app/source_index.py).")
+    print()
+    print("  That field is the one place the Admin Panel reads the fact from - printed in")
+    print("  parentheses after the weight's name - so the listing shows the filename alone.")
+    print()
+    print("  Which way to fill it depends on what trained these weights:")
+    print("    - a generated version: re-install with `--version N` (the number")
+    print(f"      generate_version.py reported), which records `{project} version N` - and")
+    print("      `--force`, since this install has already written the weight.")
+    print("    - a local merge (`build_dataset.py`), or a set this machine has since moved:")
+    print("      put the run and the set it trained on back where they were, then run")
+    print("      `sidecar/tools/backfill_provenance.py` (`--dry-run` first) - it matches the")
+    print("      weight's bytes to the run, so it needs both.")
 
 
 def parse_classes(spec: str) -> tuple[str, ...]:
@@ -1833,10 +2146,22 @@ def main(argv: list[str] | None = None, yolo=None) -> int:
     ap.add_argument("--format", default=EXPORT_FORMAT)
     ap.add_argument("--run-project", default=str(DEFAULT_RUN_PROJECT))
     ap.add_argument(
+        "--variant",
+        default="",
+        metavar="NAME",
+        help=(
+            "name this run as one variant of its generation, moving every artifact that would "
+            "otherwise collide with the run it retrains: `--variant v2.1` trains into, validates "
+            "as and installs models/scanncart-grocery-v2.1 (a retrain shares its generation's "
+            "class list, geometry and record - only the version it was generated from differs)"
+        ),
+    )
+    ap.add_argument(
         "--name",
         default="",
-        help="--install under models/<NAME>.pt instead of the generation's own name - for keeping "
-        "two weights of one generation side by side (e.g. scanncart-grocery-v2-letterbox)",
+        help="--install under models/<NAME>.pt instead of the generation's (or the variant's) own "
+        "name - the install-only override, for a weight whose filename is nothing to do with its "
+        "generation (e.g. scanncart-grocery-v2-letterbox)",
     )
     ap.add_argument("--models-dir", default=str(DEFAULT_MODELS_DIR))
     ap.add_argument("--run-dir", default="", help="install from this run instead of training")
@@ -1922,15 +2247,24 @@ def main(argv: list[str] | None = None, yolo=None) -> int:
         # only the check would leave the record claiming a class list nothing was trained for.
         generation = replace(generation, classes=parse_classes(args.classes))
 
+    # Two names for one spec, and the difference between them is the whole point of `--variant`:
+    # `generation` is the *dataset convention* (what it declares, how its frames were resized, where
+    # its export lives) and is what every check and the record are written against, while `named`
+    # answers only "what are this run's files called". They are the same object until a variant is
+    # asked for, and a variant moves two fields apart - the artifact name and the export directory,
+    # because a retrain is trained from a regenerated version rather than from its sibling's export.
+    # `--dataset-dir` still answers first, for a variant that really does share one.
+    named = generation.variant(args.variant)
+
     export_dir = (
-        Path(args.dataset_dir).expanduser() if args.dataset_dir else generation.export_dir
+        Path(args.dataset_dir).expanduser() if args.dataset_dir else named.export_dir
     )
     run_project = Path(args.run_project).expanduser()
     models_dir = Path(args.models_dir).expanduser()
     # The Roboflow project this generation's versions come from - the download URL and the record's
     # `source` both need it, and the spec is where that fact is already written down.
     project = args.project or generation.roboflow_project
-    vname = val_name(generation)
+    vname = val_name(named)
 
     if args.download:
         if not args.version:
@@ -1952,6 +2286,14 @@ def main(argv: list[str] | None = None, yolo=None) -> int:
         f"generation: {generation.name} - {len(generation.classes)} classes, "
         f"resize_mode {generation.resize_mode}"
     )
+    if args.variant:
+        # Printed with the record's own generation named beside it, because that is the one thing
+        # about a variant that reads as a contradiction: the artifacts say v2.1 and the record
+        # beside them says v2 (the class list it is judged by has no v2.1 vocabulary).
+        print(
+            f"variant:    {args.variant} - artifacts {named.weight_name}, "
+            f"record still generation {generation.name}"
+        )
     print(f"export: {export_dir}")
     missing_export = not export_dir.is_dir()
     splits, problems = check_export(export_dir, generation)
@@ -1960,6 +2302,9 @@ def main(argv: list[str] | None = None, yolo=None) -> int:
         "export": str(export_dir),
         "problems": problems,
     }
+    if args.variant:
+        summary["variant"] = args.variant
+        summary["weights"] = named.weight_name
 
     if problems:
         print()
@@ -2029,7 +2374,7 @@ def main(argv: list[str] | None = None, yolo=None) -> int:
             return 2
 
     data_yaml = write_data_yaml(export_dir, splits)
-    run = resolve_run(run_project, generation, args.run_dir, training=args.yes)
+    run = resolve_run(run_project, named, args.run_dir, training=args.yes)
 
     # Ultralytics is imported here, not at module level, so this file can be imported and tested
     # without torch - the same shape as app/hardware.py's lazy torch import and app/models.py's
@@ -2080,7 +2425,7 @@ def main(argv: list[str] | None = None, yolo=None) -> int:
     print(f"data.yaml: {data_yaml}")
     print()
     print("this run:")
-    print(f"  {command_line(data_yaml, run_project, generation.run_name, hyper, device)}")
+    print(f"  {command_line(data_yaml, run_project, named.run_name, hyper, device)}")
     print(
         "  augmentation: "
         + ", ".join(f"{key}={value:g}" for key, value in augmentation_kwargs(hyper).items())
@@ -2136,7 +2481,13 @@ def main(argv: list[str] | None = None, yolo=None) -> int:
         )
         print(f"  {free_gb:.1f} GB free at {run_project} (reserve {budget.disk_reserve_gb:.0f} GB)")
         model = yolo(hyper.base_model)
-        model.train(**train_kwargs(data_yaml, run_project, generation.run_name, hyper, device))
+        # `named`, not `generation`: under `--variant` the two disagree, and the run's own name
+        # is one of the two things the variant moves (`generation.variant`'s docstring) - a
+        # training call resolved from the generation would land in the generation's auto-
+        # incremented run directory while `run` above (and the completeness check after it)
+        # point at the variant's, and every epoch would train into weights the run never
+        # acknowledges. Same call here as in the echoed command line above.
+        model.train(**train_kwargs(data_yaml, run_project, named.run_name, hyper, device))
 
     best = find_best(run)
     if best is None:
@@ -2165,6 +2516,18 @@ def main(argv: list[str] | None = None, yolo=None) -> int:
     print()
     print(f"best checkpoint: {best}")
     summary["best"] = str(best)
+
+    if args.yes:
+        # Written down while both halves of the answer are still here - the run, and the set it just
+        # trained from - because neither may be by the time anyone installs these weights, and this
+        # is the only moment the answer is a fact on disk (`write_source_index`). Only the source is
+        # wanted here; the note beside it is `--install`'s to print, from the same call.
+        trained_source = run_dataset_source(run, generation.name, also=export_dir)[0]
+        indexed, index_note = write_source_index(
+            best, trained_source, run, generation.name, dataset=export_dir
+        )
+        if indexed is not None:
+            print(f"  index:     {index_note}")
 
     if args.val:
         print()
@@ -2289,6 +2652,28 @@ def main(argv: list[str] | None = None, yolo=None) -> int:
         # `check_export` has already refused an export whose names disagreed with the list - so the
         # two agreeing is a precondition of reaching here, and a recorded set that differs means
         # something changed after this run (MODEL_TRAINING.md 8.1).
+        # What the *run* says the dataset was, for the install nobody handed a version number to:
+        # a weight trained from a local merge has no version to record, and this is the moment the
+        # fact is at hand - the same `args.yaml` the augmentation above was read out of. Empty when
+        # the run cannot answer, which the note below reports.
+        derived_source, derived_evidence = run_dataset_source(
+            run, generation.name, also=export_dir if args.yes else None
+        )
+        if not derived_source:
+            # The last resort, and the only one that can answer with the run *gone*: the source
+            # index, written while that run was still on disk (`app/source_index.py`). Reached when
+            # the run kept no readable `data=`, or when the set it names is no longer there - the
+            # two states that used to leave this field empty for a weight this machine trained.
+            from app import source_index
+
+            entry = source_index.lookup(best)
+            if entry is not None:
+                trained_by = Path(entry.run).name if entry.run else run.name
+                derived_source = entry.source
+                derived_evidence = (
+                    f"the source index: written when {trained_by} trained these bytes"
+                    + (f" from {entry.dataset}" if entry.dataset else "")
+                )
         record = weight_record(
             generation,
             args.version,
@@ -2298,11 +2683,12 @@ def main(argv: list[str] | None = None, yolo=None) -> int:
             imgsz=trained_imgsz,
             augmentation=augmentation,
             resize_mode=read_export_resize_mode(export_dir),
+            source=derived_source,
         )
         target = install(
             best,
             models_dir,
-            name=f"{args.name}.pt" if args.name else generation.weight_name,
+            name=f"{args.name}.pt" if args.name else named.weight_name,
             force=args.force,
             record=record,
         )
@@ -2310,16 +2696,42 @@ def main(argv: list[str] | None = None, yolo=None) -> int:
         summary["installed"] = str(target)
         summary["record"] = record
         print(f"recorded:  {target.with_suffix('.json')}")
-        print_reminders(record["resize_mode"], generation)
+        # The same fact written where a pruned run cannot take it away, and taken from
+        # `record["source"]` rather than from the derived one: `--version` wins there because it is
+        # a claim only the operator can make, so it has to win here too, or the index and the record
+        # beside the weights would answer "which dataset?" two ways.
+        if record["source"]:
+            indexed, index_note = write_source_index(
+                target,
+                record["source"],
+                run,
+                generation.name,
+                dataset=export_dir if args.yes else None,
+            )
+            if indexed is not None:
+                print(f"index:     {index_note}")
+        print_reminders(record["resize_mode"], named)
         print_validation_note(validation)
+        # Last, and about the record rather than the run: what the file just written says about
+        # provenance - the dataset the run trained on, or the gap and both ways to close it.
+        print_provenance_note(args.version, record, project, derived_evidence)
     else:
         print()
         # `--generation` is in both hints because it is not implied by `--run-dir`: the val run's
         # name and the weight's name both come from it, so a command that left it out would
-        # measure or install under the wrong generation's names.
+        # measure or install under the wrong generation's names. `--variant` is there for the same
+        # reason and is the sharper case of it: the run names are what a variant moves, so a hint
+        # without it would send the operator to the *unvariant* val run and weight.
+        variant_hint = f" --variant {args.variant}" if args.variant else ""
         if not args.val:
-            print(f"Check the acceptance split with: --val --generation {generation.name} --run-dir {run}")
-        print(f"Install it with: --install --generation {generation.name} --run-dir {run}")
+            print(
+                f"Check the acceptance split with: --val --generation {generation.name}"
+                f"{variant_hint} --run-dir {run}"
+            )
+        print(
+            f"Install it with: --install --generation {generation.name}"
+            f"{variant_hint} --run-dir {run}"
+        )
 
     if args.json:
         print(json.dumps(summary, indent=1))

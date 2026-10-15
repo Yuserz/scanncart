@@ -154,6 +154,36 @@ def _annotated(labeled: int = 3, nulls: int = 0, unlabeled: int = 0) -> dict[str
     return records
 
 
+def _negatives(
+    unmarked: int = 0, marked: int = 0, labeled: int = 0, session: str = "neg2"
+) -> dict[str, dict]:
+    """Frames the way `clean_v2.py upload --session neg2` leaves Tier C2b in the project.
+
+    The class tag is the `negative` pseudo-class (what `slug_of` reads as a background frame), the
+    second tag is the session (`retag` stamps it, `session_of` reads it back), and the state is
+    still the *type* of `annotations` - so `unmarked` is a frame that was uploaded and never
+    looked at, which is the state all 52 of them sit in until someone presses N.
+    """
+    records: dict[str, dict] = {}
+    index = 1
+    for state, count in (("unmarked", unmarked), ("marked", marked), ("labeled", labeled)):
+        for _ in range(count):
+            name = f"negative_{session}_{index:04d}.jpg"
+            records[name] = {
+                "name": name,
+                "tags": [clean_v2.NEGATIVE_CLS, session],
+                "annotations": (
+                    []
+                    if state == "unmarked"
+                    else {"count": 1, "classes": {label_classes.SLUG_TO_CLASS["milo"]: 1}}
+                    if state == "labeled"
+                    else {"count": 0, "classes": {}}
+                ),
+            }
+            index += 1
+    return records
+
+
 class _FakeRoboflow:
     """The three routes `--yes` touches: the project read, the annotation search, and the POST."""
 
@@ -163,11 +193,15 @@ class _FakeRoboflow:
         # An override for the *search* response, so a route that will not answer is testable.
         self.search_body = search_body
         self.posts: list = []
+        # How many times the project was swept. `label_progress` opens one client per read, so this
+        # is what says the readout and the background check came off *one* pass.
+        self.sweeps = 0
 
     # `generate_version` calls `httpx.get`/`httpx.post` on the module, while
     # `label_progress.project_states` opens `httpx.Client(...)` - so the double stands in for both
     # by handing back itself as the client.
     def Client(self, **_kwargs):  # noqa: N802 - named after the httpx API it replaces
+        self.sweeps += 1
         return self
 
     def __enter__(self):
@@ -298,32 +332,47 @@ def test_check_prints_the_same_readout_and_spends_nothing(monkeypatch, capsys):
     assert "in the wrong order" in capsys.readouterr().out
 
 
-def test_a_list_that_is_not_the_rosters_is_reported_with_both_differences(monkeypatch, capsys):
-    """What the live project actually looks like, and the reason this is a *report* rather than a
-    third refusal: `snc-grocery` still holds Palmolive (dropped from the roster) in neither
-    generation's order, so a version of it would bake an eighth output the app cannot name. The fix
-    is the Classes tab plus `label_classes.py`, which is what owns the membership verdict - but it
-    has to be *visible*, or the readout would call that list a pass.
-    """
-    live = [
-        "555 sardines 155grams",
-        "Palmolive Naturals Bar Soap 85g",
-        "Milo Chocolate Drink 22g Sachet",
-        "Bear Brand Fortified Powdered Milk 33g",
-        "century_tuna_flakes_in_oil_155_grams",
-        "safeguard_pure_white_60g",
-        "lucky_me_pancit_canton_calamansi_flavor",
-        "silver_swan_sukang_puti_200ML",
-    ]
-    fake = _generator(monkeypatch, {name: i for i, name in enumerate(live)})
+def test_the_live_projects_re_created_class_is_refused(monkeypatch, capsys):
+    """What the live project actually looks like, and the refusal it has to meet.
 
-    assert generate_version.main(["--check", "--project", "snc-grocery"]) == 0
-    assert fake.posts == []
+    `snc-grocery` holds Palmolive - dropped from the roster in MODEL_TRAINING.md 8.1, so its being
+    there again means the class was *re-created* - on top of v2's seven. That is a name the roster
+    does not declare, and it is refused before the POST rather than noted under an ok row: a version
+    declares every class its project holds, so this list bakes an eighth output the app has no name
+    for, and `train_model.check_export` refuses the export it produces - by name - at the first
+    training run. Both of those are loud and both arrive one version number too late, because a
+    version number cannot be reused.
+    """
+    # The live body, counts and all: this is the shape the route actually answers with, and the
+    # one that made the old order check refuse a correctly ordered project.
+    live = {
+        "555 sardines 155grams": 79,
+        "Palmolive Naturals Bar Soap 85g": 0,
+        "Milo Chocolate Drink 22g Sachet": 142,
+        "Bear Brand Fortified Powdered Milk 33g": 167,
+        "century_tuna_flakes_in_oil_155_grams": 150,
+        "safeguard_pure_white_60g": 281,
+        "lucky_me_pancit_canton_calamansi_flavor": 265,
+        "silver_swan_sukang_puti_200ML": 282,
+    }
+    fake = _generator(monkeypatch, live)
+
+    assert generate_version.main(["--yes", "--project", "snc-grocery"]) == 2
+    assert fake.posts == []  # refused, so nothing was spent
     out = capsys.readouterr().out
-    assert "  classes  : 8 - v2 declares 7 (1 extra, 0 missing)" in out
+    # The membership verdict is this check's, and it survives the route carrying no order: the
+    # names come off the same mapping's keys, which is how the extra was found at all.
+    assert "refusing to generate" in out and "1 class(es) the roster does not" in out
     assert "  extra    : Palmolive Naturals Bar Soap 85g" in out
-    assert "  order    :" not in out  # the order row is only for the unreadable cases
-    assert "[!] this is not v2's list" in out
+    # Named as what it is - being back after a drop is the whole reason a re-created class exists
+    # - and the two facts that follow from that: no boxes (deleting a class takes them with it),
+    # and the end of the creation order, which is the order a version's export declares.
+    assert "was dropped from this roster and is present again" in out
+    assert "*re-created*" in out
+    assert "Settings -> Classes" in out and "no version number was spent" in out
+    # Not the other refusal's message: an unexpected class is not an order problem, and this
+    # project's order is still unreadable from the route either way.
+    assert "in the wrong order" not in out
 
 
 def test_a_project_with_nothing_annotated_is_refused(monkeypatch, capsys):
@@ -340,6 +389,77 @@ def test_a_project_with_nothing_annotated_is_refused(monkeypatch, capsys):
     assert "freeze an empty set" in out and "no version number was spent" in out
 
 
+def test_a_background_batch_with_no_null_annotation_is_refused(monkeypatch, capsys):
+    """The case this refusal exists for, and the only one where the loss is invisible: 52 frames
+    uploaded into their own batch, none of them marked. The frame count looks right, `sanity`
+    reports them as present (it counts the tag), the coverage grid has no cell for a frame with
+    nothing to draw - and Roboflow leaves every one of them out of the version without an error,
+    taking the measured empty-counter fix with them.
+    """
+    roster = {name: i for i, name in enumerate(label_classes.SLUG_TO_CLASS.values())}
+    fake = _generator(monkeypatch, roster, {**_annotated(3), **_negatives(unmarked=4)})
+
+    assert generate_version.main(["--yes", "--project", "snc-grocery"]) == 2
+    assert fake.posts == []
+    out = capsys.readouterr().out
+    assert "  negatives: 4 frame(s) in 1 batch - 0 marked null, 4 with no decision" in out
+    assert "refusing to generate: 4 hard-negative frame(s) with no null annotation" in out
+    assert "  negative_neg2: 4 frame(s) - 0 marked null, 0 labeled, 4 not looked at yet" in out
+    assert "no version number was spent" in out
+
+
+def test_a_partly_marked_background_batch_is_refused_too(monkeypatch, capsys):
+    """`0 marked` is the loud shape, but it is not the costly one: 50 of 52 marked and two
+    forgotten loses exactly those two, by the same mechanism and just as silently - so "some were
+    marked" is not the state worth passing."""
+    roster = {name: i for i, name in enumerate(label_classes.SLUG_TO_CLASS.values())}
+    fake = _generator(monkeypatch, roster, {**_annotated(3), **_negatives(marked=3, unmarked=1)})
+
+    assert generate_version.main(["--yes", "--project", "snc-grocery"]) == 2
+    assert fake.posts == []
+    out = capsys.readouterr().out
+    assert "refusing to generate: 1 hard-negative frame(s) with no null annotation" in out
+    assert "  negative_neg2: 4 frame(s) - 3 marked null, 0 labeled, 1 not looked at yet" in out
+
+
+def test_a_fully_marked_background_batch_generates(monkeypatch, capsys):
+    """The other half, and the guard that must not fire: every frame carrying a null annotation is
+    the state the set is supposed to be in. The readout still names the batch, so a check that
+    passed reads as checked rather than as never run."""
+    roster = {name: i for i, name in enumerate(label_classes.SLUG_TO_CLASS.values())}
+    fake = _generator(monkeypatch, roster, {**_annotated(2), **_negatives(marked=4)})
+
+    assert generate_version.main(["--yes", "--project", "snc-grocery"]) == 0
+    assert fake.posts == [generate_version.version_settings()]
+    out = capsys.readouterr().out
+    assert "  negatives: 4 frame(s) in 1 batch - 4 marked null" in out
+    assert "refusing to generate" not in out
+
+
+def test_a_project_with_no_hard_negatives_says_so_in_the_readout(monkeypatch, capsys):
+    """`sanity`'s own words for this state, and its own state rather than a bare zero: a project
+    that holds no negative frame is not the same as one whose frames are unreadable, and the
+    readout has to be able to tell them apart."""
+    roster = {name: i for i, name in enumerate(label_classes.SLUG_TO_CLASS.values())}
+    fake = _generator(monkeypatch, roster, _annotated(3))
+
+    assert generate_version.main(["--check", "--project", "snc-grocery"]) == 0
+    out = capsys.readouterr().out
+    assert "  negatives: none in the project (no frame carries the hard-negative class tag)" in out
+    assert "refusing to generate" not in out
+
+
+def test_the_preflight_reads_the_project_once(monkeypatch, capsys):
+    """One sweep, two answers. The counts and the background batches are two views of the same
+    reading, so an upload landing between two reads cannot leave the readout quoting frames the
+    refusal never saw - which is the shape of every one of these preflights' mistakes."""
+    roster = {name: i for i, name in enumerate(label_classes.SLUG_TO_CLASS.values())}
+    fake = _generator(monkeypatch, roster, {**_annotated(3), **_negatives(unmarked=2)})
+
+    assert generate_version.main(["--yes", "--project", "snc-grocery"]) == 2
+    assert fake.sweeps == 1
+
+
 def test_an_index_that_will_not_answer_is_a_note_not_a_dead_run(monkeypatch, capsys):
     """The count is a readout, so the search route failing must not block a generation the two
     class-list refusals were happy with - and it must not read as a clean zero either. Said, and
@@ -351,6 +471,9 @@ def test_an_index_that_will_not_answer_is_a_note_not_a_dead_run(monkeypatch, cap
     out = capsys.readouterr().out
     assert "  images   : not counted (search failed:" in out and "index warming up" in out
     assert "entering" not in out and "freeze an empty set" not in out
+    # Nothing is claimed about the hard negatives either: "none in the project" would be a
+    # different statement, and a false one.
+    assert "negatives:" not in out
     assert fake.posts == [generate_version.version_settings()]
 
 
@@ -377,9 +500,10 @@ def test_the_generator_refuses_the_rosters_names_in_another_order(monkeypatch, c
     the dataset doctor, on an export that already exists. That is one version number too late: a
     version number cannot be reused, so the refusal has to happen here, before the POST.
 
-    The *set* is deliberately excluded from this check (a missing or extra name is
-    `label_classes.py`'s finding), which is asserted in the same test so the two cannot merge into
-    one wide "class list is wrong" refusal.
+    The *set* is deliberately excluded from this check (a name the roster does not declare is its
+    own refusal above, and a roster class the project has not created yet is a report), which the
+    tail of this test asserts, so the order check cannot grow into one wide "class list is wrong"
+    refusal.
     """
     v1_order = {name: i for i, name in enumerate(generations.V1.classes)}
     fake = _generator(monkeypatch, v1_order)
@@ -395,11 +519,15 @@ def test_the_generator_refuses_the_rosters_names_in_another_order(monkeypatch, c
     # Not the other preflight's message: a wrong order is not a distance.
     assert "carry a distance" not in out
 
-    # A class list that is the *wrong set* is left to `label_classes.py`: this check must not
-    # start refusing sets for a reason it cannot name the fix for.
+    # The *missing* direction stays a report rather than a refusal, and deliberately: a roster
+    # class that has not been created yet is work not done, and the operator is mid-setup. Only an
+    # unexpected name is refused, so the two directions cannot merge into one wide gate.
     fake = _generator(monkeypatch, {"Bear Brand Fortified Powdered Milk 33g": 0})
     assert generate_version.main(["--yes", "--project", "snc-grocery"]) == 0
-    assert fake.posts, "a membership mismatch is not this check's business"
+    assert fake.posts, "6 roster classes are not created yet - pending work, not drift"
+    out = capsys.readouterr().out
+    assert "  missing  : " in out and "[!] this is not v2's list" in out
+    assert "refusing to generate" not in out
 
 
 def test_a_project_no_generation_names_is_not_judged_against_one(monkeypatch, capsys):
@@ -422,15 +550,15 @@ def test_a_project_no_generation_names_is_not_judged_against_one(monkeypatch, ca
     assert generate_version.main(["--yes", "--project", "snc-grocery"]) == 0
     out = capsys.readouterr().out
     assert "  classes  : none declared" in out
-    assert "  order    : not checked - there are no classes to order" in out
+    assert "  order    : not checked - the project declares no classes to rank" in out
 
 
 def test_the_project_class_order_is_read_by_index_not_by_dict_order():
-    """The reader half, pure. Roboflow answers `name -> index` on both routes, and the index is
-    the position a version's export writes - so a mapping that arrives in another insertion order
-    still reads as the project's order, and a shape with no indices to rank reads as *no order*
-    rather than as the order it happened to be written in (which is what a wrong refusal would be
-    made of).
+    """The reader half, pure. A mapping that *does* carry positions - `name -> index`, an export's
+    shape - reads as the project's order however it was written down, and never in dict order
+    (insertion order is not the thing being checked). A shape with no positions to rank reads as
+    **no order**: not as the order it happened to be written in, and not as the order its values
+    sort into, which is what a wrong refusal would be made of.
     """
     names = list(generations.V2.classes)
     shuffled = {name: i for i, name in reversed(list(enumerate(names)))}
@@ -442,12 +570,68 @@ def test_the_project_class_order_is_read_by_index_not_by_dict_order():
     assert generate_version.class_order({"a": None}) is None
     assert generate_version.class_order(None) is None
 
+    # The defect, as a pure fact. The project route answers `name -> annotation count` - the live
+    # `snc-grocery` body says 150, 79, 282 - and ranking those made the class with the *fewest boxes*
+    # first, i.e. an order nobody declared. Two consequences, one test: the route itself is not an
+    # order, and neither is `colors`, the UI palette beside it (`scanncart-grocery`'s export on disk
+    # declares the roster's order while its palette order differs, so the palette is falsified rather
+    # than merely unused - see the docstring).
+    assert generate_version.class_order({"a": 150, "b": 79, "c": 282}) is None
+    assert generate_version.class_order({"a": 0, "b": 0}) is None  # a repeat is not a position either
+    # Real positions still rank, or the guard above would have removed the check's whole purpose.
+    assert generate_version.class_order({"a": 2, "b": 0, "c": 1}) == ["b", "c", "a"]
+
     # And the verdict over it: only the roster's names in another order is this tool's finding.
     assert generate_version.order_mismatch(names, generations.V2) is None
     assert generate_version.order_mismatch(list(generations.V1.classes), generations.V2) == names
     assert generate_version.order_mismatch(names[:-1], generations.V2) is None
     assert generate_version.order_mismatch(names + ["Palmolive Naturals Bar Soap 85g"], generations.V2) is None
     assert generate_version.order_mismatch([], generations.V2) is None
+
+
+def test_a_count_map_generates_instead_of_refusing_an_order_it_cannot_read(monkeypatch, capsys):
+    """The live defect, end to end - and the test that would have caught it.
+
+    `snc-grocery` answers a name -> annotation count map. Ranking those counts built an order nobody
+    declared, so the moment the project's names matched the roster - which is the moment the Classes
+    tab has been set up, i.e. exactly when a version is generated - this tool refused a project that
+    was in the right order, spent nothing, and could not be talked out of it: the route has no
+    positions to answer with, so no fix on the Classes tab clears the refusal. Exit 2 there is a
+    deadlock wearing a guard's clothes.
+
+    So the order check stands down on a shape it cannot rank, *loudly* - naming the question that
+    went unanswered and what answers it instead - while the membership report, the generation, and
+    the refusals that need no order all carry on.
+    """
+    roster = list(generations.V2.classes)
+    # Counts, keyed in another order again: a readout that presented the counts' sort order as the
+    # class order would still look like this passing, so the listing is asserted below.
+    counts = {name: 10 * (i + 1) for i, name in enumerate(reversed(roster))}
+    fake = _generator(monkeypatch, counts)
+
+    assert generate_version.main(["--yes", "--project", "snc-grocery"]) == 0
+    assert fake.posts == [generate_version.version_settings()]  # generated, not refused
+    out = capsys.readouterr().out
+
+    # The names survive - they are the mapping's keys - and the order row says it is unread.
+    assert f"  classes  : {len(roster)} - v2's names, order unverified" in out
+    for position, name in enumerate(counts, start=1):
+        assert f"    {position:>2}  {name}" in out
+    assert "  order    : not verifiable here" in out
+    assert "name -> annotation count" in out
+    # Where the answer *is* readable, so the gap has a remedy rather than a shrug.
+    assert "dataset_doctor" in out and "Settings -> Classes" in out
+    # The two lines that were the bug.
+    assert "refusing to generate" not in out
+    assert "in the wrong order" not in out
+
+    # And the refusal still fires on a shape that *is* an order - the fix must not have removed the
+    # check, only stopped it from inventing one.
+    v1_order = {name: i for i, name in enumerate(generations.V1.classes)}
+    fake = _generator(monkeypatch, v1_order)
+    assert generate_version.main(["--yes", "--project", "snc-grocery"]) == 2
+    assert fake.posts == []
+    assert "in the wrong order" in capsys.readouterr().out
 
 
 def test_the_generators_project_resolves_to_its_generation():

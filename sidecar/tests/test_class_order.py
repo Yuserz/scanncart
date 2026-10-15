@@ -46,6 +46,7 @@ import train_model
 import unsure_probe
 from generations import V1, V2
 from tests.dataset_tool_helpers import _export_with_names, _fake_export
+from tests.exemptions import Exemption, Exemptions, Waiver, assert_still_present, waived_note
 
 # Rebuilt from the module that owns the tools tree, not copied by value.
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -197,14 +198,21 @@ def test_one_owner_decides_what_each_class_list_declares(tmp_path, monkeypatch):
     assert f"the export has no class for: {V2.classes[-1]}" in problems
 
     # ...and the project's own reading of the same pair, in the shape `sanity` prints it: a name
-    # the roster declares is missed work, and one it does not know is a head output nothing can
-    # ever match - the class's own sentence, from the owner's answer.
+    # the roster declares is missed work, and one it does not know is drift - a head output nothing
+    # can ever match, and what makes a re-created class blocking rather than a note under an ok row.
+    # The class's own sentence, from the owner's answer.
     rows = clean_v2.class_list_rows([*V2.classes[:-1], "Palmolive Naturals Bar Soap 85g"])
     detail = rows[0][2]
-    assert rows[0][0] == "warn"  # a missing name is work not done yet
+    assert rows[0][0] == "fail"  # an unexpected name blocks, and it outranks the missing half
     assert f"missing 1 name(s):\n  {V2.classes[-1]}" in detail
     assert "unexpected: Palmolive Naturals Bar Soap 85g" in detail
     assert "(a Palmolive class means it was re-created after being dropped)" in detail
+
+    # The missing direction on its own is still a warning - it is work not done yet, and gating a
+    # shoot on a class list nobody has finished would make the blocking row unreadable. The two
+    # directions share one row, so this is what pins them apart.
+    assert clean_v2.class_list_rows(list(V2.classes[:-1]))[0][0] == "warn"
+    assert clean_v2.class_list_rows(list(V2.classes))[0][0] == "ok"
 
 
 # --------------------------------------------------------------------------
@@ -242,23 +250,32 @@ CLASS_LIST_NAMES = frozenset(
     }
 )
 
-#: `path`, the source the site still carries, and why that site is not two class lists being
-#: compared - the same shape as `test_docs_claims.EXEMPT`, and checked the same way: a snippet that
-#: is gone fails `test_the_class_list_scan_exemptions_are_still_live`, so an exemption cannot
-#: outlive the site it was written for and start covering the next one.
-EXEMPT: tuple[tuple[str, str, str], ...] = (
-    (
-        "sidecar/tools/label_classes.py",
-        "if s not in V2_ONLY_SLUGS",
-        "a subset of one mapping rather than two lists: `V2_ONLY_SLUGS` names the *slugs* v2 added, "
-        "so what this keeps is the v1-inherited half of `SLUG_TO_CLASS` - the names never meet a "
-        "second list",
+#: The shape these rows are excused from. This module's scan is one step - a class-list difference
+#: written by hand - so every row names the same shape; a second step would add its own rows rather than
+#: widen one, which is what the shared lookup enforces (a row excuses only the shape it names).
+SHAPE_HAND_ROLLED_DIFFERENCE = "hand-rolled class-list differences"
+
+#: The row's place (a path), the phrase that identifies the site inside what the scan renders for it,
+#: and why that site is not two class lists being compared. The row - and the rule that keeps it live -
+#: is `tests/exemptions.py`'s, shared with the two other guards that keep such a table; what is this
+#: module's is the reader that rule is asked with (`_sites_under` below), which reads the *sites* the
+#: scan flagged rather than the file's own text, and the one shape above: an exemption here excuses a
+#: site, so the site has to still be one.
+EXEMPT = Exemptions(
+    Exemption(
+        phrase="if s not in V2_ONLY_SLUGS",
+        reason="a subset of one mapping rather than two lists: `V2_ONLY_SLUGS` names the *slugs* v2 "
+        "added, so what this keeps is the v1-inherited half of `SLUG_TO_CLASS` - the names never "
+        "meet a second list",
+        shape=SHAPE_HAND_ROLLED_DIFFERENCE,
+        places=("sidecar/tools/label_classes.py",),
     ),
-    (
-        "sidecar/tools/label_progress.py",
-        "if t not in known",
-        "an image's provenance rather than a class list: `known` is the class slugs *and* the "
+    Exemption(
+        phrase="if t not in known",
+        reason="an image's provenance rather than a class list: `known` is the class slugs *and* the "
         "distance axis rolled together on purpose, and what is left over is the session tag",
+        shape=SHAPE_HAND_ROLLED_DIFFERENCE,
+        places=("sidecar/tools/label_progress.py",),
     ),
 )
 
@@ -381,12 +398,29 @@ def _tree_sites() -> list[str]:
     return [site for path in sorted(tools.glob("*.py")) for site in _scan(path)]
 
 
-def _exempt(site: str) -> str | None:
-    """The reason this site is not two class lists being compared, if any exemption covers it."""
-    for path, snippet, reason in EXEMPT:
-        if site.startswith(f"{path}:") and snippet in site:
-            return reason
-    return None
+def _place_of(site: str) -> str | None:
+    """The place a rendered site belongs to, or `None` if no row is written about it.
+
+    Matched against the rows' own places rather than split off the site's `path:line:` prefix: the
+    places are already the repo-relative posix paths the renderer writes, and a Windows root is the
+    one thing a split on `:` would get wrong.
+    """
+    return next((place for place in EXEMPT.places if site.startswith(f"{place}:")), None)
+
+
+def _exempt(site: str, waived: list[Waiver] | None = None) -> str | None:
+    """The reason this site is not two class lists being compared, if an exemption covers it - recorded
+    in `waived` when the scan collects them, so what it let through is a fact rather than an inference.
+    """
+    place = _place_of(site)
+    return None if place is None else EXEMPT.reason(SHAPE_HAND_ROLLED_DIFFERENCE, place, site, waived)
+
+
+def _offenders(waived: list[Waiver] | None = None) -> list[str]:
+    """The sites this scan flags, minus the ones a row excuses - which are recorded in `waived` as they
+    are let through.
+    """
+    return [site for site in _tree_sites() if _exempt(site, waived) is None]
 
 
 def test_no_hand_rolled_class_list_difference_in_the_tools_tree():
@@ -421,12 +455,22 @@ def test_no_hand_rolled_class_list_difference_in_the_tools_tree():
     copy is mirrored instead of asked (`tests/test_roster.py`), so it is a different fact held by a
     different guard rather than a fifth reader of this owner.
     """
-    offenders = [site for site in _tree_sites() if _exempt(site) is None]
+    waived: list[Waiver] = []
+    offenders = _offenders(waived)
     assert offenders == [], (
         "a class-list difference written by hand: "
         + "; ".join(offenders)
         + " - ask `generations.class_gaps(names, expected)` instead, or add the site to EXEMPT with "
         "the reason it is a different relation"
+        + waived_note(waived)
+    )
+    # The trace, stated: every place a row names was excused by this scan, so a row cannot sit in the
+    # table looking maintained while the site it was written for has stopped being flagged.
+    excused = {waiver.place for waiver in waived}
+    assert excused == set(EXEMPT.places), (
+        f"this scan excused {sorted(excused) or 'nothing'} where its rows name "
+        f"{sorted(EXEMPT.places)}: a row whose site is no longer flagged is a waiver nobody is using - "
+        "drop it, or point it at the site that replaced it"
     )
 
 
@@ -474,18 +518,23 @@ def test_the_class_list_scan_catches_every_spelling_it_was_written_for(tmp_path)
     assert not [site for site in found if site.startswith(f"{planted}:17: ")], found
 
 
+def _sites_under(place: str) -> str:
+    """The sites this scan rendered under one path, as text - this guard's reader for the shared
+    liveness rule, and a whole function rather than a `lambda` because the choice of reader is the
+    part that differs from guard to guard.
+    """
+    return "\n".join(site for site in _tree_sites() if site.startswith(f"{place}:"))
+
+
 def test_the_class_list_scan_exemptions_are_still_live():
     """An exemption is a claim too, and the one that could rot: a snippet edited away leaves an
-    exemption covering text nobody read, and the next site with that shape under it is waved
-    through. Both ends, like `test_docs_claims.test_the_docs_guard_exemptions_are_still_live`.
+    exemption covering text nobody read, and the next site with that shape under it is waved through.
+
+    The rule is `tests/exemptions.py`'s, the same one `test_docs_claims` and `test_docs_interpreters`
+    hold their tables to; the reader is this module's - the sites the scan flagged, since that is what
+    an exemption here excuses.
     """
-    for path, snippet, reason in EXEMPT:
-        assert any(
-            site.startswith(f"{path}:") and snippet in site for site in _tree_sites()
-        ), (
-            f"{path} no longer holds {snippet!r}, so the exemption ({reason}) covers nothing - "
-            "drop it, or point it at the site it was written for"
-        )
+    assert_still_present(EXEMPT, _sites_under)
 
 
 # --------------------------------------------------------------------------

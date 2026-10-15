@@ -251,6 +251,31 @@ describe('useSidecarStream reconciliation', () => {
     })
   })
 
+  it('a new start() drops the last session’s frame, so its picture cannot stand in for this one', async () => {
+    // The other half of the reset below, and the one that is not cosmetic: `frame` is what the
+    // preview draws, what the stats strip reads its fps and latency from, and the reason the
+    // "Loading model…" placeholder is absent. A frame left over from the previous capture therefore
+    // showed a second start as a live-looking scene with live-looking numbers and no explanation of
+    // the wait.
+    const { deps, opts } = makeDeps({ session_id: null, events: [] })
+    const { result } = renderHook(() => useSidecarStream(8765, deps))
+
+    act(() => opts().onStatus?.({ type: 'status', state: 'running' }))
+    act(() =>
+      opts().onFrame?.(
+        frameWith([{ track_id: 1, cls: 'banana', conf: 0.9, box: [0, 0, 0.5, 0.5] }])
+      )
+    )
+    expect(result.current.frame).not.toBeNull()
+    expect(result.current.frame?.stats).toBeTruthy()
+
+    await act(async () => {
+      await result.current.start()
+    })
+
+    expect(result.current.frame).toBeNull()
+  })
+
   it('a new start() resets the log', async () => {
     const { deps, opts, start } = makeDeps({ session_id: null, events: [] })
     const { result } = renderHook(() => useSidecarStream(8765, deps))

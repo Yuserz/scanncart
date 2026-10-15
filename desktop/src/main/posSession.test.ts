@@ -729,6 +729,43 @@ describe('PosSessionOrchestrator', () => {
     expect(h.calls.states.at(-1)?.phase).toBe('error')
     orch.stop()
   })
+
+  it('does not take the camera while the webapp has never answered', async () => {
+    // The machine the driver hit: `pos.json` still names localhost:3000, nothing answers there,
+    // and every boot need not see the camera taken (Start is the Live tab's own, restart-required
+    // settings refuse 409, a Stop cannot stick). No webapp contact in `POS_CONTACT_FRESH_MS`, no
+    // binding — the capture stays the operator's.
+    const h = harness()
+    h.state.health = 'idle'
+    h.state.remote = null
+    h.state.sessionError = new PosTransportError('webapp unreachable')
+    const orch = new PosSessionOrchestrator(h.deps)
+
+    await orch.start()
+    await vi.advanceTimersByTimeAsync(90_000)
+
+    expect(h.calls.starts).toBe(0)
+    expect(h.calls.states.at(-1)?.phase).toBe('error') // the webapp outage is the reported state
+    orch.stop()
+  })
+
+  it('takes the camera once the webapp answers again', async () => {
+    const h = harness()
+    h.state.health = 'idle'
+    h.state.remote = null
+    const orch = new PosSessionOrchestrator(h.deps)
+
+    h.state.sessionError = new PosTransportError('webapp down')
+    await orch.start()
+    await vi.advanceTimersByTimeAsync(90_000)
+    expect(h.calls.starts).toBe(0)
+
+    h.state.sessionError = null
+    await vi.advanceTimersByTimeAsync(90_000)
+    expect(h.calls.starts).toBe(1)
+    expect(h.calls.states.at(-1)?.phase).toBe('unbound')
+    orch.stop()
+  })
 })
 
 describe('PosSessionOrchestrator — basket mode', () => {

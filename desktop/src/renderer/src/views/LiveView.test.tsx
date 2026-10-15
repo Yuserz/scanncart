@@ -1073,6 +1073,9 @@ describe('LiveView', () => {
     expect(confirm).toHaveTextContent('Recorded')
     // The mode is read back off the refreshed listing rather than echoed from the click.
     expect(confirm).toHaveTextContent('resize_mode: letterbox')
+    // And so is the dataset the record does *not* name: the button attests to the geometry, and
+    // this line is the only thing on this screen that can say the record is still not complete.
+    expect(confirm).toHaveTextContent('`source` is left empty')
     // And the chip now carries the record, which is the same outcome seen without the banner.
     expect(screen.getByTestId('stat-requirement')).toHaveTextContent('requirement (recorded)')
   })

@@ -65,6 +65,80 @@ def test_a_background_row_is_named_as_background_and_never_as_a_ninth_class():
     assert label_progress.display_name("milo") == "Milo Chocolate Drink 22g Sachet"
 
 
+def test_background_batches_group_by_session_and_count_the_decisions():
+    """The project-side reading `generate_version.py` refuses on, pure: no network, no fake.
+
+    Two things are load-bearing. The batch name comes from `clean_v2.batch_for_session`, the rule
+    the uploader itself names batches with - a reader with its own idea of `negative_neg2` is the
+    drift that function exists to prevent. And a *labeled* frame in a background batch counts as
+    decided rather than as outstanding: C2a's product-plus-clutter frame earns its place through
+    its box, so it enters the version and is not a frame waiting for an N.
+    """
+    index = {
+        "negative_neg1_0001.jpg": {"tags": [clean_v2.NEGATIVE_CLS, "neg1"], "annotations": []},
+        "negative_neg1_0002.jpg": {
+            "tags": [clean_v2.NEGATIVE_CLS, "neg1"],
+            "annotations": {"count": 0, "classes": {}},
+        },
+        "negative_neg2_0001.jpg": {"tags": [clean_v2.NEGATIVE_CLS, "neg2"], "annotations": []},
+        "negative_0001.jpg": {
+            "tags": [clean_v2.NEGATIVE_CLS],
+            "annotations": {"count": 0, "classes": {}},
+        },
+        "milo_mid_0001.jpg": {"tags": ["milo", "mid"], "annotations": []},
+    }
+
+    assert label_progress.background_batches(index) == [
+        {"batch": "negative", "images": 1, "null": 1, "labeled": 0, "undecided": 0},
+        {"batch": "negative_neg1", "images": 2, "null": 1, "labeled": 0, "undecided": 1},
+        {"batch": "negative_neg2", "images": 1, "null": 0, "labeled": 0, "undecided": 1},
+    ]
+
+    # A frame with no tags at all is not a background frame, and a project with no negatives says
+    # so with an empty list rather than with a row of zeroes a reader could mistake for a count.
+    assert label_progress.background_batches({"unlabeled_0.jpg": {"annotations": []}}) == []
+    assert label_progress.background_batches({}) == []
+
+    drawn = {
+        "negative_neg1_0003.jpg": {
+            "tags": [clean_v2.NEGATIVE_CLS, "neg1"],
+            "annotations": {"count": 1, "classes": {"milo": 1}},
+        }
+    }
+    assert label_progress.background_batches(drawn) == [
+        {"batch": "negative_neg1", "images": 1, "null": 0, "labeled": 1, "undecided": 0}
+    ]
+
+
+def test_the_counts_and_the_background_rows_come_off_one_sweep(monkeypatch):
+    """`project_states` takes an already-swept index from a caller that wants both views, so the two
+    describe one moment - and it still sweeps for itself when no index is handed in, which is how
+    every other reader calls it."""
+    opened = []
+
+    def client(*_args, **_kwargs):
+        opened.append(1)
+        raise SystemExit("search failed: no route in this test")
+
+    monkeypatch.setattr(label_progress.httpx, "Client", client)
+    try:
+        label_progress.project_states("snc-grocery", "k")
+    except SystemExit:  # what an unanswerable search route raises, and the caller decides
+        pass
+    else:  # pragma: no cover - the fake client always raises
+        raise AssertionError("the fake client was never opened")
+    assert len(opened) == 1
+
+    index = {"labeled_0.jpg": {"annotations": {"count": 1, "classes": {"milo": 1}}}}
+    assert label_progress.project_states("snc-grocery", "k", index) == {
+        "images": 1,
+        "labeled": 1,
+        "null": 0,
+        "unlabeled": 0,
+    }
+    assert len(opened) == 1, "an index handed in is the read - nothing is swept twice"
+
+
 # --------------------------------------------------------------------------
 # 3b. the local source: the same snapshot, from the annotator's own store
 # --------------------------------------------------------------------------

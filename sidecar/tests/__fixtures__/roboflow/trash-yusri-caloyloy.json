@@ -1,0 +1,37 @@
+{
+  "items": [
+    {
+      "type": "version",
+      "id": "1",
+      "name": "2026-09-21 6:35pm",
+      "parentId": "SIU1sEpwpZ5W75icWHXe",
+      "parentName": "snc-grocery",
+      "parentUrl": "snc-grocery",
+      "parentInTrash": false,
+      "deletedAt": "2026-09-21T18:35:35.808Z",
+      "scheduledCleanupAt": "2026-10-21T18:35:35.799Z",
+      "deletedBy": "pMLA3HgL2nN6w19PT32lwshZUQg2",
+      "deletedByName": "<redacted>"
+    }
+  ],
+  "sections": {
+    "projects": [],
+    "versions": [
+      {
+        "type": "version",
+        "id": "1",
+        "name": "2026-09-21 6:35pm",
+        "parentId": "SIU1sEpwpZ5W75icWHXe",
+        "parentName": "snc-grocery",
+        "parentUrl": "snc-grocery",
+        "parentInTrash": false,
+        "deletedAt": "2026-09-21T18:35:35.808Z",
+        "scheduledCleanupAt": "2026-10-21T18:35:35.799Z",
+        "deletedBy": "pMLA3HgL2nN6w19PT32lwshZUQg2",
+        "deletedByName": "<redacted>"
+      }
+    ],
+    "workflows": [],
+    "trainings": []
+  }
+}

@@ -4,6 +4,7 @@ import type {
   ApiClient,
   DatasetStatusResponse,
   InstalledModel,
+  RecordFact,
   SettingsResponse,
   UnrecordedResizeMode,
   ValidationRecord
@@ -365,6 +366,107 @@ export const ROSTER_NAMES = [
   'safeguard_pure_white_60g'
 ]
 
+// The four facts of a complete record, word for word as the sidecar reports them. Literals rather
+// than anything derived from the fields above, for the same reason the class warnings are: the
+// panel renders the sidecar's list instead of assembling one, so a fixture that computed it would
+// agree with both sides by construction - and the thing being tested is that the *sidecar's*
+// answers reach the screen. Overridable per key, which is how the partial-record fixtures below
+// replace one row.
+export function installedFacts(
+  overrides: Partial<Record<RecordFact['key'], Partial<RecordFact>>> = {}
+): RecordFact[] {
+  const base: RecordFact[] = [
+    {
+      key: 'geometry',
+      label: 'Geometry',
+      value: 'resize_mode: stretch, imgsz 640',
+      writer: 'train_model.py --install',
+      detail: 'auto uses it'
+    },
+    {
+      key: 'generation',
+      label: 'Generation',
+      value: 'v2',
+      writer: 'train_model.py --install',
+      detail: ''
+    },
+    {
+      key: 'validation',
+      label: 'Validation',
+      value: 'test',
+      writer: 'train_model.py --val',
+      detail: ''
+    },
+    {
+      key: 'source',
+      label: 'Source',
+      value: 'snc-grocery version 2',
+      writer: 'train_model.py --install',
+      detail: ''
+    }
+  ]
+  return base.map((fact) => ({ ...fact, ...(overrides[fact.key] ?? {}) }))
+}
+
+// Nothing recorded beside the weight, so all four facts are gaps and each names the tool that
+// fills it. `indexed` is the one input that changes an answer: a dataset this machine's source
+// index can already name is `backfill_provenance.py`'s to write into the record, and nothing else
+// on this machine can supply it at all.
+export function unrecordedFacts(indexed = ''): RecordFact[] {
+  return [
+    {
+      key: 'geometry',
+      label: 'Geometry',
+      value: '',
+      // Geometry's second writer, and the only one that applies to a file nobody installed:
+      // `--install` knows the requirement because it knows the training run.
+      writer: 'Record it now (or train_model.py --install)',
+      detail: 'auto gives letterbox'
+    },
+    {
+      key: 'generation',
+      label: 'Generation',
+      value: '',
+      writer: 'train_model.py --install',
+      detail: ''
+    },
+    {
+      key: 'validation',
+      label: 'Validation',
+      value: '',
+      writer: 'train_model.py --val',
+      detail: 'the next --install carries it into the record'
+    },
+    {
+      key: 'source',
+      label: 'Source',
+      value: '',
+      writer: indexed ? 'backfill_provenance.py' : 'train_model.py --install',
+      detail: indexed
+        ? `this machine's source index names ${indexed}`
+        : 'install --version N names a generated version'
+    }
+  ]
+}
+
+// What the sidecar reports after the panel's *own button* writes a requirement: the geometry is
+// stated, and the other three facts are still gaps - the button writes one field. `source` is a gap
+// either way, and the writer it names is whichever one can close it: the index's reader when this
+// machine already knows the dataset, `--install` when nothing does. No `imgsz`, because nothing
+// measured the training size - the operator attested to a mode.
+export function recordedGeometryFacts(mode = 'letterbox', indexed = ''): RecordFact[] {
+  return unrecordedFacts(indexed).map((fact) =>
+    fact.key === 'geometry'
+      ? {
+          ...fact,
+          value: `resize_mode: ${mode}`,
+          writer: 'train_model.py --install',
+          detail: 'auto uses it'
+        }
+      : fact
+  )
+}
+
 // What `train_model.py --install` records beside the weights, as the sidecar reports it.
 // `auto_resolves_to` equals the requirement because the sidecar's `auto` honours the record, so
 // leaving the field alone uses `stretch` and nothing is flagged. Only an explicit value can
@@ -378,10 +480,15 @@ export function installedV2(overrides: Partial<InstalledModel> = {}): InstalledM
     imgsz: 640,
     auto_resolves_to: 'stretch',
     source: 'snc-grocery version 2',
+    // The record names the dataset, so the machine's index is never consulted for this weight and
+    // the sidecar answers nothing — the pair is what a test asserting "only where the record is
+    // silent" needs.
+    indexed_source: '',
     class_names: ROSTER_NAMES,
     class_warnings: [],
     recorded: true,
     validation: [VALIDATION_V2],
+    record_facts: installedFacts(),
     ...overrides
   }
 }
@@ -405,7 +512,18 @@ export function installedV2DistanceSplit(): InstalledModel {
 
 // Installed by the tool, `--val` never run: a record, no numbers.
 export function installedV2Unmeasured(): InstalledModel {
-  return installedV2({ validation: [] })
+  return installedV2({
+    validation: [],
+    // One gap rather than none, which is what makes this fixture worth having: the geometry and
+    // provenance beside it are recorded and the measurement is not.
+    record_facts: installedFacts({
+      validation: {
+        value: '',
+        writer: 'train_model.py --val',
+        detail: 'the next --install carries it into the record'
+      }
+    })
+  })
 }
 
 // What the sidecar reports for a `.pt` with nothing recorded beside it while the setting is
@@ -442,12 +560,20 @@ export function installedUnrecorded(overrides: Partial<InstalledModel> = {}): In
     imgsz: null,
     auto_resolves_to: 'letterbox',
     source: '',
+    // Nothing recorded *and* nothing indexed: the state both doors report as a gap only a training
+    // run can close. A test that wants the indexed case overrides this field, which is also how the
+    // panel's listing is exercised — `installedUnrecorded({ indexed_source: '...' })`.
+    indexed_source: '',
     // Nothing recorded beside it, so no class list is known either - and "nothing known" must
     // not render as a finding about the names.
     class_names: [],
     class_warnings: [],
     recorded: false,
     validation: [],
+    // All four facts are gaps, each naming its own writer. A test that wants the indexed case
+    // passes `unrecordedFacts('local merge merged-v2')` alongside an `indexed_source`, which is
+    // also the pair the sidecar produces.
+    record_facts: unrecordedFacts(),
     ...overrides
   }
 }

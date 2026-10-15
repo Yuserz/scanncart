@@ -53,6 +53,31 @@ nothing else knows: the **`resize_mode` these weights have to be run with**.
 }
 ```
 
+One field says where the weights came from rather than what they need:
+
+- **`source`** — which dataset produced them, and the one thing the Admin Panel prints in parentheses
+  after a weight's name. It is the Roboflow version when `--version` named one, and otherwise the
+  *run's* own answer: `--install` reads the run it is installing (`args.yaml`'s `data=`, or the
+  directory it trained on itself when `--yes` created that run) and, when that
+  names a directory carrying `merge_report.json`, records **`local merge <directory>`** — a weight
+  trained from a **local merge** has no version number to name, and `build_dataset.py`'s output is
+  named by where it sits. An install that can answer neither way writes the field empty and says what
+  it is empty of. The three v2 weights were installed before the derived half existed and carry those
+  same strings today, filled in by `sidecar/tools/backfill_provenance.py`, which does the identical
+  reading from the other end — the weight's bytes find the run, and the run names the set — giving
+  `local merge merged-v2`, `local merge merged-v2-letterbox` and `local merge merged-v2-letterbox-synth`:
+
+  ```bash
+  sidecar/.venv/Scripts/python.exe sidecar/tools/backfill_provenance.py --dry-run
+  ```
+
+  It writes `source` and nothing else, merges rather than replacing (the class list beside it is the
+  one field nothing can recover), and reports rather than guesses in the four states that have no
+  answer — no run holds the weight's bytes, two do, the dataset directory is gone, or the dataset is
+  a version's export whose number is not in the run. A weight with **no** record is deliberately left
+  alone: writing one would flip the `recorded` flag, and that flag is what the app's `auto` gives
+  `letterbox` entry is gated on.
+
 Four more fields travel with it, and each one is a fact nothing else keeps:
 
 - **`class_names`** — the label set the model predicts, in the order it indexes them. A `.pt`
@@ -78,6 +103,18 @@ All four are **omitted rather than written empty** when the run did not know the
 of the same weights writes a byte-identical file. `POST /api/models/record` (the *Record it now*
 button) merges into an existing record rather than replacing it, so adding one field cannot delete
 what a training run measured.
+
+The *Weights on disk* listing reads those fields as **one completeness view** rather than as a note
+per warning: every weight on disk gets the record's four facts — geometry, generation, validation and
+provenance — each either stated or shown as a gap **with the command that fills it**, under a count
+(`2 of 4 recorded`) so a weight nothing was written about is legible at a glance. The facts and the
+writers are the sidecar's (`app/models.record_facts`), because the writers are the tools in this
+directory plus the panel's own button — and *which* of those applies is a fact about the file rather
+than a rendering choice: geometry's writer is `train_model.py --install` for a weight the tool
+installed and the button for one copied in by hand, and the provenance's is
+`backfill_provenance.py` when this machine's source index can already name the dataset and
+`--install` when nothing can. A gap and a guess are also kept apart, because only one of them is a
+fact: the geometry row says what `auto` will use instead.
 
 `validation` is what `--val` measured, carried in by the following `--install`, and the Admin
 Panel shows it beside the requirement. Three things about its shape are deliberate:
@@ -151,7 +188,16 @@ curl -X POST http://127.0.0.1:<port>/api/models/record \
 ```
 
 `--install` remains the writer to prefer when the training run is still around, because it
-records the requirement *and* the version and measurement that came with it. JSON, not a
+records the requirement *and* the version and measurement that came with it — and the button
+agrees rather than implying otherwise: what it writes carries no `source`, so its confirmation
+says that field is still empty and names the same two writers that fill it (`--install --version N`
+for a generated version, `backfill_provenance.py` for a local merge). That second writer keeps working
+after the run itself is gone, because a run's answer is written down while the run still exists: the
+machine-local **source index** (`app/source_index.py`, `sidecar/data/source_index.json`) maps a
+weight's bytes to the dataset it came from, so `backfill_provenance.py` reads it instead of matching
+a run, and `--install` falls back to it when neither `--version` nor the run can answer. The panel
+shows that entry beside a weight whose record is still silent - as the index's answer, not as a
+`source`, since the record is what travels with the weights. JSON, not a
 `models/`-wide manifest: the weight is the thing that gets copied to another machine, and a
 manifest left behind would lose the requirement at exactly the moment it is needed.
 
@@ -161,8 +207,20 @@ manifest left behind would lose the requirement at exactly the moment it is need
 scanncart-grocery.onnx       the unsuffixed v1 baseline — never export over it
 scanncart-grocery-v1.pt      v1's seven classes, trained locally (`--generation v1`)
 scanncart-grocery-v2.pt      v2, trained locally    <- what train_model.py installs
+scanncart-grocery-v2.1.pt    v2's seven retrained (`--variant v2.1`) — the same classes and
+                             geometry, a later version of the same project
 scanncart-grocery-v3.pt      the next generation
 ```
+
+`-vN` is the **generation** — the class list, its order and the geometry — and `.<M>` is a second
+run of one (`MODEL_TRAINING.md` §8.2). A variant is named by `train_model.py --variant v2.1`, which
+moves the export directory, the run, its `--val` run and this filename together so a retrain cannot
+overwrite the run the weight it retrains came from. Its **record keeps `generation: v2`** — the
+seven names are v2's, and a `v2.1` in `class_names`' vocabulary is not a roster this app has — so
+the filename and the recorded `source` (`snc-grocery version 3`) are what tell the two weights
+apart, and `--version` is what makes a retrain distinguishable at all. What the record then shows
+is the whole answer to "which classes is this weight on, and how good is it": `class_names` plus
+`--val`'s per-class recall, its per-distance grid, `imgsz` and the augmentation table.
 
 A `-v1.pt` used to be *expected* to be flagged in the Admin Panel's *Weights on disk* list, back
 when v2 declared eight classes and v1's seven could never predict Palmolive. With Palmolive
@@ -171,9 +229,17 @@ silence is the correct reading — a clean listing is what "these weights can pr
 roster names" looks like. Only a weight whose recorded class list really is missing a name, or
 carries a distance in one, is flagged.
 
-The `-vN` suffix is the **model generation**, not the Roboflow version number. They
-deliberately disagree: v2's weights come from `snc-grocery` **version 2**, while the model
-filename says `v2` because that is what the picker, the docs and the training runs call it.
+The `-vN` suffix is the **model generation**, not the Roboflow version number, and they are
+different facts about different artifacts: `v2` names the dataset *convention* (the class list, its
+order, the geometry), while the Roboflow version is one frozen snapshot of the project. On this
+machine they have never coincided — v2's weights were trained from the local merge
+(`build_dataset.py`'s `merged-v2`), not from a generated version, which is why `--version` had
+nothing to write for them and their records carried an empty `source` until
+`backfill_provenance.py` named the merge each one came from. And `snc-grocery` has never generated
+one at all (its only version is the empty `1` in the Trash, which is why the next generation takes
+number 2). That is what `--version` is for: a retrain
+installed with it records which snapshot it came from, and the filename plus that field are what
+tell two weights of one generation apart.
 Keeping the baseline alongside the new generation is the point — it is what lets you A/B
 them in Live View and roll back from the dropdown.
 

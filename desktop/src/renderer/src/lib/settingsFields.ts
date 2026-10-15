@@ -22,6 +22,14 @@ export const CUSTOM_MODEL_V2_LETTERBOX = 'models/scanncart-grocery-v2-letterbox.
 // The letterbox weights retrained with 50 train-only Century Tuna images made from close-ups
 // (`build_dataset.py --synthetic`), kept beside them for the side-by-side.
 export const CUSTOM_MODEL_V2_LETTERBOX_SYNTH = 'models/scanncart-grocery-v2-letterbox-synth.pt'
+// A **retrain of the same generation** (MODEL_TRAINING.md §8.2): v2's seven classes and v2's
+// geometry, trained again from a later version of the same project with the capture gap filled.
+// The suffix is the retrain's own, and `train_model.py --variant v2.1` names it end to end (the
+// run, its `--val` pass and the installed weight), so this entry is the variant's — the record
+// beside it still says `generation: v2`, because the class list it is judged by has no v2.1
+// vocabulary. What separates it from the plain v2 weights in the panel is this filename and the
+// `source` version recorded beside it.
+export const CUSTOM_MODEL_V2_1 = 'models/scanncart-grocery-v2.1.pt'
 
 // A raw path is not a label. Anything not listed falls back to its own name.
 export const MODEL_LABELS: Record<string, string> = {
@@ -30,6 +38,7 @@ export const MODEL_LABELS: Record<string, string> = {
   [CUSTOM_MODEL_V2_LETTERBOX]: 'SCANnCART grocery v2 · letterbox (custom, 7 SKUs)',
   [CUSTOM_MODEL_V2_LETTERBOX_SYNTH]:
     'SCANnCART grocery v2 · letterbox + Tuna extras (custom, 7 SKUs)',
+  [CUSTOM_MODEL_V2_1]: 'SCANnCART grocery v2.1 · refill retrain (custom, 7 SKUs)',
   'models/scanncart-grocery.onnx': 'SCANnCART grocery (Roboflow export)'
 }
 
@@ -113,6 +122,8 @@ export const MODEL_SPEC_HINTS: Record<string, string> = {
     'Locally trained v2 (7 SKUs), frames squashed to a 640 square — see the requirement recorded beside it below. Runs on torch, so a CUDA GPU is the fast path.',
   [CUSTOM_MODEL_V2_LETTERBOX]:
     'Locally trained v2 (7 SKUs), frames kept at their own shape and padded at 960 — see the requirement recorded beside it below. Larger input than the stretch weights, so each frame costs more GPU time.',
+  [CUSTOM_MODEL_V2_1]:
+    'Locally trained v2 retrained (7 SKUs) on a later version of the same dataset — same class list and geometry as the v2 weights above, so the two are comparable on one camera. Read the requirement and the measured score recorded beside it below before choosing between them.',
   'yolo26n.pt':
     'Experimental — lightest YOLO26. Needs roughly yolo11n-class hardware: a modern 4-core CPU and 8 GB RAM. Its NMS-free design typically runs faster than yolo11n on CPU. Weights auto-download on first capture start (internet needed once).',
   'yolo26s.pt':

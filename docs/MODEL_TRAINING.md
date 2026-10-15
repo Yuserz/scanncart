@@ -67,6 +67,12 @@ One photo with 4 items on the counter = **4 labeled instances**. Budget the set 
 > a per-image click in the UI. Mind the "include images without annotations" toggle at version
 > generation: it takes *every* unreviewed image, not just the ones you meant.
 >
+> **The silent half of that is gated.** `generate_version.py --yes` (and `--check`) reads the
+> project before the POST and refuses when a batch of negatives holds a frame with no null
+> annotation, naming the batch — because a version is not revisitable, that is the one moment where
+> re-marking the frames still costs nothing, and an unmarked background frame is otherwise excluded
+> with no error and no trace in any coverage table.
+>
 > **Verifying it worked.** A null annotation is distinguishable from an unlabeled image, but only
 > by the *type* of the search API's `annotations` field — not by its emptiness:
 >
@@ -640,7 +646,11 @@ Checklist to wire in `best.pt`:
    also the shorter path for weights `--install` never installed. Because the mode is the one
    already running, clicking it cannot change what the detector does; it turns a fallback into a
    stated fact, and it is an *attestation* rather than a measurement, which is why `--install`
-   (requirement + version + `--val` numbers) stays the writer to prefer when the run still exists.
+   (requirement + version + `--val` numbers) stays the writer to prefer when the run still exists —
+   and why the confirmation says as much: it reports the `source` the button cannot write as still
+   empty, naming the two things that do fill it (`--install --version N` for a generated version, or
+   `sidecar/tools/backfill_provenance.py` for a local merge). A record with no dataset in it and a
+   complete one look the same once that line stops talking.
 4. `active_model` is a **restart-required** field (`RESTART_REQUIRED_FIELDS`), so capture must be
    stopped before saving.
 
@@ -945,7 +955,11 @@ run and never probed has nothing to judge — which is why `train_model.py --ins
 export's `class_names` into `models/<stem>.json` beside the requirement. `app/models.read_record`
 reads it and `installed_models` judges it with the *same* `roster.class_list_problems`, so the
 Admin Panel's *Weights on disk* list carries the same sentences the probe and the Live view do,
-before the model is selected — let alone started. It is the same fact as the probe's, from the
+before the model is selected — let alone started. The count sits in that listing's **record
+completeness view** (`InstalledModel.record_facts`), which states the record's four facts — geometry,
+generation, validation and provenance — and, for each one nothing was recorded for, the command that
+writes it; the class count is rendered beside them rather than as a fifth fact, since the record
+carrying a list is not the same question as the list being right. It is the same fact as the probe's, from the
 only other place it can come from: the install is the moment the export is still open, and the
 export is the only thing that ever knew the list. Recorded as an **empty list when nothing is
 known** (a hand-copied weight, or a record written before this field existed) rather than written
@@ -975,9 +989,11 @@ regenerated, since a version number cannot be reused (§8.2). A drift guard in
 suite instead of opening a hole.
 
 The cheapest place to catch it is the `sanity` run §9 already gates a shoot on, which is why the
-check lives there as a blocking problem rather than a warning — every other class-list finding is
-work *not done yet*, while a distance in a class name is work done in the wrong shape. Keep **Lock
-Classes** on as well, so an eighth class cannot be typed into existence between runs.
+check lives there as a blocking problem rather than a warning — a distance in a class name is work
+done in the wrong shape, and the one other class-list finding that blocks is a class the roster does
+not declare (§8.1's *re-created* class), because that is drift the head keeps for the life of the
+weights; a **missing** name is the only one that is merely work not done yet. Keep **Lock Classes**
+on as well, so an eighth class cannot be typed into existence between runs.
 
 ### 8.2 Version numbers and weight naming
 
@@ -1011,8 +1027,67 @@ Two different numbers are in play, and they deliberately disagree:
 - **Never export over `scanncart-grocery.onnx`.** The Admin Panel's model picker is keyed by
   filename, so keeping both files lets you A/B v2 against the baseline in Live View and roll back
   from a dropdown. Update `CUSTOM_MODEL` / `MODEL_LABELS` in
-  `desktop/src/renderer/src/lib/settingsFields.ts` and label it "8 SKUs", not 7. (A `.pt` needs no
-  whitelist edit at all — see §7.)
+  `desktop/src/renderer/src/lib/settingsFields.ts`, and give the label the SKU count the roster
+  declares (`app/roster.py` — seven today) rather than a number typed from memory. The count is
+  checked rather than trusted: `tests/test_desktop_contracts.py` reads both `MODEL_LABELS` and
+  `MODEL_SPEC_HINTS` out of that file, resolves the generation each label names and fails one whose
+  count disagrees with that generation's roster — which is the edit a dropped class needs and the
+  one prose would otherwise miss. This line itself read "8 SKUs" for as long as Palmolive was in the
+  roster, and the picker said seven. (A `.pt` needs no whitelist edit at all — see §7.)
+- **A retrain of the same generation gets `.<M>`** — `scanncart-grocery-v2.1.pt`. The `-vN` is the
+  *generation*: the dataset convention, which is the class list, its order and the geometry. The
+  `.M` is a second run of it — same classes, same order, same geometry, trained from a **later
+  version of the same project** (the capture gap filled, or a preprocessing experiment re-run).
+  Deliberately *not* an entry in `generations.py`: a variant shares every field of the spec it
+  retrains, so a third entry could only disagree with it, and `--generation v2.1` is a typo rather
+  than a second way to say a thing. Deliberately *not* a roster in `app/roster.py` either, for the
+  same reason — the two declare the same seven names, and a record naming a generation the app has
+  no roster for is judged by the names it carries (`roster.resolve_roster`), which is exactly the
+  reading a v2.1 weight wants. One flag names it end to end, so a retrain cannot overwrite the run
+  the weight it retrains came from:
+
+  ```bash
+  sidecar/.venv/Scripts/python.exe sidecar/tools/train_model.py --variant v2.1 --download --version 2
+  sidecar/.venv/Scripts/python.exe sidecar/tools/train_model.py --variant v2.1 --yes
+  sidecar/.venv/Scripts/python.exe sidecar/tools/train_model.py --variant v2.1 --val
+  sidecar/.venv/Scripts/python.exe sidecar/tools/train_model.py --variant v2.1 --install
+  ```
+
+  `--version` is the number `generate_version.py --check` reports, and it is **2** rather than 3:
+  `snc-grocery`'s only version is the empty `1` of 2026-09-21, which was moved to the Trash and
+  keeps its number, so the next generation this project produces is its first useful one. Read
+  rather than remembered — the recorded project body is one of the fixtures under
+  `sidecar/tests/__fixtures__/roboflow/`, and `test_roboflow_shapes.py` pins that reading.
+
+  `--variant v2.1` moves four names together — the export directory it downloads into
+  (`export-v2.1`), the run (`scanncart-grocery-v2.1`), its `--val` run and the installed
+  `models/scanncart-grocery-v2.1.pt` — and nothing else. The record keeps **`generation: v2`** and
+  puts the version these weights came from in `source` (`snc-grocery version 2`): the classes are
+  the same seven and the roster vocabulary is per generation, so the filename and that field are
+  the only two things that tell the retrain apart from the weight it retrains — which is why
+  `--version` is not optional here. Everything a panel can say about a weight then comes off that
+  record, and it is the whole of what "what classes is this model on, and how good is it" resolves
+  to: the `class_names` it declares, with whatever the roster has and it does not, and `--val`'s
+  per-class recall with its per-distance grid.
+- **A record with no dataset in it.** `source` is written from `--version`, so a weight trained from
+  a *local merge* (§6's `merged-v2`, which is not a Roboflow version) was installed with that field
+  empty — the three v2 weights were, and the Admin Panel had nothing to print in parentheses after
+  their names. It is recoverable rather than lost: the run that produced a weight still says what it
+  trained on. `sidecar/tools/backfill_provenance.py` finds that run by the weight's bytes, reads its
+  `args.yaml`, and merges `local merge <the directory>` into the record:
+
+  ```bash
+  sidecar/.venv/Scripts/python.exe sidecar/tools/backfill_provenance.py --dry-run
+  ```
+
+  `--dry-run` prints what it would write and changes nothing. It never replaces the rest of a record,
+  and it stops rather than guessing when no run holds the weight's bytes, when two do, or when the
+  dataset is gone — a `source` that is wrong is a claim about provenance nothing downstream can
+  falsify. First it asks the **source index** (`sidecar/data/source_index.json`, `app/source_index.py`),
+  which is what makes the repair survive the run: `train_model.py` writes a weight's bytes and the
+  dataset they came from there as the run finishes — before anyone installs anything — so a pruned
+  run, a workspace rebuilt elsewhere or a weight copied from another machine can still be named, and
+  `--install` reads the same file as its last resort.
 - Match v1's version settings when generating v2: **auto-orient** on, resize **640×640 Stretch to**,
   and no augmentation (v1 used none). This is what §7's recorded requirement is derived from
   (`REQUIRED_RESIZE_MODE` ← `PREPROCESSING`), so `auto` runs the resulting `.pt` stretched. An export

@@ -283,4 +283,46 @@ describe('basket tracker', () => {
     await h.tracker.bind('s2')
     expect(h.qty()).toEqual({})
   })
+
+  it('an Empty-and-restart never announces the void between unbind and rebind', async () => {
+    // Empty-and-restart = unbind the practice ledger, then bind a fresh ref. Each transition
+    // fires the UI push, so the window was told the transient *unbound* readout — which
+    // unmounts the "practice running" row for as long as the rebind's server load takes
+    // (a file-backed store, a test failure at a desk once). The swap must be one announced
+    // change, delivered after the new ledger is in place.
+    const seen: Array<string | null> = []
+    let releaseStore!: () => void
+    const storeGate = new Promise<void>((r) => {
+      releaseStore = r
+    })
+    // The gate bites only on the rebind's load (the first bind loads immediately), so the
+    // mid-swap window is held open long enough to observe what is sent during it.
+    let loads = 0
+    const tracker = new BasketTracker(DEFAULT_ZONE_PRESET, {
+      now: () => 1000,
+      store: {
+        load: () => {
+          loads += 1
+          return loads > 1 ? storeGate.then(() => null) : Promise.resolve(null)
+        },
+        save: async () => {},
+        clear: async () => {}
+      },
+      onChange: () => {
+        seen.push(tracker.boundSessionRef())
+      }
+    })
+    await tracker.bind('practice:1')
+    expect(seen).toEqual(['practice:1'])
+
+    const swap = tracker.rebind('practice:2')
+    // Hand the event loop a turn: the rebind is now parked inside the gated store load.
+    await Promise.resolve()
+    expect(seen).toEqual(['practice:1']) // the unbind must not be announced mid-swap
+
+    releaseStore()
+    await swap
+    expect(tracker.boundSessionRef()).toBe('practice:2')
+    expect(seen).toEqual(['practice:1', 'practice:2'])
+  })
 })

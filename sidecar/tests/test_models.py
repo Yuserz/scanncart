@@ -12,12 +12,14 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from app import source_index
 from app.main import AppState, build_app
 from app.models import (
     MODELS_DIR,
     imgsz_for,
     installed_models,
     read_record,
+    record_facts,
     record_requirement,
     requirement_for,
 )
@@ -793,3 +795,177 @@ def test_the_route_reports_what_each_installed_weight_needs(monkeypatch, tmp_pat
     # an operator has to be told which way it guesses. A Roboflow .onnx guesses right.
     assert legacy["resize_mode"] is None
     assert legacy["auto_resolves_to"] == "stretch"
+
+
+# --------------------------------------------------------------------------
+# the record's completeness, as one list
+# --------------------------------------------------------------------------
+#
+# The four facts a record can carry, each rendered separately as its own note, leaves an operator to
+# assemble the completeness themselves - and each fact goes missing in a different place. This is
+# the same four as one answer, naming the writer for whichever are absent, and it is built here
+# because the writers are `sidecar/tools/` commands plus this app's own record button.
+
+
+def test_the_completeness_list_states_every_fact_a_record_can_carry(tmp_path):
+    """A complete record, in the order the panel reads it. Geometry arrives as one line rather
+    than two facts: a mode without the size is the same story half-told, and `--install` writes
+    the pair together.
+    """
+    _with_record(
+        tmp_path,
+        resize_mode="stretch",
+        imgsz=640,
+        generation="v2",
+        source="local merge merged-v2",
+        validation=VALIDATION,
+    )
+    (only,) = installed_models(tmp_path)
+
+    assert [f.key for f in only.record_facts] == ["geometry", "generation", "validation", "source"]
+    assert [f.label for f in only.record_facts] == [
+        "Geometry",
+        "Generation",
+        "Validation",
+        "Source",
+    ]
+    assert [f.value for f in only.record_facts] == [
+        "resize_mode: stretch, imgsz 640",
+        "v2",
+        "test",
+        "local merge merged-v2",
+    ]
+    # The stated geometry still says which way `auto` goes, because that is what makes the value
+    # worth reading - and a stated fact carries no *writer's* hint: those belong to the gap.
+    assert only.record_facts[0].detail == "auto uses it"
+    assert only.record_facts[3].detail == ""
+
+
+def test_each_missing_fact_names_the_tool_that_writes_it(tmp_path):
+    """A gap is only actionable as a gap *plus* the command that fills it.
+
+    A hand-copied weight is where this matters most and where the old per-warning reporting was
+    deliberately silent: nothing beside the file means no geometry, no generation, no measurement
+    and no provenance, and each of those has a different writer.
+    """
+    _touch(tmp_path, "hand-copied.pt")
+    (only,) = installed_models(tmp_path)
+
+    assert only.recorded is False
+    assert [f.value for f in only.record_facts] == ["", "", "", ""]
+    gaps = {f.key: f for f in only.record_facts}
+    # Geometry's writer is the one that needs no training run - the panel's own button - because
+    # this is exactly the weight `--install` never installed. "Not recorded" alone would leave the
+    # operator to work out which of two writers applies.
+    assert "Record it now" in gaps["geometry"].writer
+    # And the other half of the same fact, which the record cannot carry: what `auto` will do
+    # instead. A gap and a guess are two different things and only one of them is a choice.
+    assert gaps["geometry"].detail == "auto gives letterbox"
+    assert gaps["generation"].writer == "train_model.py --install"
+    assert gaps["validation"].writer == "train_model.py --val"
+    assert gaps["source"].writer == "train_model.py --install"
+    # `--val` measures into the *run* directory and the record learns about it on the next
+    # install, which is the one thing a reader has to be told about this fact: running the command
+    # the cell names is not by itself enough to fill the cell in.
+    assert "--install" in gaps["validation"].detail
+
+
+def test_a_weight_the_tool_installed_is_referred_back_to_the_tool(tmp_path):
+    """The other branch of geometry's writer. Something *is* recorded beside these weights, so the
+    command that wrote the rest of the record is the one that should write this too - the button is
+    for weights that arrived some other way.
+    """
+    _with_record(tmp_path, source="snc-grocery version 2")
+    (only,) = installed_models(tmp_path)
+
+    assert only.recorded is True
+    gaps = {f.key: f for f in only.record_facts}
+    assert gaps["geometry"].writer == "train_model.py --install"
+    # Read off the record's *usable* value, so the writer and the requirement cannot disagree.
+    assert gaps["geometry"].detail == f"auto gives {only.auto_resolves_to}"
+
+
+def test_a_source_the_index_can_name_is_the_backfillers_to_write(tmp_path):
+    """The source's second writer, and the only one that still works once the run is gone.
+
+    `--install` names a dataset from the run it is installing; this machine's index was written
+    while that run still existed, which is why the writer changes with the fact rather than with the
+    weight - and why the entry is a gap in the record even so. The index is machine-local state, and
+    the record is what travels with the weights.
+    """
+    _touch(tmp_path, "hand-copied.pt")
+    source_index.record_source(tmp_path / "hand-copied.pt", "local merge merged-v2")
+
+    (only,) = installed_models(tmp_path)
+    assert only.indexed_source == "local merge merged-v2"
+    source = next(f for f in only.record_facts if f.key == "source")
+    assert source.value == ""
+    assert source.writer == "backfill_provenance.py"
+    assert source.detail == "this machine's source index names local merge merged-v2"
+
+
+def test_a_stated_fact_carries_no_hint_meant_for_its_own_gap(tmp_path):
+    """The detail belongs to whichever state the fact is in. A writer's hint printed beside a value
+    that is already there reads as an instruction to fill in something that is filled in - which is
+    the one way this list could say something false on a complete record.
+    """
+    _with_record(tmp_path, resize_mode="stretch", imgsz=640, generation="v2", source="local merge merged-v2")
+    (only,) = installed_models(tmp_path)
+
+    for fact in only.record_facts:
+        if fact.value:
+            assert fact.detail in ("", "auto uses it"), (fact.key, fact.detail)
+
+
+def test_a_corrupt_record_reports_four_gaps_rather_than_nothing(tmp_path):
+    """Same contract as the rest of the reader - a hand-edited file costs the facts and not the
+    listing - with one thing still told apart: the file *is* there, so the geometry writer is the
+    tool's rather than the button's. A corrupt record is a different situation from no record, and
+    `recorded` is what says which.
+    """
+    _touch(tmp_path, "broken.pt")
+    (tmp_path / "broken.json").write_text("{not json", encoding="utf-8")
+    (only,) = installed_models(tmp_path)
+
+    assert [f.value for f in only.record_facts] == ["", "", "", ""]
+    assert only.record_facts[0].writer == "train_model.py --install"
+    assert only.record_facts[0].detail == f"auto gives {only.auto_resolves_to}"
+
+
+def test_the_completeness_travels_as_the_sidecar_computed_it(monkeypatch, tmp_path):
+    """Through the route the panel loads: a field that does not reach the wire is one the view
+    cannot render, and this list is the sidecar's answer rather than the renderer's.
+    """
+    _with_record(tmp_path, resize_mode="stretch", validation=VALIDATION)
+    monkeypatch.setattr("app.main.installed_models", lambda: installed_models(tmp_path))
+
+    served = _client().get("/api/models").json()["installed"][0]["record_facts"]
+    assert [f["key"] for f in served] == ["geometry", "generation", "validation", "source"]
+    # Half a record: the geometry and the measurement are in, the generation and the source are
+    # not - which is the state the count above the rows exists to make legible.
+    assert [f["value"] for f in served] == ["resize_mode: stretch", "", "test", ""]
+    assert served[1]["writer"] == "train_model.py --install"
+    assert served[3]["writer"] == "train_model.py --install"
+
+
+def test_the_fact_list_is_pure_so_a_record_can_be_stated_without_a_file():
+    """The shape that makes this testable at all: a dict in, four entries out, no filesystem and no
+    roster. What the panel renders for a *weight* is then assembled from the same function the unit
+    tests above drive, rather than from a second reading of the file.
+    """
+    facts = record_facts(
+        {
+            "recorded": True,
+            "resize_mode": None,
+            "generation": None,
+            "imgsz": None,
+            "source": "",
+            "class_names": [],
+            "validation": [],
+        },
+        resolved="letterbox",
+        indexed="",
+    )
+    assert [f.key for f in facts] == ["geometry", "generation", "validation", "source"]
+    assert all(f.value == "" for f in facts)
+    assert all(f.writer for f in facts)  # every gap can name who fills it

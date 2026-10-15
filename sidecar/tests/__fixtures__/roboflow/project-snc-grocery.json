@@ -1,0 +1,68 @@
+{
+  "workspace": {
+    "name": "New Workspace",
+    "url": "yusri-caloyloy",
+    "members": 1
+  },
+  "project": {
+    "id": "yusri-caloyloy/snc-grocery",
+    "type": "object-detection",
+    "name": "snc-grocery",
+    "created": 1790000152.003,
+    "updated": 1791908912.517,
+    "images": 1343,
+    "unannotated": 103,
+    "annotation": "snc-grocery",
+    "versions": 1,
+    "public": true,
+    "multilabel": false,
+    "license": "CC BY 4.0",
+    "splits": {
+      "train": 940,
+      "valid": 271,
+      "test": 132,
+      "export": 0
+    },
+    "colors": {
+      "Bear Brand Fortified Powdered Milk 33g": "#8b008b",
+      "lucky_me_pancit_canton_calamansi_flavor": "#ff1493",
+      "555 sardines 155grams": "#0000FF",
+      "century_tuna_flakes_in_oil_155_grams": "#ff1493",
+      "silver_swan_sukang_puti_200ML": "#FF00FF",
+      "Milo Chocolate Drink 22g Sachet": "#ff1493",
+      "safeguard_pure_white_60g": "#deb887",
+      "Palmolive Naturals Bar Soap 85g": "#FE0056"
+    },
+    "classes": {
+      "Palmolive Naturals Bar Soap 85g": 0,
+      "century_tuna_flakes_in_oil_155_grams": 150,
+      "555 sardines 155grams": 79,
+      "silver_swan_sukang_puti_200ML": 282,
+      "Bear Brand Fortified Powdered Milk 33g": 167,
+      "safeguard_pure_white_60g": 281,
+      "Milo Chocolate Drink 22g Sachet": 142,
+      "lucky_me_pancit_canton_calamansi_flavor": 265
+    },
+    "icon": {
+      "original": "https://source.roboflow.com/pMLA3HgL2nN6w19PT32lwshZUQg2/bNjWK9ZzQFCs78dGkqGv/original.jpg",
+      "thumb": "https://source.roboflow.com/pMLA3HgL2nN6w19PT32lwshZUQg2/bNjWK9ZzQFCs78dGkqGv/thumb.jpg",
+      "annotation": "https://source.roboflow.com/pMLA3HgL2nN6w19PT32lwshZUQg2/bNjWK9ZzQFCs78dGkqGv/annotation-snc-grocery.png"
+    },
+    "preprocessing": {},
+    "augmentation": {}
+  },
+  "versions": [
+    {
+      "id": "yusri-caloyloy/snc-grocery/1",
+      "name": "2026-09-21 6:35pm",
+      "created": 1790015712.933,
+      "images": 0,
+      "splits": {},
+      "generating": false,
+      "progress": 1,
+      "preprocessing": {},
+      "augmentation": {},
+      "exports": []
+    }
+  ]
+}

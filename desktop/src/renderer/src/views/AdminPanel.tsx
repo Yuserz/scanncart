@@ -148,6 +148,8 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
   // collapsed to "bottlecupp".
   const [listText, setListText] = useState<Record<string, string>>({})
   const [justSaved, setJustSaved] = useState(false)
+  // Restore Defaults' two-step guard: false = arm, then confirm (see handleRestoreDefaults).
+  const [confirmingRestore, setConfirmingRestore] = useState(false)
   if (settings !== settingsAtLastReset) {
     setSettingsAtLastReset(settings)
     setDraft({})
@@ -320,6 +322,15 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
 
   const handleRestoreDefaults = async (): Promise<void> => {
     if (running) return
+    // One click here overwrote every persisted setting with no dialog and no
+    // undo (playtest finding: 9 reverted keys, 0 confirmations). So the first
+    // click arms — it names what would be overwritten — and only a second,
+    // deliberate click writes. Clicking anywhere else disarms.
+    if (!confirmingRestore) {
+      setConfirmingRestore(true)
+      return
+    }
+    setConfirmingRestore(false)
     await restoreDefaults()
   }
 
@@ -513,193 +524,216 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
             {` — the form has ${mismatch.mode}, which presents every object at the wrong scale.`}
           </p>
         )}
-        {field.key === 'active_model' &&
-          record &&
-          record.recorded &&
-          (record.validation.length > 0 ? (
-            // What the model *scored*, beside what it needs. The record is the only place this
-            // can come from: a measurement lives in a terminal log otherwise, and the operator
-            // choosing between generations is the person who has to read it.
-            <div className="model-validation" data-testid="model-validation">
-              <p className="installed-models-title">What these weights scored</p>
-              {record.validation.map((block) => {
-                const measured = block.per_class.filter((c) => c.recall !== null)
-                const below = measured.filter((c) => (c.recall as number) < block.floor)
-                return (
-                  <div
-                    className="model-validation-split"
-                    key={block.split}
-                    data-testid={`model-validation-${block.split}`}
-                  >
-                    <p className="model-validation-head">
-                      <code>{block.split}</code>
-                      {` split, floor ${block.floor.toFixed(2)} — `}
-                      {below.length === 0
-                        ? `${measured.length} measured, all at or above the floor`
-                        : `${below.length} of ${measured.length} below the floor`}
+        {/* What the selected weight scored, when the record carries a measurement. A weight with a
+            record and no measurement used to get a hint of its own here (`model-validation-missing`)
+            — that is now one row of the completeness view below, which names `--val` as the writer
+            and covers every weight on disk rather than only the selected one. */}
+        {field.key === 'active_model' && record && record.validation.length > 0 && (
+          // What the model *scored*, beside what it needs. The record is the only place this
+          // can come from: a measurement lives in a terminal log otherwise, and the operator
+          // choosing between generations is the person who has to read it.
+          <div className="model-validation" data-testid="model-validation">
+            <p className="installed-models-title">What these weights scored</p>
+            {record.validation.map((block) => {
+              const measured = block.per_class.filter((c) => c.recall !== null)
+              const below = measured.filter((c) => (c.recall as number) < block.floor)
+              return (
+                <div
+                  className="model-validation-split"
+                  key={block.split}
+                  data-testid={`model-validation-${block.split}`}
+                >
+                  <p className="model-validation-head">
+                    <code>{block.split}</code>
+                    {` split, floor ${block.floor.toFixed(2)} — `}
+                    {below.length === 0
+                      ? `${measured.length} measured, all at or above the floor`
+                      : `${below.length} of ${measured.length} below the floor`}
+                  </p>
+                  {Object.keys(block.aggregates).length > 0 && (
+                    <p
+                      className="model-validation-aggregates"
+                      data-testid="model-validation-metrics"
+                    >
+                      {Object.entries(block.aggregates)
+                        .map(([name, value]) => `${name} ${value.toFixed(3)}`)
+                        .join(' · ')}
                     </p>
-                    {Object.keys(block.aggregates).length > 0 && (
-                      <p
-                        className="model-validation-aggregates"
-                        data-testid="model-validation-metrics"
+                  )}
+                  <ul className="model-validation-classes">
+                    {block.per_class.map((c) => (
+                      <li
+                        key={c.name}
+                        className={
+                          c.recall === null ? 'unmeasured' : c.recall < block.floor ? 'below' : 'ok'
+                        }
+                        data-testid={`model-validation-class-${c.name}`}
                       >
-                        {Object.entries(block.aggregates)
-                          .map(([name, value]) => `${name} ${value.toFixed(3)}`)
-                          .join(' · ')}
-                      </p>
-                    )}
-                    <ul className="model-validation-classes">
-                      {block.per_class.map((c) => (
-                        <li
-                          key={c.name}
-                          className={
-                            c.recall === null
-                              ? 'unmeasured'
-                              : c.recall < block.floor
-                                ? 'below'
-                                : 'ok'
-                          }
-                          data-testid={`model-validation-class-${c.name}`}
-                        >
-                          {c.name}{' '}
-                          {c.recall === null
-                            ? // Named rather than skipped: ultralytics answers 0.000 here, and a
-                              // zero would send the operator after images of a class the split
-                              // simply never asked about.
-                              '— not measured (the split holds no instances of it)'
-                            : `${c.recall.toFixed(3)} (n=${c.instances})`}
-                        </li>
-                      ))}
-                    </ul>
-                    {/* The same recall split by distance. The split above mixes all three, so a
+                        {c.name}{' '}
+                        {c.recall === null
+                          ? // Named rather than skipped: ultralytics answers 0.000 here, and a
+                            // zero would send the operator after images of a class the split
+                            // simply never asked about.
+                            '— not measured (the split holds no instances of it)'
+                          : `${c.recall.toFixed(3)} (n=${c.instances})`}
+                      </li>
+                    ))}
+                  </ul>
+                  {/* The same recall split by distance. The split above mixes all three, so a
                         class whose frames happen to be mostly `close` can read as healthy while
                         missing the item at `far` — and `far` is the bucket this dataset exists
                         to fix, which makes this the one number the per-class list cannot state.
                         Rows come from the split's own classes, so a class a distance never
                         scored still appears, as a dash: its absence there *is* the finding. */}
-                    {block.per_distance.length > 0 && (
-                      <div className="model-validation-distances">
-                        <p className="model-validation-subhead">
-                          By distance — a class can clear the floor on the split while failing it up
-                          close or far away.
-                        </p>
-                        <table
-                          className="model-validation-grid"
-                          data-testid="model-validation-by-distance"
-                        >
-                          <thead>
-                            <tr>
-                              <th>Class</th>
-                              {block.per_distance.map((d) => (
-                                <th key={d.distance}>
-                                  {d.distance}
-                                  <span className="model-validation-images">{d.images} img</span>
-                                </th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {block.per_class.map((c) => (
-                              <tr key={c.name}>
-                                <td>{c.name}</td>
-                                {block.per_distance.map((d) => {
-                                  const cell = d.per_class.find((x) => x.name === c.name)
-                                  // Two different absences, one rendering: a distance that
-                                  // scored this class and held no instances of it, and a
-                                  // distance with no frames of it at all. Either way it is
-                                  // not a miss, and `0.000` would say it was.
-                                  const state =
-                                    cell === undefined || cell.recall === null
-                                      ? 'unmeasured'
-                                      : cell.recall < block.floor
-                                        ? 'below'
-                                        : 'ok'
-                                  return (
-                                    <td
-                                      key={d.distance}
-                                      className={state}
-                                      data-testid={`model-validation-${d.distance}-${c.name}`}
-                                    >
-                                      {cell === undefined || cell.recall === null
-                                        ? '—'
-                                        : cell.recall.toFixed(3)}
-                                    </td>
-                                  )
-                                })}
-                              </tr>
+                  {block.per_distance.length > 0 && (
+                    <div className="model-validation-distances">
+                      <p className="model-validation-subhead">
+                        By distance — a class can clear the floor on the split while failing it up
+                        close or far away.
+                      </p>
+                      <table
+                        className="model-validation-grid"
+                        data-testid="model-validation-by-distance"
+                      >
+                        <thead>
+                          <tr>
+                            <th>Class</th>
+                            {block.per_distance.map((d) => (
+                              <th key={d.distance}>
+                                {d.distance}
+                                <span className="model-validation-images">{d.images} img</span>
+                              </th>
                             ))}
-                          </tbody>
-                        </table>
-                        {(() => {
-                          // Derived here rather than stored, for the same reason the split's own
-                          // count is: a recorded list of misses could disagree with the numbers
-                          // printed beside it, and nothing could say which of the two was right.
-                          const misses = block.per_distance.flatMap((d) =>
-                            d.per_class
-                              .filter((c) => c.recall !== null && c.recall < block.floor)
-                              .map((c) => `${d.distance} ${c.name} ${c.recall!.toFixed(3)}`)
-                          )
-                          return misses.length > 0 ? (
-                            <p
-                              className="model-validation-distance-misses"
-                              data-testid="model-validation-distance-misses"
-                            >
-                              Below the floor at a distance: {misses.join(' · ')}
-                            </p>
-                          ) : (
-                            <p
-                              className="model-validation-distance-misses"
-                              data-testid="model-validation-distance-misses"
-                            >
-                              No class is below the floor at any distance — including the ones the
-                              mean over all distances would have hidden.
-                            </p>
-                          )
-                        })()}
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          ) : (
-            // Installed by the tool, `--val` not run. Gated on `recorded` rather than on the
-            // empty list alone: a weight copied into `models/` by hand has no numbers either,
-            // and telling its owner to run `--val` would be advice about someone else's file.
-            <p className="field-hint" data-testid="model-validation-missing">
-              No measured score is recorded beside these weights — <code>train_model.py --val</code>{' '}
-              writes the per-class recall that appears here.
-            </p>
-          ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {block.per_class.map((c) => (
+                            <tr key={c.name}>
+                              <td>{c.name}</td>
+                              {block.per_distance.map((d) => {
+                                const cell = d.per_class.find((x) => x.name === c.name)
+                                // Two different absences, one rendering: a distance that
+                                // scored this class and held no instances of it, and a
+                                // distance with no frames of it at all. Either way it is
+                                // not a miss, and `0.000` would say it was.
+                                const state =
+                                  cell === undefined || cell.recall === null
+                                    ? 'unmeasured'
+                                    : cell.recall < block.floor
+                                      ? 'below'
+                                      : 'ok'
+                                return (
+                                  <td
+                                    key={d.distance}
+                                    className={state}
+                                    data-testid={`model-validation-${d.distance}-${c.name}`}
+                                  >
+                                    {cell === undefined || cell.recall === null
+                                      ? '—'
+                                      : cell.recall.toFixed(3)}
+                                  </td>
+                                )
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      {(() => {
+                        // Derived here rather than stored, for the same reason the split's own
+                        // count is: a recorded list of misses could disagree with the numbers
+                        // printed beside it, and nothing could say which of the two was right.
+                        const misses = block.per_distance.flatMap((d) =>
+                          d.per_class
+                            .filter((c) => c.recall !== null && c.recall < block.floor)
+                            .map((c) => `${d.distance} ${c.name} ${c.recall!.toFixed(3)}`)
+                        )
+                        return misses.length > 0 ? (
+                          <p
+                            className="model-validation-distance-misses"
+                            data-testid="model-validation-distance-misses"
+                          >
+                            Below the floor at a distance: {misses.join(' · ')}
+                          </p>
+                        ) : (
+                          <p
+                            className="model-validation-distance-misses"
+                            data-testid="model-validation-distance-misses"
+                          >
+                            No class is below the floor at any distance — including the ones the
+                            mean over all distances would have hidden.
+                          </p>
+                        )
+                      })()}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
         {field.key === 'active_model' && installed.length > 0 && (
           <div className="installed-models" data-testid="installed-models">
             <p className="installed-models-title">Weights on disk</p>
             <ul>
               {installed.map((m) => (
                 <li key={m.value} data-testid={`installed-model-${m.value}`}>
-                  <code>{m.value}</code>
-                  {m.resize_mode ? (
-                    <>
-                      {' needs '}
-                      <code>resize_mode: {m.resize_mode}</code>
-                      {' — '}
-                      <code>auto</code>
-                      {' uses it'}
-                    </>
-                  ) : (
-                    // Two different unknowns must not read as one. Nothing was recorded, so
-                    // `auto` falls back to a rule about the file format - which may be the
-                    // wrong guess for a hand-copied weight, and a guess is the one thing this
-                    // block must not present as a fact.
-                    <>
-                      {` — no recorded requirement; `}
-                      <code>auto</code>
-                      {` gives ${m.auto_resolves_to}`}
-                    </>
-                  )}
-                  {m.source ? <span className="installed-models-source"> ({m.source})</span> : null}
+                  <p className="installed-model-head">
+                    <code>{m.value}</code>
+                    {/* How complete the record is, in one number, so a weight with nothing
+                        written down is legible without reading four rows. Derived here rather
+                        than sent, like every other count this side computes: a stored one could
+                        disagree with the rows under it. */}
+                    <span
+                      className="installed-model-completeness"
+                      data-testid={`installed-model-completeness-${m.value}`}
+                    >
+                      {`${m.record_facts.filter((f) => f.value).length} of ${m.record_facts.length} recorded`}
+                    </span>
+                  </p>
+                  {/* Every fact the record can carry, in one place: what it says, or that it says
+                      nothing and which tool fills that in. The facts and the writers are the
+                      sidecar's (`app/models.py`), because the writers are `sidecar/tools/`
+                      commands and the app's own record button — this renders them, and rewording
+                      either side's answer here could only tell a different story about one
+                      missing field. */}
+                  <table
+                    className="installed-model-facts"
+                    data-testid={`installed-facts-${m.value}`}
+                  >
+                    <tbody>
+                      {m.record_facts.map((f) => (
+                        <tr
+                          key={f.key}
+                          className={f.value ? 'recorded' : 'missing'}
+                          data-testid={`installed-fact-${m.value}-${f.key}`}
+                        >
+                          <th scope="row">{f.label}</th>
+                          <td>
+                            {f.value ? (
+                              <>
+                                {f.value}
+                                {f.detail ? (
+                                  <span className="installed-fact-note">{` — ${f.detail}`}</span>
+                                ) : null}
+                              </>
+                            ) : (
+                              <>
+                                <span className="installed-fact-missing">
+                                  {'not recorded — written by '}
+                                </span>
+                                <code>{f.writer}</code>
+                                {f.detail ? (
+                                  <span className="installed-fact-note">{` (${f.detail})`}</span>
+                                ) : null}
+                              </>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                   {m.class_names.length > 0 && (
-                    <span className="installed-models-classes">{` — ${m.class_names.length} classes`}</span>
+                    <span className="installed-models-classes">{`${m.class_names.length} classes`}</span>
                   )}
                   {/* What those classes *are*, which the count cannot say — and the reason the
                       sidecar records them beside the weight. A model trained from a project whose
@@ -1221,8 +1255,20 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
                 // The sentence is shared with the Live view's copy of the same banner, which is
                 // the other place this button's outcome has to be describable: one write, one
                 // description. `recorded?.resize_mode` is the mode the *listing* now carries,
-                // never the one the click asked for.
-                <span>{recordedConfirmation(String(recorded?.resize_mode))}</span>
+                // never the one the click asked for. `recorded?.source` is read the same way and
+                // is the half this button cannot write at all: the confirmation has to report
+                // that field as still empty, because a record with no dataset in it and a
+                // complete one are indistinguishable once this line stops talking. Its
+                // `indexed_source` goes with it for the same reason and off the same listing —
+                // where it is set, the missing fact is one `backfill_provenance.py` run away
+                // rather than waiting on a training run that may long be gone.
+                <span>
+                  {recordedConfirmation(
+                    String(recorded?.resize_mode),
+                    recorded?.source ?? '',
+                    recorded?.indexed_source ?? ''
+                  )}
+                </span>
               ) : (
                 <>
                   <span>{unrecorded.warning}</span>
@@ -1292,10 +1338,18 @@ export function AdminPanel({ port, deps }: AdminPanelProps): JSX.Element {
           className="btn-outline"
           disabled={running || saving}
           onClick={() => void handleRestoreDefaults()}
+          onBlur={() => setConfirmingRestore(false)}
+          aria-pressed={confirmingRestore}
           data-testid="restore-defaults"
         >
-          Restore Defaults
+          {confirmingRestore ? 'Confirm Restore Defaults' : 'Restore Defaults'}
         </button>
+        {confirmingRestore && (
+          <span className="field-hint" data-testid="restore-confirm-hint">
+            This overwrites every saved setting with the factory values. Click again to confirm, or
+            click elsewhere to cancel.
+          </span>
+        )}
       </div>
     </div>
   )

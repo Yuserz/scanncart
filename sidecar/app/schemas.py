@@ -484,6 +484,34 @@ class ValidationRecord(BaseModel):
     per_distance: list[DistanceRecall] = Field(default_factory=list)
 
 
+class RecordFact(BaseModel):
+    """One fact the record beside a weight either states or leaves out, and who writes it.
+
+    The completeness *view* is the panel's; the facts are this process's. Which fields a record
+    can carry, and which tool writes each one, are both defined beside the file - the reader in
+    `app/models.py`, the writers in `tools/train_model.py` and in this app's own record button -
+    so a renderer that named them itself would be a second copy of that mapping. The same
+    division as `class_warnings` (judged here, rendered there) and `auto_resolves_to` (a rule
+    here, a value there).
+
+    `value` is the recorded fact as one line, and `""` when the record does not state it - the
+    one state that needs `writer`, which is why that is a field rather than prose: "not recorded"
+    is only actionable as "not recorded, and this command fills it in". `writer` is answered for
+    every fact and rendered only where the value is empty.
+
+    `detail` is the sentence either state needs and the value cannot carry: for a stated geometry
+    that `auto` uses it, and for a missing one the geometry `auto` falls back to, since "not
+    recorded" and "letterbox" are the two halves of the same fact and only one of them is a fact
+    the operator chose. A missing source's detail is which of its two writers applies.
+    """
+
+    key: str = ""
+    label: str = ""
+    value: str = ""
+    writer: str = ""
+    detail: str = ""
+
+
 class InstalledModel(BaseModel):
     """One weight on disk, plus what is known about running it.
 
@@ -505,6 +533,12 @@ class InstalledModel(BaseModel):
     probe already catches it at the moment someone tests the connection; recording the names lets
     the listing catch it at the moment the panel opens.
 
+    `indexed_source` is the third state of the same question, and the one that outlives the run: a
+    weight whose record names no dataset, and whose bytes this machine's source index can trace to
+    one. It is reported rather than written into the record because the panel does not write
+    records - and the fact is recoverable without any of the run, the workspace or the machine that
+    trained it, since `app/source_index.py` was written at the moment the answer was known.
+
     `auto_resolves_to` is what `auto` gives for this weight, reported rather than left for the
     renderer to reimplement. `auto` is a rule (`settings_store.resolve_resize_mode`), and since
     that rule now *honours* the recorded requirement, this equals `resize_mode` whenever there
@@ -512,6 +546,14 @@ class InstalledModel(BaseModel):
     is still a guess rather than a lookup — there it answers the format heuristic (letterbox
     for a `.pt`, stretch for a custom `.onnx`), and the operator needs to see which way that
     guess falls before they trust it.
+
+    `record_facts` is those same facts arranged as one question — what does the record state, and
+    what is missing — because four *separate* fields each render as their own note, and an operator
+    reading four notes has to assemble the completeness themselves: a weight with a record can be
+    missing any of geometry, generation, validation and source independently, and each of them is
+    silent in a different place. In one list, `"0 of 4 recorded"` is legible at a glance and each
+    empty entry names the tool that fills it. Built here rather than in the renderer for the reason
+    `RecordFact` gives: the writers are `sidecar/tools/` commands plus this app's own button.
     """
 
     value: str
@@ -526,6 +568,20 @@ class InstalledModel(BaseModel):
     auto_resolves_to: str = ""
     # Free text: which dataset version the weights came from, "" when unknown.
     source: str = ""
+    # What this *machine*'s source index says trained these weights, "" when it has nothing for
+    # them - and only ever read where `source` is empty, so a machine-local file never
+    # second-guesses the record beside the weights. `app/source_index.py` holds the why: the index
+    # is written while the run that produced a checkpoint still exists, so it is what answers after
+    # that run is deleted, rebuilt elsewhere or pruned - the one case both of the record's own
+    # sources fail in (`--install`'s derivation from the run, and `backfill_provenance.py`'s match,
+    # which needs the run project too).
+    #
+    # A separate field rather than being folded into `source`, because the two are different facts:
+    # `source` is what is *written down* beside the weights, and this is what is known on this
+    # machine. The panel renders it as the index's answer and names the tool that writes it into a
+    # record - `backfill_provenance.py`, which reads this same file. A `.pt` copied to another
+    # machine carries its record and not this file, which is exactly why the index does not travel.
+    indexed_source: str = ""
     # The class list these weights predict, as `train_model.py --install` recorded it beside them.
     # Empty means *not recorded* - a hand-copied weight, or a record written before the field
     # existed - and never "predicts nothing": `roster.class_list_problems([])` would read as every
@@ -547,6 +603,11 @@ class InstalledModel(BaseModel):
     # rather than a single block because the two splits answer different questions and both
     # are worth keeping - see `ValidationRecord`.
     validation: list[ValidationRecord] = Field(default_factory=list)
+    # The record's four facts - geometry, generation, validation, source - each either stated or
+    # empty with the writer that fills that one in, in the order the panel's completeness view
+    # renders them. One list rather than four more fields because "what is missing, and who writes
+    # it" is a single question, and it is answered where the record format is defined.
+    record_facts: list[RecordFact] = Field(default_factory=list)
 
 
 class ModelsResponse(BaseModel):

@@ -448,7 +448,12 @@ export function LiveView({ port, deps }: LiveViewProps): JSX.Element {
           lives once the capture stops. */}
       {running && justRecorded && unrecorded === null && required !== null && (
         <div className="live-confirm" role="status" data-testid="live-recorded">
-          {recordedConfirmation(required)}
+          {/* The record's `source` goes with the mode for the same reason the mode does: both are
+              read off the listing the write refreshed, and what this line must not do is imply the
+              record is complete when the button could only attest to the geometry. The machine's
+              index goes with them — it is what decides whether a missing dataset is a gap or one
+              `backfill_provenance.py` run, and it is off the same listing. */}
+          {recordedConfirmation(required, weights?.source ?? '', weights?.indexed_source ?? '')}
         </div>
       )}
       <div className="live-toolbar">

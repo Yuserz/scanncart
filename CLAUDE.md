@@ -104,6 +104,7 @@ npm run build:win / :mac / :linux   # package with electron-builder
 - `pipeline.py` — the per-frame loop: infer once per frame, filter, preview, log tracks, push frames.
 - `settings.py` / `settings_store.py` — defaults, persistence, hot-reloadable vs restart-required, resize-mode guess.
 - `models.py` / `roster.py` — installed weights and their records; class-list checks per dataset generation.
+- `source_index.py` — the machine-local weights-to-dataset index (`data/source_index.json`), written by the tools while a training run still exists and read where a weight's record is silent.
 - `logging_store.py` (SQLite), `dataset_status.py`, `inference_health.py`, `hardware.py`, `presets.py`, `cameras.py`, `roboflow.py`, `credentials.py`, `tracking.py`, `schemas.py`.
 - `run.py` / `loops.py` — port handshake, and the selector event loop + concurrency bound every uvicorn server here uses.
 
@@ -127,4 +128,4 @@ workspace `sidecar/data/datasets/`.
 - Sidecar tests always use fakes (`FakeFrameSource`, injected detectors/clocks) — never a real camera or GPU. Don't add tests that assume Ultralytics/OpenCV hardware is present.
 - Desktop tests inject `spawnFn`/`wsFactory`/`apiFactory`/`streamFactory` rather than mocking modules — follow that pattern (see `sidecar.test.ts`, `useSidecarStream.test.tsx`) when adding new injectable dependencies.
 - Almost everything is constructor-injected (frame source, detector, clock, logging store) specifically so pytest can run the whole pipeline against fakes with no camera/GPU/network.
-- The WS and settings contracts are duplicated by hand between `sidecar/app/schemas.py`+`settings_store.py` and `desktop/src/renderer/src/lib/api.ts`+`settingsFields.ts`+`settingsDefaults.ts` — there is no shared schema generation, so change both sides together. The full list of mirrored contracts and the `mirror`-marked tests that check them is in [`sidecar/tests/CLAUDE.md`](sidecar/tests/CLAUDE.md).
+- The WS and settings contracts are duplicated by hand between `sidecar/app/schemas.py`+`settings_store.py` and `desktop/src/renderer/src/lib/api.ts`+`settingsFields.ts`+`settingsDefaults.ts` — there is no shared schema generation, so change both sides together. The full list of mirrored contracts and the `mirror`-marked tests that check them is in [`sidecar/tests/CLAUDE.md`](sidecar/tests/CLAUDE.md) — including the rule that a claim about two surfaces *agreeing* (rather than each still saying something) is a row in the agreement table there, not a test of its own.
