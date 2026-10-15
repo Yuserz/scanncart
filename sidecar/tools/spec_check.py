@@ -13,7 +13,7 @@ Neither answers whether the app clears those three, which is a different questio
 sit above every recall floor and still be too slow to run at 30 fps, and a pipeline can be fast
 enough and still spend 40 ms a frame inside a JPEG encode nobody was timing.
 
-Four things make this not a re-run of either tool:
+Five things make this not a re-run of either tool:
 
 **Measured through the app, not around it.** Timing runs `YoloDetector.infer` and the real
 `Pipeline.process_once`, against real product photos, at the app's shipped `imgsz`, confidence
