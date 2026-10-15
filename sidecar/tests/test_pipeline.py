@@ -1,4 +1,10 @@
+import base64
+import time
+
+import cv2
 import numpy as np
+import pytest
+
 from app.pipeline import (
     CLAMPED_EDGE_TOLERANCE,
     Pipeline,
@@ -733,3 +739,170 @@ def test_a_frame_already_analysed_is_not_analysed_again():
     src.seq = 2  # the camera delivers a new frame
     assert pipe.process_once() is not None
     assert det.calls == 2
+
+
+# --- a source that has given up, and the loop's own lifecycle ------------
+
+
+def test_a_source_that_has_given_up_is_reported_rather_than_waited_on():
+    """A dead camera must not leave capture "running" on a frozen image with no explanation.
+
+    `CameraCapture` exposes `failure` once the reader thread has given up (device unplugged, the
+    stream stopped delivering); the pipeline turns that into a raise, which is what `_loop` catches
+    and hands to `on_error` - and from there the app tears capture down and returns to idle. Tested
+    at `process_once` because that is where the decision is made and where a caller that polls it
+    (the tools do) has to see it; the loop's handling of the raise is pinned in
+    `test_capture_teardown.py`.
+    """
+
+    class _FailedSource(_StubSource):
+        failure = "camera stopped delivering frames (device disconnected)"
+
+    pipe = Pipeline(_FailedSource(), _StubDetector(), Settings(), on_message=lambda _m: None)
+
+    with pytest.raises(RuntimeError, match="device disconnected"):
+        pipe.process_once()
+
+
+def test_a_healthy_source_reports_no_failure_at_all():
+    """The negative that keeps the check above from passing for the wrong reason: a source without
+    the attribute (every fake, and a file source) and one whose `failure` is `None` both run.
+    """
+
+    class _StoppedSource(_StubSource):
+        failure = None
+
+    for source in (_StubSource(), _StoppedSource()):
+        pipe = Pipeline(source, _StubDetector(), Settings(), on_message=lambda _m: None)
+        assert pipe.process_once() is not None
+
+
+def test_a_gap_frame_before_any_inference_says_it_has_measured_nothing():
+    """The first frames of every capture, and they must not re-use a number from nowhere.
+
+    `preview_max_fps` emits before the first inference has finished (that is the point of the
+    second thread), so the empty-feed case is the *normal* first state of the Live view rather than
+    an edge case. With no inference behind it there is no fps, no latency and no box to show - what
+    goes out is the measured capture rate and nothing else, and a 0.0 that means "not measured yet"
+    rather than a fabricated rate that would read as a healthy model.
+    """
+
+    class _Source(_StubSource):
+        measured_fps = 27.5
+
+    sent = []
+    pipe = Pipeline(_Source(), _StubDetector(), Settings(capture_fps=60), on_message=sent.append)
+
+    msg = pipe.emit_preview()
+
+    assert msg is not None
+    assert msg["type"] == "frame"
+    assert msg["detections"] == []
+    assert msg["fresh"] is False
+    assert msg["stats"]["infer_fps"] == 0.0
+    assert msg["stats"]["latency_ms"] == 0.0
+    assert msg["stats"]["capture_fps"] == 27.5
+
+
+def test_the_preview_thread_never_kills_capture():
+    """The cosmetic thread swallows its own errors, which is only observable as "capture survived".
+
+    A renderer that throws while handling a gap frame (a decode failure, a consumer that closed) is
+    one bad JPEG away at any time, and this thread has no error path: it cannot report, and it must
+    not take inference down with it. So the assertion is about the *other* loop - inference keeps
+    delivering frames while every gap frame raises - which is the property a try/except around a
+    cosmetic thread exists to buy.
+
+    The stub detector sleeps longer than `preview_max_fps`'s interval on purpose. Both loops share
+    one emit clock (`process_once` re-stamps it), so a detector faster than the preview rate leaves
+    the gap path no due window at all and the test would be waiting on which thread wins a race
+    rather than on the `try/except` this is about. Real inference (90-210 ms) is the slow case, which
+    is the regime the preview thread exists for anyway.
+    """
+    seen: list[bool] = []
+
+    def on_message(msg):
+        seen.append(msg["fresh"])
+        if not msg["fresh"]:
+            raise RuntimeError("the renderer blew up on a gap frame")
+
+    class _SlowDetector(_StubDetector):
+        def infer(self, frame):
+            time.sleep(0.06)   # slower than 1 / preview_max_fps, as a real detector is
+            return super().infer(frame)
+
+    pipe = Pipeline(_StubSource(), _SlowDetector(), Settings(), on_message=on_message)
+    pipe.start()
+    try:
+        deadline = time.time() + 10.0
+        while time.time() < deadline and (seen.count(True) < 2 or False not in seen):
+            time.sleep(0.01)
+        assert False in seen, "the gap-frame path was never exercised, so nothing was swallowed"
+        assert seen.count(True) >= 2, "a gap frame's error took inference down with it"
+        assert pipe.is_running is True
+        assert pipe._preview_thread.is_alive()
+    finally:
+        pipe.stop()
+
+
+def test_start_is_idempotent_and_stop_joins_both_threads():
+    """A second `start()` must not add a second pair of loops.
+
+    The desktop retries capture start, and two inference loops on one camera would each infer every
+    frame and each resolve the other's open tracks; two preview loops would double the preview rate
+    the setting promises. `stop()` is the other half: `is_running` alone leaves the threads running,
+    so the join is what makes the next `start()` a clean one.
+    """
+    pipe = Pipeline(_StubSource(), _StubDetector(), Settings(), on_message=lambda _m: None)
+
+    pipe.start()
+    first, first_preview = pipe._thread, pipe._preview_thread
+    assert pipe.is_running is True and first.is_alive() and first_preview.is_alive()
+
+    pipe.start()  # as a retried start would
+    assert (pipe._thread, pipe._preview_thread) == (first, first_preview)
+
+    pipe.stop()
+    assert pipe.is_running is False
+    assert not first.is_alive() and not first_preview.is_alive()
+    pipe.stop()  # idempotent: nothing left to join, and `_thread` is already None
+
+
+def test_signal_stop_ends_the_loop_without_waiting_for_it():
+    """The two-step stop, which is the only one the app can afford on its event loop.
+
+    A join can take one remote round trip plus retries, so the request path asks the loop to finish
+    (`signal_stop`) and joins from a worker thread afterwards. The ordering is the contract: the
+    flag is down *before* `signal_stop` returns, so nothing new is inferred after it, and the join
+    then completes on its own rather than holding the caller.
+    """
+    pipe = Pipeline(_StubSource(), _StubDetector(), Settings(), on_message=lambda _m: None)
+    pipe.start()
+    thread = pipe._thread
+
+    pipe.signal_stop()
+
+    assert pipe.is_running is False        # down before we return, not deferred
+    assert thread is not None
+    thread.join(timeout=5.0)               # the loop notices on its own
+    assert not thread.is_alive()
+    pipe.stop()                            # joining an already-finished thread is not an error
+
+
+def test_the_preview_is_scaled_down_and_never_upscaled():
+    """`target_height` is a ceiling. Upscaling a small frame would spend bandwidth and CPU to send
+    a blurrier image than the camera produced - and it is what a bare `cv2.resize` would do on the
+    small fakes and file sources the tools feed through here.
+    """
+
+    def decoded(target_height, frame):
+        jpeg = base64.b64decode(encode_preview_jpeg(frame, target_height=target_height))
+        return cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
+
+    small = decoded(720, _frame(48, 64))
+    assert small.shape[0] == 48          # a 48-line frame stays 48
+    assert small.shape[1] == 64
+
+    large = decoded(360, _frame(720, 1280))
+    assert large.shape[0] == 360         # and a big one lands exactly on the target
+    assert large.shape[1] == 640         # one aspect ratio in, the same one out

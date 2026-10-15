@@ -21,12 +21,15 @@ import numpy as np
 import pytest
 
 from app.acceptance import (
+    BAND_MAX_HEIGHT,
+    BAND_MIN_WIDTH,
     CLAMPED_REASON,
     CLASS_REASON,
     FRAME_FILLING_REASON,
     UNSURE_REASON,
     accept_detections,
     is_clamped_to_frame,
+    is_edge_band,
     is_frame_filling,
     pinned_edges,
 )
@@ -84,6 +87,37 @@ def test_the_frame_filling_predicate_is_exactly_three_pinned_edges():
 
 
 # --------------------------------------------------------------------------
+# the pure layer: the band predicate the unsure rule is built on
+# --------------------------------------------------------------------------
+
+
+def test_the_edge_band_predicate_wants_a_wide_short_box_on_a_horizontal_edge():
+    """`is_edge_band` is the shape half of the phantom rule, so its negatives are what keep the
+    rule from eating real items: the same wide box away from the edges, and a fixture standing on
+    the *vertical* edges. A rule keyed on "touches an edge" rather than "lies along the top or
+    bottom" would refuse a shelf-edge banner and a close-up shelf divider alike.
+    """
+    wide_short = (0.0756, 0.0, 0.9991, 0.46)
+    assert is_edge_band(wide_short) is True          # along the top edge
+    assert is_edge_band(BAND_LIVE) is True           # along the bottom edge (the measured one)
+    # same shape, nowhere near an edge: an ordinary shelf item, not a band
+    assert is_edge_band((0.0756, 0.2, 0.9991, 0.66)) is False
+    # upright along the left and right edges: the vertical edges are not this family
+    assert is_edge_band((0.0, 0.2, 0.3, 0.9)) is False
+    assert is_edge_band((0.7, 0.2, 1.0, 0.9)) is False
+
+
+def test_the_band_bounds_are_inclusive():
+    """The two size limits are read as "≤" and "≥" — the measured band sits inside them either
+    way, so only a boundary test can tell an inclusive comparison from an exclusive one.
+    """
+    assert is_edge_band((0.0, 0.0, BAND_MIN_WIDTH, 0.4)) is True         # width exactly at the minimum
+    assert is_edge_band((0.0, 0.0, 0.99, BAND_MAX_HEIGHT)) is True       # height exactly at the maximum
+    assert is_edge_band((0.0, 0.0, BAND_MIN_WIDTH - 0.01, 0.4)) is False
+    assert is_edge_band((0.0, 0.0, 0.99, BAND_MAX_HEIGHT + 0.01)) is False
+
+
+# --------------------------------------------------------------------------
 # the pure layer: the decision
 # --------------------------------------------------------------------------
 
@@ -126,6 +160,50 @@ def test_each_rule_reports_its_own_reason_and_nothing_is_counted_twice():
     assert len(result.accepted) == 1
     assert result.accepted[0].box == ORDINARY
     assert result.rejected == {CLASS_REASON: 1, CLAMPED_REASON: 1, FRAME_FILLING_REASON: 1}
+
+
+def test_the_tolerance_argument_reaches_the_two_shape_rules():
+    """`tolerance` is the one knob the shape rules are tuned through, and it is only *shape*: the
+    same boxes move through both predicates when it moves.
+
+    Nothing else in the suite passes a non-default tolerance into `accept_detections` - the tools
+    do (`clamp_probe.py` sweeps it), so a call site that dropped the argument on the way to
+    `is_clamped_to_frame` would leave the shipped default working and every sweep silently wrong.
+    Each box below is deliberately inside the looser tolerance and outside the shipped one, so the
+    same detection is kept at 0.01 and refused at 0.02 under the rule that owns it.
+    """
+    four_edges_at_0_02 = (0.0, 0.0, 0.985, 0.985)     # two edges inside 0.01, four inside 0.02
+    three_edges_at_0_02 = (0.05, 0.0, 0.985, 0.985)   # one edge inside 0.01, three inside 0.02
+
+    assert accept_detections([_det(box=four_edges_at_0_02, conf=0.95)],
+                             suppress_clamped=True).accepted != []
+    loosened = accept_detections([_det(box=four_edges_at_0_02, conf=0.95)],
+                                 suppress_clamped=True, tolerance=0.02)
+    assert loosened.accepted == []
+    assert loosened.rejected == {CLAMPED_REASON: 1}
+
+    assert accept_detections([_det(box=three_edges_at_0_02, conf=0.95)],
+                             suppress_frame_filling=True).accepted != []
+    tightened = accept_detections([_det(box=three_edges_at_0_02, conf=0.95)],
+                                  suppress_frame_filling=True, tolerance=0.02)
+    assert tightened.accepted == []
+    assert tightened.rejected == {FRAME_FILLING_REASON: 1}
+
+
+def test_the_tolerance_argument_does_not_reach_the_unsure_rule():
+    """The third rule keeps its own, shipped tolerance, and that is the right boundary to pin.
+
+    `is_unsure_phantom` takes no tolerance: its band test calls `is_edge_band(box)` at the default.
+    So `tolerance=0.5`, wide enough to swallow every box in the frame, still refuses a band the
+    model is unsure about - which is the property to hold, because a sweep meant to relax the clamp
+    rule must not be able to switch the phantom rule's shape test off by accident. The box is the
+    live band at 0.6 confidence, below the 0.85 ceiling.
+    """
+    band = (0.1, 0.0, 0.9, 0.6)
+    assert is_edge_band(band) is True
+    result = accept_detections([_det(box=band, conf=0.6)], suppress_unsure=True, tolerance=0.5)
+    assert result.accepted == []
+    assert result.rejected == {UNSURE_REASON: 1}
 
 
 def test_every_detection_is_either_accepted_or_counted():

@@ -161,13 +161,24 @@ def test_a_second_write_merges_field_by_field_rather_than_replacing_the_entry(tm
 
 def test_every_resolved_weight_gets_its_own_entry(tmp_path):
     """One file, many weights: the entry is per *bytes*, so a machine with several trained weights
-    keeps them all - and the output is ordered, so a rewrite of unchanged facts is a diff-free file."""
-    _recorded(_weight(tmp_path / "one.pt", b"one"), "local merge merged-v2")
-    _recorded(_weight(tmp_path / "two.pt", b"two"), "snc-grocery version 2")
+    keeps them all - and the output is ordered, so a rewrite of unchanged facts is a diff-free file.
+
+    `now` is pinned to the same second on both writes to `one.pt` because `recorded_at` is itself
+    one of the facts: left to the clock, the second write stamps a fresh second and the file differs
+    for a reason that has nothing to do with the serialization this asserts. That made the test fail
+    whenever the two calls straddled a second boundary - which is a loaded suite, not a broken
+    writer - and the failure was a two-digit diff (`T...:05` against `T...:06`) in a file whose
+    ordering and field set were both correct.
+    """
+    _recorded(_weight(tmp_path / "one.pt", b"one"), "local merge merged-v2",
+              now="2026-10-14T04:00:00")
+    _recorded(_weight(tmp_path / "two.pt", b"two"), "snc-grocery version 2",
+              now="2026-10-14T04:05:00")
 
     assert len(source_index.read_index()) == 2
     before = source_index.index_path().read_bytes()
-    _recorded(_weight(tmp_path / "one.pt", b"one"), "local merge merged-v2")
+    _recorded(_weight(tmp_path / "one.pt", b"one"), "local merge merged-v2",
+              now="2026-10-14T04:00:00")
     assert source_index.index_path().read_bytes() == before
 
 
