@@ -214,19 +214,19 @@ def test_the_claims_separate_a_working_filter_from_one_that_did_nothing():
     on = _prov(fired=6, detections=6, suppressed=19)
     real_off = _prov(frames=60, fired=60, detections=60)
     real_on = _prov(frames=60, fired=60, detections=60)
-    assert not clamp_probe.strict_failed(clamp_probe.checks(off, on, real_off, real_on, shipped))
+    assert clamp_probe.checks(off, on, real_off, real_on, shipped).holds
 
     # The setting never took effect: the on pass reproduces the off pass exactly.
     inert = clamp_probe.checks(off, _prov(fired=25, detections=25), real_off, real_on, shipped)
-    assert clamp_probe.strict_failed(inert)
-    assert [c.claim for c in inert if not c.ok] == [
+    assert not inert.holds
+    assert [row.statement for row in inert.failed] == [
         "the Pipeline drops detections for it",
         "fewer empty-counter frames show a phantom with it on",
     ]
 
     # The filter works and eats a real item, which is the failure the middle column exists for.
     lossy = clamp_probe.checks(off, on, real_off, _prov(frames=60, fired=59, detections=59), shipped)
-    assert [c.claim for c in lossy if not c.ok] == ["the Pipeline loses no real product detection"]
+    assert [row.statement for row in lossy.failed] == ["the Pipeline loses no real product detection"]
 
 
 def test_a_tolerance_off_the_ladder_fails_loudly_rather_than_printing_a_verdict():
@@ -237,19 +237,31 @@ def test_a_tolerance_off_the_ladder_fails_loudly_rather_than_printing_a_verdict(
     it fails rather than passing the claims it can still compute.
     """
     result = clamp_probe.checks(_prov(), _prov(), _prov(), _prov(), None)
-    assert len(result) == 1 and not result[0].ok
-    assert "ladder" in result[0].claim
-    assert clamp_probe.strict_failed(result)
+    assert len(result.rows) == 1 and not result.rows[0].holds
+    assert "ladder" in result.rows[0].statement
+    assert not result.holds
 
 
-def test_the_verdict_names_the_failures_instead_of_only_counting_them():
-    """"2 of 5 failed" alone sends the reader back through the block to find out which."""
-    good = clamp_probe.Check(True, "a claim that holds", "1 of 1")
-    bad = clamp_probe.Check(False, "a claim that does not", "0 of 1")
-    assert clamp_probe.verdict((good, good)) == "all 2 claims hold"
-    assert clamp_probe.verdict((good, bad)) == "1 of 2 claims FAIL: a claim that does not"
-    assert not clamp_probe.strict_failed((good,))
-    assert clamp_probe.strict_failed((good, bad))
+def test_the_five_claims_are_reported_through_the_shared_claim_table():
+    """The wording a reader trusts is `tools/claims.py`'s now, and this pins that *this* tool's
+    table is the one the docs quote: five claims, the shared row, and the sentence the run sheet and
+    the probe's own docstring repeat.
+
+    The sentence used to be built here, by a `verdict` in this tool - so a reader comparing this
+    probe's output with the sibling probe's was comparing two implementations. What stays local is
+    the part only this tool can know: which five statements it stands behind.
+    """
+    rows = _rules(phantoms=[(0.0, 0.0, 1.0, 1.0)], real=[(0.4, 0.4, 0.6, 0.6)], labels=[])
+    table = clamp_probe.checks(
+        _prov(fired=25, detections=25),
+        _prov(fired=6, detections=6, suppressed=19),
+        _prov(frames=60, fired=60, detections=60),
+        _prov(frames=60, fired=60, detections=60),
+        clamp_probe.row_for(rows, 0.01),
+    )
+    assert table.verdict() == "all 5 claims hold"
+    assert [row.statement for row in table.rows][0] == "no measured real detection is inside the rule"
+    assert table.block()[-1] == "  all 5 claims hold"
 
 
 def test_the_phantom_breakdown_names_only_the_classes_that_recur():
@@ -300,10 +312,19 @@ def test_the_report_says_so_when_the_profile_runs_a_different_threshold():
         on=_prov(fired=6, detections=6, suppressed=19), real_off=_prov(frames=60, detections=60),
         real_on=_prov(frames=60, detections=60), labels=0,
     )
-    same = "\n".join(clamp_probe.report_lines(**kwargs, conf=0.5, shipped_conf=0.5, checks_=()))
+    # The report takes a whole claim table rather than a tuple, so the conf lines below are printed
+    # beside the block a real run prints - the two are one report and cannot be exercised apart.
+    table = clamp_probe.checks(
+        _prov(fired=25, detections=25),
+        _prov(fired=6, detections=6, suppressed=19),
+        _prov(frames=60, detections=60),
+        _prov(frames=60, detections=60),
+        clamp_probe.row_for(rows, 0.01),
+    )
+    same = "\n".join(clamp_probe.report_lines(**kwargs, conf=0.5, shipped_conf=0.5, checks_=table))
     assert "conf>=0.5" in same and "this profile runs" not in same
 
-    differ = "\n".join(clamp_probe.report_lines(**kwargs, conf=0.7, shipped_conf=0.5, checks_=()))
+    differ = "\n".join(clamp_probe.report_lines(**kwargs, conf=0.7, shipped_conf=0.5, checks_=table))
     assert "conf>=0.7" in differ
     assert "Settings() ships 0.5" in differ
 

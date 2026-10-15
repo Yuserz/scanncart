@@ -34,6 +34,13 @@ when the number is deliberately not that list's length, with the reason (`MODEL_
 things about how it is measured, and one about what it means:" is the one today). The two kinds are
 different *shapes*, so a row written for prose text cannot silence a list whose length disagrees.
 
+The report. Findings go through `tools/claims.py`, the same engine the two probes and `spec_check.py`
+report their measured claims through, so this guard's failure is a claim table in the one shape the
+repo uses - a verdict that names the failing claims, one row per finding, and the trace of the rows
+it waived - rather than a sentence assembled here. What is local is the part only a scan can know:
+where each claim is (`docs/RUN_SHEET.md:12: 'Five states'`) and what it counted instead
+(`states 5 and 4 item(s) are enumerated under it`).
+
 What this deliberately does not do. It does not read the *content* of the items - a list of five
 wrong things under `Five things` passes, because knowing they are wrong is a reviewer's job and not a
 pattern's. It does not read the `CLAUDE.md` files, the annotator or `app/`: each carries the same
@@ -53,6 +60,7 @@ from pathlib import Path
 
 import pytest
 
+from claims import findings
 from tests.exemptions import Exemption, Exemptions, Waiver, assert_still_present, waived_note
 
 pytestmark = pytest.mark.docs
@@ -150,21 +158,27 @@ SHAPE_LIST = f"{ARM}: list"
 SHAPE_PROSE = f"{ARM}: prose"
 SHAPES = (SHAPE_LIST, SHAPE_PROSE)
 
-# The claims the corpus carries today, measured rather than assumed: 16 whose items are a list this
+# The claims the corpus carries today, measured rather than assumed: 17 whose items are a list this
 # guard checks directly, and 20 more whose items are prose and which the table below names. A scan that
 # stopped matching - a regex edit, a file renamed out of a glob - would otherwise pass by finding
-# nothing, which is the one failure this guard cannot report from the inside.
-CLAIMS_READ = 36
+# nothing, which is the one failure this guard cannot report from the inside. (It is a floor and not an
+# equality: a new claim, or a sentence reworded into the shape, raises the number here rather than
+# failing - the guard's own arm re-measures the split whenever a finding appears.)
+CLAIMS_READ = 37
 
 
 @dataclasses.dataclass(frozen=True)
-class Claim:
+class StatedClaim:
     """One stated count, with what is under it.
 
     `headline` is the matched text (`Five states have no answer here`) and `snippet` is the claim's own
     paragraph, which is what an exemption row is matched against: a row excuses a sentence, not a
     file. `items` is `None` when the paragraphs below the claim open with no marker at all - the
     uncountable case, which is not the same as a count of zero.
+
+    Named apart from `tools/claims.py`'s `Claim` on purpose: that is the *report* record (a statement,
+    the reading that decided it and the answer), and this is a piece of the corpus the scan walks.
+    One word for both was how the two got confused in the first draft of this guard.
     """
 
     path: str
@@ -277,7 +291,7 @@ def _items_under(lines: list[str], claim_line: int) -> int | None:
     return after or None
 
 
-def _claims_in(path: str, text: str) -> list[Claim]:
+def _claims_in(path: str, text: str) -> list[StatedClaim]:
     """Every stated count in one text, with the items under it.
 
     Pure, and the only walk there is: the corpus arm hands it a file's text and the canary hands it
@@ -292,7 +306,7 @@ def _claims_in(path: str, text: str) -> list[Claim]:
             while end + 1 < len(lines) and lines[end + 1].strip():
                 end += 1
             claims.append(
-                Claim(
+                StatedClaim(
                     path=path,
                     line=number + 1,
                     stated=NUMBER_WORDS[match.group("word")],
@@ -304,46 +318,54 @@ def _claims_in(path: str, text: str) -> list[Claim]:
     return claims
 
 
-def _claims(path: str) -> list[Claim]:
+def _claims(path: str) -> list[StatedClaim]:
     return _claims_in(path, _text(path))
 
 
-def _shape(claim: Claim) -> str:
+def _shape(claim: StatedClaim) -> str:
     """Which judgement this claim's shape is: `list` when its items are countable, else `prose`."""
     return SHAPE_PROSE if claim.items is None else SHAPE_LIST
 
 
-def _mismatch(claim: Claim) -> str | None:
-    """The problem sentence for a claim whose stated count and its items disagree, or `None`.
+def _mismatch(claim: StatedClaim) -> tuple[str, str] | None:
+    """`(where, why)` for a claim whose stated count and its items disagree, or `None`.
 
     Two judgements, kept as separate shapes so a row written for one cannot silence the other: a list
     whose length is not the number (the undercount this guard exists for), and a claim with no list
     under it at all, which is reported as needing a row rather than as a finding - the prose case is
     unverifiable here, and the row is what keeps it from being invisible.
+
+    Split in two because that is the engine's row (`tools/claims.py`): the first half is *what is
+    claimed* and the second is *the reading that came out wrong*, so this guard's findings print in
+    the same columns as a probe's measured rows instead of as a sentence assembled here.
     """
+    where = f"{claim.path}:{claim.line}: {claim.headline!r}"
     if claim.items is None:
         return (
-            f"{claim.path}:{claim.line}: {claim.headline!r} states {claim.stated}, and the paragraphs "
-            "under it open with no item marker (a table, a fence, or prose). Name it in EXEMPT with "
-            "the phrase, the place and why it cannot be a list, or shape the sentence as one - an "
-            "uncountable claim is a sentence every reader has to count by hand"
+            where,
+            f"states {claim.stated}, and the paragraphs under it open with no item marker (a table, "
+            "a fence, or prose). Name it in EXEMPT with the phrase, the place and why it cannot be a "
+            "list, or shape the sentence as one - an uncountable claim is a sentence every reader "
+            "has to count by hand",
         )
     if claim.items != claim.stated:
-        return (
-            f"{claim.path}:{claim.line}: {claim.headline!r} states {claim.stated} and "
-            f"{claim.items} item(s) are enumerated under it"
-        )
+        return where, f"states {claim.stated} and {claim.items} item(s) are enumerated under it"
     return None
 
 
-def _exempt(claim: Claim, waived: list[Waiver] | None = None) -> str | None:
+def _exempt(claim: StatedClaim, waived: list[Waiver] | None = None) -> str | None:
     """The reason this finding is not a finding, if a row covers it *for this claim's shape*."""
     return EXEMPT.reason(_shape(claim), claim.path, claim.snippet, waived)
 
 
-def _problems() -> tuple[list[str], list[Waiver], int]:
-    """Every finding across the corpus, the rows that were applied, and how many claims were read."""
-    found: list[str] = []
+def _problems() -> tuple[list[tuple[str, str]], list[Waiver], int]:
+    """Every finding across the corpus, the rows that were applied, and how many claims were read.
+
+    A finding is a `(where, why)` pair rather than a sentence, because that is what the claim table
+    takes - and `read` comes back too, so the report can say how many claims were counted rather
+    than only how many disagreed.
+    """
+    found: list[tuple[str, str]] = []
     waived: list[Waiver] = []
     read = 0
     for path in _files():
@@ -399,11 +421,21 @@ def test_every_stated_count_matches_the_items_enumerated_under_it():
             "waiver nobody is using - drop it, or point it at the sentence that replaced the one it "
             "was written for"
         )
-    assert not problems, (
-        "stated counts that disagree with the items under them:\n"
-        + "\n".join(problems)
-        + waived_note(waived)
-    )
+    # The report is the engine's, so a reader compares this guard's failure with a probe's run
+    # output and sees the same thing: a verdict naming the failing claims, one row per finding, and
+    # the exemptions this scan applied. The table is built only when there is something to report -
+    # `findings()` refuses an empty one, which is the failure a pattern that stopped matching has.
+    if problems:
+        findings(
+            name="stated counts that disagree with the items under them",
+            owner="the file each claim lives in (the tools' docstrings and `docs/`)",
+            rows=problems,
+            read=read,
+            remedy=(
+                "Fix the number or the list in the same edit; when a claim cannot be counted, name "
+                "it in EXEMPT with the phrase, the place and why its items are not a list."
+            ),
+        ).assert_holds(waived_note(waived))
 
 
 def test_the_stated_count_exemptions_are_still_live():
@@ -479,7 +511,13 @@ def test_the_counter_and_its_two_judgements_still_fire():
     assert counted[0].items == 5, f"the walk found {counted[0].items} items under a five-item list"
     problem = _mismatch(counted[0])
     assert problem, "a list of five under `Four things` was not flagged"
-    assert "Four things" in problem and "5 item(s)" in problem, problem
+    where, why = problem
+    assert "Four things" in where and "5 item(s)" in why, problem
+    # And the pair is a row of the engine's table, which is what a failure actually prints.
+    row = findings(
+        name="a synthetic table", owner="tests/test_stated_counts.py", rows=[problem], read=1
+    ).failure()
+    assert "1 of 1 claims FAIL" in row and "5 item(s)" in row, row
     fixed = _claims_in("synthetic.md", five.replace("Four things", "Five things"))
     assert _mismatch(fixed[0]) is None, "the same list under `Five things` is still a finding"
 
@@ -500,7 +538,8 @@ def test_the_counter_and_its_two_judgements_still_fire():
     # Prose under a claim: no list, so the judgement is `prose` and the finding asks for a row.
     prose = _claims_in("synthetic.md", "Four states have no answer here, and each is reported.\n")[0]
     assert prose.items is None and _shape(prose) == SHAPE_PROSE
-    assert "EXEMPT" in (_mismatch(prose) or ""), "an uncountable claim has to ask for a row"
+    prose_problem = _mismatch(prose) or ("", "")
+    assert "EXEMPT" in prose_problem[1], "an uncountable claim has to ask for a row"
 
     # A table, a fence or a wrapped continuation is not a list.
     table = _claims_in("synthetic.md", "Two things are in play:\n\n| | Numbering |\n|---|---|\n")[0]

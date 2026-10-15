@@ -73,6 +73,7 @@ import label_classes
 import plan_split
 import train_model
 
+from claims import findings
 from tests.exemptions import Exemption, Exemptions, Waiver, assert_still_present, waived_note
 
 pytestmark = pytest.mark.docs
@@ -245,8 +246,10 @@ def test_every_class_count_in_the_docs_is_one_the_code_can_produce():
                 checked += 1
                 continue
             problems.append(
-                f"{doc}:{_line(doc, match.start())}: {match.group(0)!r} - the code's counts are "
-                f"{sorted(_allowed_counts(noun))}"
+                (
+                    f"{doc}:{_line(doc, match.start())}: {match.group(0)!r}",
+                    f"the code's counts are {sorted(_allowed_counts(noun))}",
+                )
             )
         for match in SUBSET_CLAIM.finditer(text):
             checked += 1
@@ -254,8 +257,10 @@ def test_every_class_count_in_the_docs_is_one_the_code_can_produce():
             value = int(raw) if raw.isdigit() else NUMBER_WORDS[raw]
             if value != len(accept_v2.GATE_SPLITS):
                 problems.append(
-                    f"{doc}:{_line(doc, match.start())}: {match.group(0)!r} - the gate's splits are "
-                    f"{list(accept_v2.GATE_SPLITS)}"
+                    (
+                        f"{doc}:{_line(doc, match.start())}: {match.group(0)!r}",
+                        f"the gate's splits are {list(accept_v2.GATE_SPLITS)}",
+                    )
                 )
         for match in ROSTER_PAIR.finditer(text):
             checked += 1
@@ -266,8 +271,10 @@ def test_every_class_count_in_the_docs_is_one_the_code_can_produce():
             ):
                 if NUMBER_WORDS[value] != sizes[generation]:
                     problems.append(
-                        f"{doc}:{_line(doc, match.start())}: {match.group(0)!r} - "
-                        f"{generation} has {sizes[generation]} names"
+                        (
+                            f"{doc}:{_line(doc, match.start())}: {match.group(0)!r}",
+                            f"{generation} has {sizes[generation]} names",
+                        )
                     )
     # A guard that stops matching anything passes silently; the docs state class counts today.
     assert checked > 20, f"the class-count scan matched only {checked} claims - did the shape change?"
@@ -282,9 +289,24 @@ def test_every_class_count_in_the_docs_is_one_the_code_can_produce():
         f"{sorted(rows_of_shape)}: a row this scan consults and never reaches is a waiver nobody is "
         "using - drop it, or point it at the sentence that replaced the one it was written for"
     )
-    assert not problems, (
-        "stale class count(s) in the docs:\n" + "\n".join(problems) + waived_note(waived)
-    )
+    # The report is `tools/claims.py`'s, the same engine the two probes and `spec_check.py` report
+    # their measured claims through - so this guard's failure and a probe's run output are one shape:
+    # a verdict naming the failing claims, one row per finding (`tools/claims.py`'s row: what is
+    # claimed, then the reading that came out wrong), and the trace of the rows this scan waived.
+    if problems:
+        findings(
+            name="stale class count(s) in the docs",
+            owner=(
+                "sidecar/app/roster.py (V1_ROSTER/V2_ROSTER) and "
+                "sidecar/tools/accept_v2.py (GATE_SPLITS)"
+            ),
+            rows=problems,
+            read=checked,
+            remedy=(
+                "Fix the doc in the same edit - these figures are read from the roster rather than "
+                "quoted, and a sentence that cannot be counted takes a row in EXEMPT."
+            ),
+        ).assert_holds(waived_note(waived))
 
 
 # --------------------------------------------------------------------------
@@ -329,11 +351,24 @@ def test_settings_defaults_named_in_the_docs_match_the_settings_dataclass():
                 checked += 1
                 if not _same(match.group("value"), code_value):
                     problems.append(
-                        f"{doc}:{_line(doc, match.start())}: {field} is documented as "
-                        f"{match.group('value')!r}, Settings() says {code_value!r}"
+                        (
+                            f"{doc}:{_line(doc, match.start())}: {field} is documented as "
+                            f"{match.group('value')!r}",
+                            f"Settings() says {code_value!r}",
+                        )
                     )
     assert checked >= 3, f"only {checked} default(s) found - did the table's shape change?"
-    assert not problems, "stale setting default(s) in the docs:\n" + "\n".join(problems)
+    if problems:
+        findings(
+            name="stale setting default(s) in the docs",
+            owner="sidecar/app/settings.py (Settings)",
+            rows=problems,
+            read=checked,
+            remedy=(
+                "Fix the doc in the same edit as the field - `Settings()` is the only place the "
+                "default is decided, and the panel renders whatever it says."
+            ),
+        ).assert_holds()
 
 
 # --------------------------------------------------------------------------
@@ -370,22 +405,43 @@ def test_the_recall_floor_named_in_the_docs_is_the_trainers():
     """
     floor = train_model.RECALL_FLOOR
     before = re.compile(r"(?<![.\d])(\d\.\d+)\s+floor\b")
-    after = re.compile(r"\bfloor\b[^.\n(:]{0,14}?(?<![.\d])(\d\.\d+)")
+    after = re.compile(r"\bfloor\b[^.|\n(:]{0,14}?(?<![.\d])(\d\.\d+)")
     problems = []
+    # What this arm decided: every line that mentions a floor beside a number. Counted because the
+    # report says `1 of N claims FAIL`, and N is the number of claims that were looked at rather
+    # than the number that went wrong - a scan whose pattern stopped matching reports zero of zero,
+    # which is the failure the report has to be able to show.
+    checked = 0
     for doc in DOCS:
         for number, line in enumerate(_text(doc).splitlines(), start=1):
             if "floor" not in line or not re.search(r"\d\.\d+", line):
                 continue
+            checked += 1
             for pattern in (before, after):
                 for match in pattern.finditer(line):
                     if float(match.group(1)) != floor:
                         problems.append(
-                            f"{doc}:{number}: {match.group(0)!r} - the floor is {floor:g}"
+                            (f"{doc}:{number}: {match.group(0)!r}", f"the floor is {floor:g}")
                         )
             if f"{floor:g}" not in line and after.search(line):
-                problems.append(f"{doc}:{number}: states a floor but not {floor:g}")
+                problems.append(
+                    (
+                        f"{doc}:{number}: a line mentioning the floor",
+                        f"states a floor but not {floor:g}",
+                    )
+                )
     assert f"{floor:g}" in _text("docs/RUN_SHEET.md"), "the run sheet stopped stating the recall floor"
-    assert not problems, "stale recall floor in the docs:\n" + "\n".join(problems)
+    if problems:
+        findings(
+            name="stale recall floor in the docs",
+            owner="sidecar/tools/train_model.py (RECALL_FLOOR)",
+            rows=problems,
+            read=checked,
+            remedy=(
+                "Fix the doc in the same edit - the floor is the trainer's constant, and a doc "
+                "quoting the old one is what fails an operator's run."
+            ),
+        ).assert_holds()
 
 
 def test_the_split_ratio_in_the_docs_is_the_planners():
@@ -397,21 +453,37 @@ def test_the_split_ratio_in_the_docs_is_the_planners():
     expected = "/".join(f"{plan_split.TARGET[name] * 100:.0f}" for name in label_classes.SPLIT_NAMES)
     ratio = re.compile(r"(?<![\d.])(\d{1,3})/(\d{1,3})/(\d{1,3})(?![\d.])")
     problems = []
+    # The claims this arm decided: every triple of percentages that adds up to 100, which is the
+    # only shape it treats as a ratio claim at all.
+    checked = 0
     for doc in DOCS:
         text = _text(doc)
         for match in ratio.finditer(text):
             values = [int(part) for part in match.groups()]
             if sum(values) != 100:
                 continue
+            checked += 1
             if "/".join(str(value) for value in values) != expected:
                 problems.append(
-                    f"{doc}:{_line(doc, match.start())}: {match.group(0)!r} - the planner's split is "
-                    f"{expected} over {list(label_classes.SPLIT_NAMES)}"
+                    (
+                        f"{doc}:{_line(doc, match.start())}: {match.group(0)!r}",
+                        f"the planner's split is {expected} over {list(label_classes.SPLIT_NAMES)}",
+                    )
                 )
     assert expected in _text("docs/RUN_SHEET.md"), (
         f"the run sheet does not state the {expected} split any more - it is the one the planner applies"
     )
-    assert not problems, "stale split ratio in the docs:\n" + "\n".join(problems)
+    if problems:
+        findings(
+            name="stale split ratio in the docs",
+            owner="sidecar/tools/plan_split.py (TARGET)",
+            rows=problems,
+            read=checked,
+            remedy=(
+                "Fix the doc in the same edit - the ratio is what the planner assigns, and these "
+                "docs promise a capture it would not buy."
+            ),
+        ).assert_holds()
 
 
 def test_the_crowding_margin_named_in_the_docs_is_the_acceptance_one():
@@ -420,16 +492,32 @@ def test_the_crowding_margin_named_in_the_docs_is_the_acceptance_one():
     margin describes a measurement this repo does not make.
     """
     problems = []
+    # Every mention of the margin is a claim about it, so the count is the number of mentions.
+    checked = 0
     for doc in DOCS:
         text = _text(doc)
         for match in re.finditer(r"CROWD_MIN\s*=\s*(\d+)", text):
+            checked += 1
             if int(match.group(1)) != accept_v2.CROWD_MIN:
                 problems.append(
-                    f"{doc}:{_line(doc, match.start())}: CROWD_MIN={match.group(1)} - the code's is "
-                    f"{accept_v2.CROWD_MIN}"
+                    (
+                        f"{doc}:{_line(doc, match.start())}: CROWD_MIN={match.group(1)}",
+                        f"the code's is {accept_v2.CROWD_MIN}",
+                    )
                 )
     assert "CROWD_MIN=" in _text("docs/RUN_SHEET.md"), "the run sheet stopped naming CROWD_MIN"
-    assert not problems, "stale crowding margin in the docs:\n" + "\n".join(problems)
+    if problems:
+        findings(
+            name="stale crowding margin in the docs",
+            owner="sidecar/tools/accept_v2.py (CROWD_MIN)",
+            rows=problems,
+            read=checked,
+            remedy=(
+                "Fix the doc in the same edit - the margin is quoted verbatim in the run sheet's "
+                "acceptance table, and a different number describes a measurement this repo "
+                "does not make."
+            ),
+        ).assert_holds()
 
 
 # --------------------------------------------------------------------------
@@ -457,28 +545,48 @@ def test_split_directories_in_the_docs_are_the_datasets_splits():
     """
     problems = []
     named: set[str] = set()
+    # A claim here is one split name written into a path, or one half of a pair - the occurrences
+    # the vocabulary is judged through, counted so the report can say how many were looked at.
+    checked = 0
     for doc in DOCS:
         text = _text(doc)
         for match in SPLIT_IN_PATH.finditer(text):
             name = match.group("name")
             named.add(name)
+            checked += 1
             if name not in label_classes.SPLIT_NAMES:
                 problems.append(
-                    f"{doc}:{_line(doc, match.start())}: {name!r} is not one of "
-                    f"{list(label_classes.SPLIT_NAMES)}"
+                    (
+                        f"{doc}:{_line(doc, match.start())}: {name!r}",
+                        f"is not one of {list(label_classes.SPLIT_NAMES)}",
+                    )
                 )
         for match in SPLIT_PAIR.finditer(text):
             for name in match.groups():
+                checked += 1
                 if name not in label_classes.SPLIT_NAMES:
                     problems.append(
-                        f"{doc}:{_line(doc, match.start())}: {match.group(0)!r} names {name!r}, "
-                        f"which is not one of {list(label_classes.SPLIT_NAMES)}"
+                        (
+                            f"{doc}:{_line(doc, match.start())}: {match.group(0)!r} names",
+                            f"{name!r}, which is not one of {list(label_classes.SPLIT_NAMES)}",
+                        )
                     )
     missing = set(label_classes.SPLIT_NAMES) - named
     assert not missing, (
         f"no doc paths into {sorted(missing)} any more - the split vocabulary moved without the docs"
     )
-    assert not problems, "split-name drift in the docs:\n" + "\n".join(problems)
+    if problems:
+        findings(
+            name="split-name drift in the docs",
+            owner="sidecar/tools/label_classes.py (SPLIT_NAMES)",
+            rows=problems,
+            read=checked,
+            remedy=(
+                "Fix the doc in the same edit - `plan_split` assigns these names, `build_dataset` "
+                "creates them and `train_model` trains on them, so a fourth spelling sends a "
+                "reader to an empty directory."
+            ),
+        ).assert_holds()
 
 
 # A backticked file name: the doc's way of saying "this artifact exists, at this path".
@@ -558,11 +666,28 @@ def test_artifact_names_in_the_docs_are_names_this_repo_has():
             seen += 1
             if not _artifact_covers(token):
                 problems.append(
-                    f"{doc}:{_line(doc, match.start())}: {token!r} is not a file this repo has - "
-                    "no path on disk, no model name the picker accepts, and no source that spells it"
+                    (
+                        f"{doc}:{_line(doc, match.start())}: {token!r}",
+                        "is not a file this repo has - no path on disk, no model name the picker "
+                        "accepts, and no source that spells it",
+                    )
                 )
     assert seen > 40, f"the artifact scan found only {seen} names - did the quoting style change?"
-    assert not problems, "artifact names in the docs the code does not have:\n" + "\n".join(problems)
+    if problems:
+        findings(
+            name="artifact names in the docs the code does not have",
+            owner=(
+                "sidecar/tools/workspace.py (the artifact names) and every module that spells one "
+                "when it writes it"
+            ),
+            rows=problems,
+            read=seen,
+            remedy=(
+                "Fix the doc in the same edit - a name spelled in prose and in a string is the "
+                "quietest drift here, and a rename that misses a doc sends an operator to a file "
+                "that is not there."
+            ),
+        ).assert_holds()
 
 
 # --------------------------------------------------------------------------
@@ -660,7 +785,9 @@ def _sizes(table: object) -> dict[str, int]:
     return {"rows": len(table.surfaces), "surfaces": len(table.surfaces)}
 
 
-def _table_size_verdict(doc: str, text: str, tables: dict[str, object]) -> tuple[int, list[str]]:
+def _table_size_verdict(
+    doc: str, text: str, tables: dict[str, object]
+) -> tuple[int, list[tuple[str, str]]]:
     """`(counts about a table, problems)` for one doc's text - the arm's whole body, so the canary
     below can feed it sentences rather than edit a real doc.
     """
@@ -684,16 +811,20 @@ def _table_size_verdict(doc: str, text: str, tables: dict[str, object]) -> tuple
             where = f"{doc}:{text[: start + match.start()].count('\n') + 1}"
             if len(named) != 1:
                 problems.append(
-                    f"{where}: {match.group(0)!r} counts a table's surfaces but its sentence "
-                    f"names {len(named)} table(s) of this suite, so nothing can check it against "
-                    f"the code - name the one it counts (e.g. {known}), or reword it if it is not "
-                    "a table's size"
+                    (
+                        f"{where}: {match.group(0)!r}",
+                        f"counts a table's surfaces but its sentence names {len(named)} table(s) "
+                        f"of this suite, so nothing can check it against the code - name the one "
+                        f"it counts (e.g. {known}), or reword it if it is not a table's size",
+                    )
                 )
                 continue
             name, table = next(iter(named.items()))
             surfaces = _sizes(table)["surfaces"]
             if value != surfaces:
-                problems.append(f"{where}: {match.group(0)!r} - `{name}` has {surfaces} surfaces")
+                problems.append(
+                    (f"{where}: {match.group(0)!r}", f"`{name}` has {surfaces} surfaces")
+                )
     # The row counts, which need no sentence to be attributed in: their table's name is attached.
     for match in ROW_CLAIM.finditer(text):
         seen += 1
@@ -702,13 +833,16 @@ def _table_size_verdict(doc: str, text: str, tables: dict[str, object]) -> tuple
         where = f"{doc}:{text[: match.start()].count('\n') + 1}"
         if name not in tables:
             problems.append(
-                f"{where}: {match.group(0)!r} counts the rows of `{name}`, which is not a table "
-                f"this suite declares - so nothing can check it (e.g. {known})"
+                (
+                    f"{where}: {match.group(0)!r}",
+                    f"counts the rows of `{name}`, which is not a table this suite declares - so "
+                    f"nothing can check it (e.g. {known})",
+                )
             )
             continue
         rows = _sizes(tables[name])["rows"]
         if value != rows:
-            problems.append(f"{where}: {match.group(0)!r} - `{name}` has {rows} row(s)")
+            problems.append((f"{where}: {match.group(0)!r}", f"`{name}` has {rows} row(s)"))
     return seen, problems
 
 
@@ -728,7 +862,7 @@ def test_table_sizes_in_the_docs_match_the_tables_they_name():
     nothing could check it.
     """
     tables = _tables()
-    problems: list[str] = []
+    problems: list[tuple[str, str]] = []
     seen = 0
     for doc in DOCS:
         found, found_problems = _table_size_verdict(doc, _text(doc), tables)
@@ -741,7 +875,17 @@ def test_table_sizes_in_the_docs_match_the_tables_they_name():
         "no doc states a contract table's size any more - if that is deliberate, this arm has "
         "nothing left to check, and the paragraph it was written for is what it should lose"
     )
-    assert not problems, "table size(s) in the docs the code disagrees with:\n" + "\n".join(problems)
+    if problems:
+        findings(
+            name="table size(s) in the docs the code disagrees with",
+            owner="sidecar/tests/ (the contract tables this suite declares)",
+            rows=problems,
+            read=seen,
+            remedy=(
+                "Fix the sentence in the same edit as the row that moved - a table's size is the "
+                "one thing no other guard here looks at, since every one of them checks the rows."
+            ),
+        ).assert_holds()
 
 
 # Where a table's name can be referred to: the docs that describe the conventions, and the suite's
@@ -851,22 +995,29 @@ def test_the_table_size_arm_fires_on_every_way_a_stated_size_can_be_wrong():
     def verdict(text: str):
         return _table_size_verdict("docs/MODEL_TRAINING.md", text, tables)
 
+    def row(problem: tuple[str, str]) -> str:
+        """One finding as one line, so an assertion can ask where the fact is rather than which half
+        of the row the split put it in - the two halves are one claim, and the engine prints them
+        side by side. (The row's own rendering is the engine's test's business, not this canary's.)
+        """
+        return " - ".join(problem)
+
     # The one that holds: the sentence is a table's size, it names that table, and it equals it.
     assert verdict("The table `FIXTURE_CONTRACT` holds ten surfaces in one table.") == (1, [])
     # The failure this arm exists for: a row added to the table and the sentence left reading true.
     seen, problems = verdict("`FIXTURE_CONTRACT` is a table of eleven surfaces, per the guard.")
     assert seen == 1 and len(problems) == 1
-    assert "`FIXTURE_CONTRACT` has 10 surfaces" in problems[0], problems
+    assert "`FIXTURE_CONTRACT` has 10 surfaces" in row(problems[0]), problems
     # A count about a table that names none of this suite's tables: nothing to check it against.
     seen, problems = verdict("The same table holds thirteen surfaces in one table.")
     assert seen == 1 and len(problems) == 1
-    assert "names 0 table(s)" in problems[0], problems
+    assert "names 0 table(s)" in row(problems[0]), problems
     # A count beside two tables: checkable, but not attributable to one of them.
     seen, problems = verdict(
         "`FIXTURE_CONTRACT` and `OTHER_CONTRACT` are tables of four surfaces each."
     )
     assert seen == 1 and len(problems) == 1
-    assert "names 2 table(s)" in problems[0], problems
+    assert "names 2 table(s)" in row(problems[0]), problems
     # And the singular is prose, not a size - even with the word `table` right beside it, which is
     # what keeps `the one surface an operator reads` out of this arm.
     assert verdict("The table's one surface is the one an operator reads.") == (0, [])
@@ -878,15 +1029,15 @@ def test_the_table_size_arm_fires_on_every_way_a_stated_size_can_be_wrong():
     # One row added to the table, with the sentence left reading true - the same failure as above.
     seen, problems = verdict("`FIXTURE_TABLE`'s three rows are the claims.")
     assert seen == 1 and len(problems) == 1
-    assert "`FIXTURE_TABLE` has 2 row(s)" in problems[0], problems
+    assert "`FIXTURE_TABLE` has 2 row(s)" in row(problems[0]), problems
     # A row count is a table's size too, so the attribution is checked the same way - and a
     # contract's own row count is its surfaces, not the rows of the tuple it would be in.
     seen, problems = verdict("`NOT_A_TABLE` has two rows.")
     assert seen == 1 and len(problems) == 1
-    assert "is not a table this suite declares" in problems[0], problems
+    assert "is not a table this suite declares" in row(problems[0]), problems
     seen, problems = verdict("`FIXTURE_CONTRACT` has one row.")
     assert seen == 1 and len(problems) == 1
-    assert "`FIXTURE_CONTRACT` has 10 row(s)" in problems[0], problems
+    assert "`FIXTURE_CONTRACT` has 10 row(s)" in row(problems[0]), problems
     # Prose about rows in general is not a count of any table's rows, so it is not read at all.
     assert verdict("One row per gate, and the table below says which.") == (0, [])
 

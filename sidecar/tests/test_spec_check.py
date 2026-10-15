@@ -98,16 +98,23 @@ def test_a_pipeline_can_clear_the_latency_ceiling_and_still_miss_the_fps_floor()
     assert {t.source for t in targets} == {"PRD 5, 7", "PRD 6, 7", "PRD 7"}
 
 
-def test_the_target_summary_all_passes_reads_as_one_sentence():
-    """The line a reader stops at, and the empty failure list it depends on."""
+def test_the_verdict_all_passes_reads_as_one_sentence():
+    """The line a reader stops at, and the empty failure list it depends on.
+
+    The sentence is `docs/RUN_SHEET.md`'s quoted output - now produced by the shared claim table
+    rather than by a `target_summary` in this tool - so this pins the tool's own table (its kind and
+    its verbs) as much as the wording.
+    """
     targets = spec_check.spec_targets(
         spec_check.Summary.of([20.0]), spec_check.Summary.of([26.0]), 0.918
     )
-    assert spec_check.failed(targets) == ()
-    assert spec_check.target_summary(targets) == "all 5 PRD targets pass"
+    table = spec_check.checks(targets)
+    assert table.failed == ()
+    assert table.verdict() == "all 5 PRD targets pass"
+    assert table.block()[-1] == "  all 5 PRD targets pass"
 
 
-def test_the_target_summary_names_the_failures_rather_than_only_counting_them():
+def test_the_verdict_names_the_failures_rather_than_only_counting_them():
     """"2 of 5 failed" alone sends the reader back through the block above to find out which.
 
     Accurate recall with a slow pipeline: the count is 3, and all three are speed - a shape that
@@ -116,11 +123,28 @@ def test_the_target_summary_names_the_failures_rather_than_only_counting_them():
     targets = spec_check.spec_targets(
         spec_check.Summary.of([20.0]), spec_check.Summary.of([200.0]), 0.95
     )
-    text = spec_check.target_summary(targets)
+    text = spec_check.checks(targets).verdict()
     assert text.startswith("3 of 5 PRD targets fail")
     assert "in-app pipeline fps" in text
     assert "in-app mean latency" in text and "in-app p95 latency" in text
     assert "instance recall" not in text  # the one that passed is not in the list
+
+
+def test_the_claim_block_prints_the_targets_own_documented_rows():
+    """The one thing the shared row cannot do for this tool, held where it matters.
+
+    `docs/MODEL_TRAINING.md` pastes one of these rows verbatim, and a reader compares their own run
+    against that paste - so the table renders each row through `Target.line()`, the row's owner,
+    instead of the engine's single-column layout. This is the pin: the block the report prints has
+    the header the section always had, and rows that are the targets' own, byte for byte.
+    """
+    targets = spec_check.spec_targets(
+        spec_check.Summary.of([20.0]), spec_check.Summary.of([26.0]), 0.918
+    )
+    block = spec_check.checks(targets).block()
+    assert block[1] == "PRD targets"
+    assert block[2:7] == [target.line() for target in targets]
+    assert block[2].startswith("  [PASS] ")
 
 
 def test_the_record_path_is_the_weights_stem_beside_it():

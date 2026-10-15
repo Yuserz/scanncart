@@ -69,6 +69,7 @@ from pathlib import Path
 import resources  # must precede numpy/torch: sets OMP/MKL thread limits
 
 import audit_recall
+from claims import Claim, Claims
 from generations import DEFAULT, GENERATIONS, Generation
 from generations import get as generation_for
 from train_model import default_weights, require_labels_order
@@ -226,23 +227,47 @@ def spec_targets(
     )
 
 
-def failed(targets: tuple[Target, ...]) -> tuple[Target, ...]:
-    """The targets that did not clear, in the order they are reported."""
-    return tuple(t for t in targets if not t.ok)
+#: The module these claims are about, spelled the way a failure quotes it - this tool measures what
+#: `train_model.py`'s runs produced, against the numbers the PRD itself states.
+CLAIM_OWNER = "sidecar/tools/spec_check.py"
 
 
-def target_summary(targets: tuple[Target, ...]) -> str:
-    """One sentence for the whole check - the line a reader stops at.
+def checks(targets: tuple[Target, ...]) -> Claims:
+    """The PRD's targets as one claim table, reported through `tools/claims.py`.
 
-    Names the failures rather than only counting them: "2 of 5 failed" on its own sends someone
-    back through the block above, and on a machine where only the GPU changed the two that
-    failed are usually the same two.
+    The verdict used to be built here by `target_summary`, which is a second copy of the sentence
+    the two probes also built - `all 5 PRD targets pass` is the same shape as `all 9 claims hold`,
+    and a repo that states its results twice states them differently the day one of them changes.
+
+    Two things stay this tool's own:
+
+     - the **kind** and the two verbs, because the sentence is documented output rather than a free
+       choice - `docs/RUN_SHEET.md` quotes `all 5 PRD targets pass`, and that is the string this
+       table has to go on printing;
+     - the **row**, because a target's reading has columns - a value, its unit, the comparison and
+       the PRD clause it came from - that the shared single-column row cannot line up, and
+       `docs/MODEL_TRAINING.md` pastes one of these rows verbatim, so the layout is a documented
+       artifact and `Target.line()` remains its owner.
     """
-    bad = failed(targets)
-    if not bad:
-        return f"all {len(targets)} PRD targets pass"
-    names = ", ".join(f"{t.label} ({t.measured:.{t.digits}f} vs {t.target:g})" for t in bad)
-    return f"{len(bad)} of {len(targets)} PRD targets fail: {names}"
+    rendered = {target.label: target.line() for target in targets}
+    return Claims(
+        name="the PRD's inference targets",
+        owner=CLAIM_OWNER,
+        kind="PRD targets",
+        holds_verb="pass",
+        fails_verb="fail",
+        rows=tuple(
+            Claim(
+                target.label,
+                f"{target.measured:.{target.digits}f} {target.unit} "
+                f"{'at least' if target.higher_is_better else 'under'} {target.target:g} "
+                f"({target.source})",
+                target.ok,
+            )
+            for target in targets
+        ),
+        row=lambda claim: rendered[claim.statement],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -468,10 +493,10 @@ def report_lines(
             "           no measurement recorded beside these weights, so --val has nothing"
             " to compare against (train_model.py --install records one)"
         )
-    out += ["", "PRD targets"]
-    out += [t.line() for t in targets]
-    out.append("")
-    out.append(f"  {target_summary(targets)}")
+    # The block is the claim engine's, so the sentence that ends this report is the same one that
+    # ends the probes' - the header is the table's `kind`, which is the "PRD targets" this section
+    # has always printed, and the rows keep `Target`'s own documented layout.
+    out += checks(targets).block()
     return out
 
 
@@ -564,7 +589,7 @@ def main(argv: list[str] | None = None) -> int:
         f"VRAM cap {budget.vram_cap_gb:.1f} GB"
     )
     print("Per-class and per-crowding recall, and the conf/IoU sweeps: audit_recall.py")
-    return 1 if args.strict and failed(targets) else 0
+    return checks(targets).exit_code(args.strict)
 
 
 if __name__ == "__main__":

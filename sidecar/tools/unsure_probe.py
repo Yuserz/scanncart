@@ -98,6 +98,7 @@ import resources  # must precede numpy/torch: sets OMP/MKL thread limits
 
 import audit_recall
 from audit_recall import FrameRecord, match_instances
+from claims import Claim, Claims
 from train_model import default_weights, require_labels_order
 from clamp_probe import (
     NEGATIVES_DIR,
@@ -169,6 +170,11 @@ CONTROL_COST_CEILING = 1
 #: The app's own settings file - the same file and the same absolute resolution as `clamp_probe`'s,
 #: because `conf_threshold` and `imgsz` are the operating point every detection here is produced at.
 SETTINGS_PATH = SIDECAR_ROOT / DEFAULT_SETTINGS_PATH
+
+#: The module every claim here is a statement about, spelled the way a failure quotes it - this tool
+#: reads the constant rather than owning a copy of it, so a drifted report names the owner. The rule
+#: itself is `is_unsure_phantom`, which is the predicate the claims are about.
+CLAIM_OWNER = "sidecar/app/acceptance.py (is_unsure_phantom)"
 
 SHAPE_SPANNING = "spanning"
 SHAPE_BAND = "band"
@@ -577,19 +583,7 @@ class Scene:
         )
 
 
-@dataclass(frozen=True)
-class Check:
-    """One checkable statement about the shipped rule, with the reading behind it."""
-
-    ok: bool
-    claim: str
-    reading: str
-
-    def line(self) -> str:
-        return f"  [{'PASS' if self.ok else 'FAIL'}] {self.claim:<56} {self.reading}"
-
-
-def checks(census: Census) -> tuple[Check, ...]:
+def checks(census: Census) -> Claims:
     """The statements the report stands behind, each with the number that decides it.
 
     A table alone would let a ceiling that had begun eating real items print a column nobody reads,
@@ -602,82 +596,81 @@ def checks(census: Census) -> tuple[Check, ...]:
     against on a bare checkout. Nothing in CI can re-measure, so this is the only place a moved cost
     can be noticed - and it is noticed at the one moment anyone would be about to leave the prose
     behind.
+
+    The rows, the verdict, the block the report prints and the exit `--strict` returns are
+    `tools/claims.py`'s, so these nine claims read exactly as the clamp probe's five do - what is
+    this tool's own is the sentences and their readings, which is the part only it can know.
     """
     shipped = census.shipped
     if shipped is None:
-        return (
-            Check(
-                False,
-                "the shipped ceiling is on the ladder",
-                "the table cannot justify a rule it does not contain",
+        return Claims(
+            name="the unsure-phantom rule as shipped",
+            owner=CLAIM_OWNER,
+            rows=(
+                Claim(
+                    "the shipped ceiling is on the ladder",
+                    "the table cannot justify a rule it does not contain",
+                    holds=False,
+                ),
             ),
         )
 
-    return (
-        Check(
-            shipped.in_a_gap,
-            "the ceiling sits in a gap no real detection occupies",
-            f"drops <= {_conf(shipped.dropped_max_conf)}, keeps >= {_conf(shipped.kept_min_conf)}",
-        ),
-        Check(
-            shipped.dropped_real < shipped.clamped_real,
-            "it costs fewer real detections than the clamp rule does",
-            f"{shipped.dropped_real} of {shipped.matched_real} matched ({shipped.dropped_share:.2%})"
-            f", vs the clamp rule's {shipped.clamped_real}",
-        ),
-        Check(
-            shipped.caught_negatives > 0 and not census.negatives.kept,
-            "it catches the stored empty counter's own family",
-            f"{shipped.caught_negatives} of {shipped.negatives} refused, and the Pipeline kept "
-            f"{len(census.negatives.kept)} of {len(census.negatives.raw)}",
-        ),
-        Check(
-            not live_escapes(census),
-            "no shaped detection under the ceiling escaped in the live window",
-            live_reading(census),
-        ),
-        Check(
-            live_bands(census) > 0 or not census.require_live_band,
-            "the live window exercised the band family",
-            live_band_reading(census),
-        ),
-        Check(
-            shipped.lost_control <= CONTROL_COST_CEILING,
-            "its price on the real product control has not moved",
-            f"{shipped.lost_control} of {shipped.control} detections refused over "
-            f"{census.control.frames} frames, against a measured {CONTROL_COST_CEILING}",
-        ),
-        Check(
-            not census.residue,
-            "no detection under the ceiling survives outside both shapes",
-            f"{len(census.residue)} residue over "
-            f"{census.negatives.frames + census.live.frames} empty-counter frames",
-        ),
-        Check(
-            census.shipped_flags[2],
-            "the rule is on in the profile this measured",
-            f"unsure={census.shipped_flags[2]}, clamp={census.shipped_flags[0]}, "
-            f"filling={census.shipped_flags[1]}",
-        ),
-        Check(
-            census.cost_agrees or not census.at_operating_point,
-            "the cost it measured is still the one app/acceptance.py records",
-            cost_reading(census),
+    return Claims(
+        name="the unsure-phantom rule as shipped",
+        owner=CLAIM_OWNER,
+        rows=(
+            Claim(
+                "the ceiling sits in a gap no real detection occupies",
+                f"drops <= {_conf(shipped.dropped_max_conf)}, keeps >= {_conf(shipped.kept_min_conf)}",
+                shipped.in_a_gap,
+            ),
+            Claim(
+                "it costs fewer real detections than the clamp rule does",
+                f"{shipped.dropped_real} of {shipped.matched_real} matched "
+                f"({shipped.dropped_share:.2%}), vs the clamp rule's {shipped.clamped_real}",
+                shipped.dropped_real < shipped.clamped_real,
+            ),
+            Claim(
+                "it catches the stored empty counter's own family",
+                f"{shipped.caught_negatives} of {shipped.negatives} refused, and the Pipeline kept "
+                f"{len(census.negatives.kept)} of {len(census.negatives.raw)}",
+                shipped.caught_negatives > 0 and not census.negatives.kept,
+            ),
+            Claim(
+                "no shaped detection under the ceiling escaped in the live window",
+                live_reading(census),
+                not live_escapes(census),
+            ),
+            Claim(
+                "the live window exercised the band family",
+                live_band_reading(census),
+                live_bands(census) > 0 or not census.require_live_band,
+            ),
+            Claim(
+                "its price on the real product control has not moved",
+                f"{shipped.lost_control} of {shipped.control} detections refused over "
+                f"{census.control.frames} frames, against a measured {CONTROL_COST_CEILING}",
+                shipped.lost_control <= CONTROL_COST_CEILING,
+            ),
+            Claim(
+                "no detection under the ceiling survives outside both shapes",
+                f"{len(census.residue)} residue over "
+                f"{census.negatives.frames + census.live.frames} empty-counter frames",
+                not census.residue,
+            ),
+            Claim(
+                "the rule is on in the profile this measured",
+                f"unsure={census.shipped_flags[2]}, clamp={census.shipped_flags[0]}, "
+                f"filling={census.shipped_flags[1]}",
+                census.shipped_flags[2],
+            ),
+            Claim(
+                "the cost it measured is still the one app/acceptance.py records",
+                cost_reading(census),
+                census.cost_agrees or not census.at_operating_point,
+            ),
         ),
     )
-
-
-def verdict(checks_: tuple[Check, ...]) -> str:
-    """One sentence for the whole block, naming the failures rather than only counting them."""
-    bad = [check for check in checks_ if not check.ok]
-    if not bad:
-        return f"all {len(checks_)} claims hold"
-    return f"{len(bad)} of {len(checks_)} claims FAIL: " + "; ".join(check.claim for check in bad)
-
-
-def strict_failed(checks_: tuple[Check, ...]) -> bool:
-    """Whether a `--strict` run should exit non-zero."""
-    return any(not check.ok for check in checks_)
 
 
 def _conf(value: float | None) -> str:
@@ -914,7 +907,7 @@ def report_lines(
     shipped_conf: float,
     imgsz: int,
     live_seconds: float,
-    checks_: tuple[Check, ...],
+    checks_: Claims,
 ) -> list[str]:
     """The whole report, pure and printable - one function so a caller cannot print half of it."""
     shipped = census.shipped
@@ -1031,7 +1024,7 @@ def report_lines(
             " window is the default"
         )
 
-    out += ["", "claims", *[check.line() for check in checks_], "", f"  {verdict(checks_)}"]
+    out += checks_.block()
     return out
 
 
@@ -1262,7 +1255,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     print("The rule itself, and where it is applied: app/acceptance.py (is_unsure_phantom)")
     print("The clamp rule's own cost, and the tolerance behind it: tools/clamp_probe.py")
-    return 1 if args.strict and strict_failed(checks_) else 0
+    return checks_.exit_code(args.strict)
 
 
 if __name__ == "__main__":

@@ -71,6 +71,7 @@ from pathlib import Path
 import resources  # must precede numpy/torch: sets OMP/MKL thread limits
 
 import audit_recall
+from claims import Claim, Claims
 from train_model import default_weights, require_labels_order
 from generations import DEFAULT, GENERATIONS, Generation
 from generations import get as generation_for
@@ -254,77 +255,70 @@ def phantom_classes(pass_: Pass, minimum: int = MIN_PHANTOM_CLASS) -> list[tuple
     return [(name, n) for name, n in pass_.classes if n >= minimum]
 
 
-@dataclass(frozen=True)
-class Check:
-    """One checkable statement about the shipped rule, with the reading behind it."""
-
-    ok: bool
-    claim: str
-    reading: str
-
-    def line(self) -> str:
-        return f"  [{'PASS' if self.ok else 'FAIL'}] {self.claim:<52} {self.reading}"
+#: The module every claim here is a statement about, spelled the way a failure quotes it - this
+#: tool reads the constant rather than owning a copy of it, so a drifted report names the owner.
+CLAIM_OWNER = "sidecar/app/pipeline.py (CLAMPED_EDGE_TOLERANCE)"
 
 
 def checks(
     off: Pass, on: Pass, real_off: Pass, real_on: Pass, shipped: RuleRow | None
-) -> tuple[Check, ...]:
+) -> Claims:
     """The statements the report stands behind, each with the number that decides it.
 
     A table alone would let a tolerance that had begun eating real detections print a middle column
     nobody reads. These are what `--strict` gates on, and every one of them is a sentence that must
     be true about the rule as shipped - including the two that separate "the filter works" from
     "the filter did nothing", which are the same reading on a badly chosen day.
+
+    The table is `tools/claims.py`'s: the rows, the verdict, the block the report prints and the
+    exit `--strict` returns all come from there, so this tool's five claims read the same way as the
+    sibling probe's nine and as the two text guards' findings - what is this tool's own is the
+    sentences and their readings, which is the part only it can know.
     """
     if shipped is None:
-        return (
-            Check(
-                False,
-                "the shipped tolerance is on the ladder",
-                "the table cannot justify a rule it does not contain",
+        return Claims(
+            name="the frame-clamp rule as shipped",
+            owner=CLAIM_OWNER,
+            rows=(
+                Claim(
+                    "the shipped tolerance is on the ladder",
+                    "the table cannot justify a rule it does not contain",
+                    holds=False,
+                ),
             ),
         )
 
-    return (
-        Check(
-            shipped.real_lost == 0,
-            "no measured real detection is inside the rule",
-            f"{shipped.real_lost} of {shipped.real} product detections",
-        ),
-        Check(
-            shipped.caught > 0,
-            "the rule catches the phantom shape at all",
-            f"{shipped.caught} of {shipped.phantoms} empty-counter detections",
-        ),
-        Check(
-            on.suppressed > 0,
-            "the Pipeline drops detections for it",
-            f"{on.suppressed} dropped over {on.frames} frames",
-        ),
-        Check(
-            on.fired < off.fired,
-            "fewer empty-counter frames show a phantom with it on",
-            f"{on.fired} vs {off.fired} of {off.frames} frames",
-        ),
-        Check(
-            real_on.detections == real_off.detections,
-            "the Pipeline loses no real product detection",
-            f"{real_off.detections - real_on.detections} lost of {real_off.detections}",
+    return Claims(
+        name="the frame-clamp rule as shipped",
+        owner=CLAIM_OWNER,
+        rows=(
+            Claim(
+                "no measured real detection is inside the rule",
+                f"{shipped.real_lost} of {shipped.real} product detections",
+                shipped.real_lost == 0,
+            ),
+            Claim(
+                "the rule catches the phantom shape at all",
+                f"{shipped.caught} of {shipped.phantoms} empty-counter detections",
+                shipped.caught > 0,
+            ),
+            Claim(
+                "the Pipeline drops detections for it",
+                f"{on.suppressed} dropped over {on.frames} frames",
+                on.suppressed > 0,
+            ),
+            Claim(
+                "fewer empty-counter frames show a phantom with it on",
+                f"{on.fired} vs {off.fired} of {off.frames} frames",
+                on.fired < off.fired,
+            ),
+            Claim(
+                "the Pipeline loses no real product detection",
+                f"{real_off.detections - real_on.detections} lost of {real_off.detections}",
+                real_on.detections == real_off.detections,
+            ),
         ),
     )
-
-
-def verdict(checks_: tuple[Check, ...]) -> str:
-    """One sentence for the whole block, naming the failures rather than only counting them."""
-    bad = [c for c in checks_ if not c.ok]
-    if not bad:
-        return f"all {len(checks_)} claims hold"
-    return f"{len(bad)} of {len(checks_)} claims FAIL: " + "; ".join(c.claim for c in bad)
-
-
-def strict_failed(checks_: tuple[Check, ...]) -> bool:
-    """Whether a `--strict` run should exit non-zero."""
-    return any(not c.ok for c in checks_)
 
 
 # ---------------------------------------------------------------------------
@@ -511,7 +505,7 @@ def report_lines(
     labels: int,
     conf: float,
     shipped_conf: float,
-    checks_: tuple[Check, ...],
+    checks_: Claims,
 ) -> list[str]:
     """The whole report, pure and printable - one function so a caller cannot print half of it."""
     shipped = row_for(rows, tolerance)
@@ -606,7 +600,7 @@ def report_lines(
         )
         out.append("    happened to trip over would not have removed it")
 
-    out += ["", "claims", *[c.line() for c in checks_], "", f"  {verdict(checks_)}"]
+    out += checks_.block()
     return out
 
 
@@ -711,7 +705,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     print("The rule itself, and where it is applied: app/pipeline.py (CLAMPED_EDGE_TOLERANCE)")
     print("Per-class recall, and the conf/IoU sweeps: audit_recall.py")
-    return 1 if args.strict and strict_failed(checks_) else 0
+    return checks_.exit_code(args.strict)
 
 
 if __name__ == "__main__":

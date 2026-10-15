@@ -244,7 +244,7 @@ def test_the_claims_separate_a_working_rule_from_one_that_did_nothing():
     that catches nothing, and a rule that is off in the profile being measured.
     """
     good = unsure_probe.checks(_census())
-    assert all(check.ok for check in good), unsure_probe.verdict(good)
+    assert good.holds, good.verdict()
 
     # A ceiling that has moved onto a real detection's confidence is a knife edge, not a free choice.
     knife = list(_census().rows)
@@ -253,7 +253,7 @@ def test_the_claims_separate_a_working_rule_from_one_that_did_nothing():
         control=60, dropped_real=6, matched_real=2018, clamped_real=36, filling_real=252,
         dropped_max_conf=0.86, kept_min_conf=0.85,
     )
-    assert not unsure_probe.checks(_census(rows=tuple(knife)))[0].ok
+    assert not unsure_probe.checks(_census(rows=tuple(knife))).rows[0].holds
 
     # A rule that catches nothing on either source is the "did nothing" case.
     silent = _census(
@@ -265,13 +265,13 @@ def test_the_claims_separate_a_working_rule_from_one_that_did_nothing():
             ),
         )
     )
-    failed = [check.claim for check in unsure_probe.checks(silent) if not check.ok]
+    failed = [row.statement for row in unsure_probe.checks(silent).failed]
     assert "it catches the stored empty counter's own family" in failed
 
     # A settled install that has the rule switched off is not a measurement of the shipped default.
     off = _census(shipped_flags=(True, True, False))
     assert "the rule is on in the profile this measured" in [
-        check.claim for check in unsure_probe.checks(off) if not check.ok
+        row.statement for row in unsure_probe.checks(off).failed
     ]
 
 
@@ -286,7 +286,8 @@ def _empty_live_census(**overrides):
 
 
 def _claim(census, needle):
-    return next(check for check in unsure_probe.checks(census) if needle in check.claim)
+    """One claim of this tool's table, found by what it says rather than by where it sits in it."""
+    return next(row for row in unsure_probe.checks(census).rows if needle in row.statement)
 
 
 def test_a_quiet_counter_passes_the_escape_claim_and_says_what_the_scene_looked_like():
@@ -299,7 +300,7 @@ def test_a_quiet_counter_passes_the_escape_claim_and_says_what_the_scene_looked_
     census = _empty_live_census()
     escape = _claim(census, "escaped")
     band = _claim(census, "exercised the band family")
-    assert escape.ok and band.ok
+    assert escape.holds and band.holds
     assert "no detection at all" in escape.reading and "luminance 14/255" in escape.reading
     assert "0 band-shaped" in band.reading and "not set" in band.reading
 
@@ -313,11 +314,11 @@ def test_the_band_claim_fails_when_the_run_has_to_prove_it():
     """
     demanded = _empty_live_census(require_live_band=True)
     claim = _claim(demanded, "exercised the band family")
-    assert not claim.ok
+    assert not claim.holds
     assert "is set, so this run has to prove it" in claim.reading
-    assert unsure_probe.strict_failed(unsure_probe.checks(demanded))
+    assert not unsure_probe.checks(demanded).holds
     # And the escape claim is unaffected by the flag: it is about what was seen, not what was hoped.
-    assert _claim(demanded, "escaped").ok
+    assert _claim(demanded, "escaped").holds
 
 
 def test_a_band_that_escapes_the_rule_fails_even_on_a_quiet_default_run():
@@ -336,39 +337,52 @@ def test_a_band_that_escapes_the_rule_fails_even_on_a_quiet_default_run():
     )
     census = _empty_live_census(live=walk)
     escape = _claim(census, "escaped")
-    assert not escape.ok
+    assert not escape.holds
     assert "1 escaped" in escape.reading and "1 band-shaped" in escape.reading
-    assert unsure_probe.strict_failed(unsure_probe.checks(census))
+    assert not unsure_probe.checks(census).holds
 
 
 def test_a_ceiling_off_the_ladder_fails_loudly_rather_than_printing_a_verdict():
     """Without its own row there is nothing for the report to stand behind."""
     assert any(
-        not check.ok and "on the ladder" in check.claim
-        for check in unsure_probe.checks(_census(ceiling=0.87))
+        not row.holds and "on the ladder" in row.statement
+        for row in unsure_probe.checks(_census(ceiling=0.87)).rows
     )
 
 
-def test_the_verdict_names_the_failures_instead_of_only_counting_them():
-    checks_ = unsure_probe.checks(_census(shipped_flags=(True, True, False)))
-    assert unsure_probe.strict_failed(checks_)
-    text = unsure_probe.verdict(checks_)
-    assert "1 of 9 claims FAIL" in text and "the rule is on" in text
-    assert unsure_probe.verdict(unsure_probe.checks(_census())) == "all 9 claims hold"
+def test_the_nine_claims_are_reported_through_the_shared_claim_table():
+    """The wording a reader trusts is `tools/claims.py`'s now, and this pins that *this* tool's
+    table is the one the report and the module docstring quote: nine claims, the shared row, and a
+    failure that names the claim rather than only counting the failures.
+
+    The sentence used to be built here, by a `verdict` in this tool - so a reader comparing this
+    probe's output with the clamp probe's was comparing two implementations of one idea. What stays
+    local is the part only this tool can know: which nine statements it stands behind.
+    """
+    table = unsure_probe.checks(_census())
+    assert len(table.rows) == 9
+    assert table.verdict() == "all 9 claims hold"
+    assert table.block()[-1] == "  all 9 claims hold"
+
+    # One claim failing says which one, in the table's own words.
+    off = unsure_probe.checks(_census(shipped_flags=(True, True, False)))
+    assert not off.holds
+    assert off.verdict() == "1 of 9 claims FAIL: the rule is on in the profile this measured"
+    assert "the rule is on in the profile this measured" in off.block()[-1]
 
 
-def _record_claim(census) -> unsure_probe.Check:
-    """The claim about the record, found by what it says rather than by where it sits in the tuple."""
+def _record_claim(census) -> unsure_probe.Claim:
+    """The claim about the record, found by what it says rather than by where it sits in the table."""
     return next(
-        check for check in unsure_probe.checks(census)
-        if "app/acceptance.py records" in check.claim
+        row for row in unsure_probe.checks(census).rows
+        if "app/acceptance.py records" in row.statement
     )
 
 
 def test_the_record_claim_passes_when_the_cost_is_the_one_the_app_records():
     """A run at the app's own operating point measures the record, or this claim fires."""
     check = _record_claim(_census())
-    assert check.ok
+    assert check.holds
     assert "matches app/acceptance.py::MEASURED_COST" in check.reading
 
 
@@ -384,10 +398,10 @@ def test_a_moved_cost_fails_the_record_claim_and_names_the_edit():
     """
     census = _census(rows=(_row(dropped_real=unsure_probe.MEASURED_COST.unsure + 1),))
     check = _record_claim(census)
-    assert not check.ok
+    assert not check.holds
     assert "MOVED" in check.reading
     assert "MEASURED_COST" in check.reading and "tests/test_cost_figures.py" in check.reading
-    assert unsure_probe.strict_failed(unsure_probe.checks(census))
+    assert not unsure_probe.checks(census).holds
 
 
 def test_another_operating_point_says_it_cannot_compare_rather_than_that_the_cost_moved():
@@ -400,7 +414,7 @@ def test_another_operating_point_says_it_cannot_compare_rather_than_that_the_cos
     """
     census = _census(conf=0.7, rows=(_row(dropped_real=unsure_probe.MEASURED_COST.unsure + 4),))
     check = _record_claim(census)
-    assert check.ok
+    assert check.holds
     assert "not comparable" in check.reading and "conf>=0.7" in check.reading
 
 
@@ -517,14 +531,14 @@ def test_the_escape_and_the_band_claim_both_hold_through_the_real_pipeline():
     # any input the rule reads: area, band bounds, pinned sides and confidence are all mirror-safe.
     assert len(escaped.kept) == escaped.frames == len(escaped.raw) > 0
     census = _empty_live_census(live=escaped)
-    assert not _claim(census, "escaped").ok
-    assert unsure_probe.strict_failed(unsure_probe.checks(census))
+    assert not _claim(census, "escaped").holds
+    assert not unsure_probe.checks(census).holds
 
     caught = run(rule_on=True)
     assert caught.kept == ()
     assert unsure_probe.live_bands(_empty_live_census(live=caught)) == len(caught.raw) > 0  # seen
     demanded = _empty_live_census(live=caught, require_live_band=True)
-    assert all(check.ok for check in unsure_probe.checks(demanded))
+    assert unsure_probe.checks(demanded).holds
 
 
 def test_the_recorder_takes_the_model_s_output_at_the_seam_the_pipeline_reads():
