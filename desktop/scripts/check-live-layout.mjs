@@ -72,15 +72,28 @@ function electronArgs(requested) {
   ]
 }
 
+// Longer than a healthy run by an order of magnitude (CI measures all four sizes in seconds), and
+// short of anyone's patience: an Electron main process that throws opens an error dialog and waits on
+// it, which on a headless display is forever, so without a deadline a broken harness held a CI runner
+// until the job's own six-hour limit rather than failing.
+const HARNESS_TIMEOUT_MS = 120_000
+
 function runHarness(requested) {
   return new Promise((resolve, reject) => {
     const child = spawn(electron, electronArgs(requested), { cwd: desktop })
     let out = ''
     let err = ''
+    const deadline = setTimeout(() => {
+      child.kill('SIGKILL')
+      reject(
+        new Error(`the harness did not report within ${HARNESS_TIMEOUT_MS / 1000}s\n${err.trim()}`)
+      )
+    }, HARNESS_TIMEOUT_MS)
     child.stdout.on('data', (chunk) => (out += chunk))
     child.stderr.on('data', (chunk) => (err += chunk))
     child.on('error', reject)
     child.on('exit', (code) => {
+      clearTimeout(deadline)
       const line = out.split('\n').find((l) => l.startsWith('LAYOUT_RESULTS '))
       if (line === undefined) {
         reject(new Error(`the harness exited ${code} without a measurement\n${err.trim()}`))

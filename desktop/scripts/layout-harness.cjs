@@ -10,8 +10,13 @@
 const { app, BrowserWindow, ipcMain } = require('electron')
 const path = require('node:path')
 
-const sizes = JSON.parse(process.argv[2] ?? '[]')
-const renderer = process.argv[3]
+// The arguments are the ones after this file's own path, not fixed positions: Chromium's switches
+// come first on the command line (CI's `--no-sandbox --disable-dev-shm-usage`), and read by position
+// they put a switch where the sizes belong - an exception in the main process, which Electron answers
+// with an error dialog nobody can close on a headless display, so the run hung instead of failing.
+const args = process.argv.slice(process.argv.indexOf(__filename) + 1)
+const sizes = JSON.parse(args[0] ?? '[]')
+const renderer = args[1]
 
 if (sizes.length === 0 || !renderer) {
   console.error('layout-harness: expected <sizes json> <renderer index.html>')
