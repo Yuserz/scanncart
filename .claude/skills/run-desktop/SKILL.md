@@ -38,6 +38,7 @@ node .claude/skills/run-desktop/driver.mjs models     # installed weights + resi
 node .claude/skills/run-desktop/driver.mjs classlist  # a NON-ROSTER weight: listing flag -> Live banner + count chip
 node .claude/skills/run-desktop/driver.mjs probe      # Test Connection geometry <-> a stub workflow
 node .claude/skills/run-desktop/driver.mjs v1         # the v1 acceptance run: weights record -> Live strip -> item log
+node .claude/skills/run-desktop/driver.mjs nocam      # a camera that cannot see: the blank-picture notices, and an unopenable device named
 ```
 
 - `basket` drives the **Basket test** tab end to end: Start camera, both zones painted over the
@@ -53,6 +54,31 @@ node .claude/skills/run-desktop/driver.mjs v1         # the v1 acceptance run: w
   beside the first, and one's error teardown closed the other's detector a few seconds in —
   `'NoneType' object has no attribute 'names'` — after "frames reached the preview" had already
   passed. Starts are serialized now (`start_lock` in `app/main.py`).
+- `nocam` is for a machine whose camera cannot see, and it exists because `basket` cannot be that
+  gate: that mode's second check is "Start camera delivers frames", which *passes* on a black stream
+  (frames arrive at the full rate) and fails outright where there is no device at all — so the very
+  machine this mode exists for is the one where `basket` reports nothing. It gates what the window
+  *says* in both shapes.
+  **A device opens and the picture is blank** (this machine's own state today): the too-dark and
+  hand-wave notices must be on screen, on the Basket test tab *and* on the Live view, with the
+  sentences an operator acts on. Everything else in that window reads healthy — capture running,
+  frames at full rate, the tab's state line saying `camera running` — which is why the silence was
+  the defect it was written from (2026-10-16: 30 fps of pure black, 0 detections, nothing said
+  anywhere). Whether that half applies at all is decided from the preview's *own pixels*, never
+  from the notice it checks: deleting the notice has to turn the run red, and keying applicability
+  on `bt-too-dark` once turned it green instead — the failure mode a gate like this has, and the
+  reason the pixels are sampled into a canvas and reported.
+  **No device opens**: pointed at an index nothing answers on — taken from `/api/cameras`' own
+  list, so it is this machine's absent index rather than a number written down here — Start must
+  *settle*: the refusal named on screen, never `running`, and the button usable again rather than
+  pending behind a spinner. This stack makes that a real wait (the device open fails in seconds
+  while `capture/start` is still building the detector, whose first torch import is cold on every
+  run), so it waits for the outcome rather than for a fixed delay, and a start that never settles is
+  a failure it reports. Both halves print their measurements — the sampled pixels, the state line,
+  the settle — and a half that cannot apply on the machine running it says so with its numbers
+  rather than passing quietly. The patched index is restored in a `finally`, and capture is stopped
+  before it because `camera_index` is restart-required. `basket` itself is unchanged and still needs
+  a camera: run that one when there is one.
 - `smoke` verifies launch + sidecar REST (hardware info printed).
 - `probe` is the remote-backend wiring check, and the only one that needs a fake *outside* the
   app: `local_api` points at a self-hosted workflow endpoint, and this machine has neither an API
@@ -410,7 +436,10 @@ cd desktop && npm run dev   # electron-vite dev with HMR, opens a window
 `data-testid` attributes: `nav-live`, `nav-admin`, `state`, `conn`,
 `preview-placeholder`, `stats`, `item-log`, `det-box`, `hardware-info`,
 `save-settings`, `restore-defaults`, `live-error` (dismissible banner for a
-capture that died, e.g. a stalled camera), `inference-unresponsive` (the notice
+capture that died, e.g. a stalled camera), `live-too-dark` (the camera judged the picture too dark
+to light — `components/PreviewHealth.tsx`, which the Basket test tab renders as `bt-too-dark`),
+`live-aim-unverified` (no box past the aim window; the tab's copy is `bt-aim-unverified`),
+`inference-unresponsive` (the notice
 that the selected backend's server is not answering, above `live-error` in the
 Live view, present without pressing anything), `sidecar-unresponsive` (the notice
 that the sidecar is not answering, over both views), `inference-watch` (the standing

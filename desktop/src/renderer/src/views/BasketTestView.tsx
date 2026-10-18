@@ -13,6 +13,14 @@
 //   moment it is placed and can be dragged afterwards, with Undo/Redo over every zone edit. Edits
 //   show on the preview before they are saved, and Save goes through the same POS config the
 //   Admin Panel writes, so the basket judges under exactly what is on screen.
+//
+// It also carries the two camera-health notices the Live view shows (`components/PreviewHealth`),
+// because at a desk a camera that sees nothing is the ordinary failure and nothing else on this
+// screen can see it: the state line below reads `camera running` about the capture thread, a drawn
+// outline can be placed on a black picture and saved, and the `camera blind` pill in the practice
+// readout is `transferStream`'s frame-arrival rule, which a camera delivering 30 fps of black
+// never trips. Without them the tab tells a tester their zones are wrong when the camera is the
+// thing that is missing.
 
 import {
   useCallback,
@@ -25,6 +33,7 @@ import {
   type PointerEvent as ReactPointerEvent
 } from 'react'
 import { useSidecarStream, type StreamDeps } from '../hooks/useSidecarStream'
+import { PreviewHealth } from '../components/PreviewHealth'
 import { basketBridge, useBasketState, type BasketStateDeps } from '../hooks/useBasketState'
 import {
   clickPoint,
@@ -307,6 +316,17 @@ export function BasketTestView({
             </span>
           )}
         </div>
+
+        {/* The camera's own verdict on what it can see, before the error banner: a dark picture or
+            a capture that has never produced a box is not an error - frames are arriving and the
+            pipeline is healthy - but it is the state in which nothing this screen does can
+            succeed, and the tester is the one who can fix it (light, aim, or the right device). */}
+        <PreviewHealth
+          frame={stream.frame}
+          running={capturing}
+          className="bt-warning"
+          ids={{ dark: 'bt-too-dark', aim: 'bt-aim-unverified' }}
+        />
 
         {/* The sidecar's own sentence for a capture that died, as the Live view shows it. Without
             it this screen showed only "error" over a frozen last frame, which reads as a camera
