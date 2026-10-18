@@ -28,7 +28,8 @@ powershell -ExecutionPolicy Bypass -File scripts/setup.ps1     # Windows (or dou
 ```
 
 On Windows the whole thing is two double-clicks: `setup.cmd`, then `start.cmd`
-to launch. Add `-ModelsFrom <folder>` to `setup.cmd` to copy the model weights
+to launch. Run `setup.cmd` **before** any `make` command (it is what installs
+Make), open a new terminal after it, and keep the folder outside OneDrive. Add `-ModelsFrom <folder>` to `setup.cmd` to copy the model weights
 in from the training PC — they are not in git.
 
 ## Run it

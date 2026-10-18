@@ -217,6 +217,18 @@ function Install-Tool([string]$tool) {
 
 Update-SessionPath
 
+# A checkout under OneDrive is the most common way this setup goes wrong on a student's laptop:
+# node_modules and the venv are tens of thousands of small files, OneDrive starts syncing every one,
+# and installs then fail on files it holds open (EPERM / "being used by another process"), or crawl.
+# Said first, before minutes of downloading, because the fix is to move the folder, not to retry.
+if ($OnWindows -and $RepoRoot -match '\\OneDrive( - [^\\]+)?\\') {
+  Warn "This folder is inside OneDrive ($RepoRoot)."
+  Warn 'OneDrive will try to sync the ~50,000 files the install creates, which is slow and makes installs fail with'
+  Warn '"file in use" / EPERM errors. Move the folder somewhere OneDrive does not sync - e.g. C:\dev\scanncart - and'
+  Warn 'run setup.cmd from there. (Continuing anyway in 10 seconds; press Ctrl+C to stop.)'
+  Start-Sleep -Seconds $(if ($env:CI) { 0 } else { 10 })
+}
+
 # --- what is there ---------------------------------------------------------------------------
 
 Say 'Checking system tools'
@@ -392,6 +404,11 @@ if (@('Restricted', 'AllSigned') -contains $shellPolicy) {
 
 Write-Host ''
 Say 'Done. To launch the app, double-click start.cmd in the repo folder.'
+# Tools installed by this run are on the PATH of windows opened *after* it, not of the one that
+# started it - `make` typed into that same PowerShell window says "is not recognized".
+if ($missing.Count -gt 0) {
+  Warn 'Tools were installed just now: close this terminal and open a new one before typing make, npm or uv.'
+}
 Write-Host 'From a terminal instead:'
 Write-Host '    cd desktop; npm run dev     # any shell'
 Write-Host '    make dev                    # any shell, once Git is installed (make runs its recipes in Git''s sh)'

@@ -351,10 +351,22 @@ the sidecar pins the MSMF backend deliberately (the StreamCam is much faster
 over MSMF); don't switch it to DirectShow. If a StreamCam is wedged, unplug and
 replug it.
 
-### `make: command not found`
+### `make: command not found` / `'make' is not recognized`
 
-Install GNU Make (Windows: `winget install ezwinports.make`) or use the manual
-commands in each step. Every `make` target is a thin wrapper.
+Make is not installed yet. On Windows run `setup.cmd` first (in PowerShell,
+`.\setup.cmd`), which installs it with everything else — then **open a new
+terminal**: a tool installed by the setup is on the PATH of windows opened after
+it, not of the one that ran it. Or skip Make entirely: `start.cmd` launches the
+app, and every `make` target is a thin wrapper over the manual commands in each
+step. Elsewhere, install GNU Make with the system's package manager.
+
+### Installs fail with `EPERM` / "being used by another process" (Windows)
+
+The checkout is probably inside **OneDrive** (`C:\Users\<you>\OneDrive\...`),
+which tries to sync the tens of thousands of files `npm ci` and the Python venv
+create and holds them open while it does. `setup.cmd` warns when it sees this.
+Move the folder somewhere OneDrive does not sync, such as `C:\dev\scanncart`,
+and run `setup.cmd` again from there.
 
 ### `make` on Windows fails with `'command' is not recognized` or `if was unexpected`
 
