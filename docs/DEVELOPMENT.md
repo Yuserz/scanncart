@@ -10,7 +10,7 @@ If you just want the short version, it is:
 
 ```bash
 git clone <repo-url> scanncart && cd scanncart
-make install    # desktop npm install + sidecar venv
+make install    # desktop npm ci + sidecar venv + model weights
 make test       # confirm both toolchains work (no camera needed)
 make dev        # launch the app — it spawns the sidecar for you
 ```
@@ -24,12 +24,41 @@ Everything below explains those steps, gives the manual equivalent of each
 
 | Tool | Version | Why |
 | --- | --- | --- |
-| **Git** | any recent | clone the repo |
+| **Git** | any recent | clone the repo; on Windows its `sh.exe` is the shell `make` runs its recipes in |
 | **Node.js + npm** | **20+** (CI uses 20) | the Electron/React desktop app |
 | **Python** | **exactly 3.12** | the sidecar — see the warning below |
+| **Visual C++ runtime** | 2015–2022 x64, Windows only | PyTorch's DLLs load against it; without it the sidecar dies on import (`WinError 126`) |
 | **GNU Make** | any | optional; wraps both toolchains |
 | **uv** | any recent | optional but recommended; manages Python 3.12 without sudo |
 | **A camera** | USB webcam or Logitech StreamCam | optional — only for live capture; the test suites need none |
+| **NVIDIA driver** | one that supports CUDA 12.4 | optional — only for GPU inference (`setup.ps1 -Gpu`, [§6](#6-optional--gpu-acceleration-nvidiacuda)) |
+| **Docker** | any | optional — only for the `local_api` detector backend ([`docs/DETECTOR_BACKENDS.md`](DETECTOR_BACKENDS.md)) |
+
+The setup scripts below install every row of this table that software can
+install — all of it except the camera, the NVIDIA driver and Docker.
+
+**One-command setup.** `scripts/setup.sh` (Linux/macOS) and `scripts/setup.ps1`
+(Windows, or double-click `setup.cmd`) install every tool in this table that is
+missing — Git, Node.js 20+, uv, Python 3.12 (through uv) and GNU Make, plus on
+Windows the Visual C++ runtime PyTorch's DLLs need — using winget, Homebrew or
+the distro's package manager, and then do what `make install` does. Re-running them is safe; `--check` / `-Check` only reports.
+
+```bash
+bash scripts/setup.sh                                          # Linux/macOS
+powershell -ExecutionPolicy Bypass -File scripts/setup.ps1     # Windows
+```
+
+**A new Windows PC, start to finish:** clone or unzip the repo, double-click
+`setup.cmd` (it asks for admin rights once, for Node.js and the Visual C++
+runtime), then double-click `start.cmd` to launch the app. The model weights are
+committed in `sidecar/models/`, so the clone already has them; to add weights that are not
+committed yet, `setup.cmd -ModelsFrom <folder>` copies every `.pt` and its `.json` record
+into `sidecar/models/` and never replaces one already there. On a PC with an NVIDIA card,
+`setup.cmd -Gpu` also swaps in the CUDA builds of torch and onnxruntime. The setup ends by
+importing torch, OpenCV and Ultralytics from the new venv, so a broken install
+fails there rather than at the first app start, and the `Windows setup` CI
+workflow runs the same `setup.cmd` on a Windows runner and starts the sidecar on
+the result.
 
 **Python 3.12 is not a suggestion.** The pinned `numpy` / `torch` / `opencv`
 wheels are not all available (or crash) on newer interpreters. A 3.13/3.14
@@ -37,8 +66,10 @@ venv has produced a broken numpy (native `_multiarray_umath` abort) and no
 installable `torch`. If you use `uv`, `uv venv --python 3.12` fetches 3.12 for
 you automatically.
 
-**Make on Windows.** The `Makefile` assumes a POSIX shell. Use Git Bash or WSL,
-or install GNU Make with `winget install GnuWin32.Make`. On Windows every
+**Make on Windows.** The `Makefile`'s recipes are POSIX shell. Once Git is
+installed, the Makefile runs them in Git's own `sh.exe`, so `make` works from
+cmd, PowerShell or Git Bash alike; without Git, use WSL. Install GNU Make with
+`winget install ezwinports.make` (`setup.ps1` installs both). On Windows every
 command in this guide also works from PowerShell — use the **manual** variants
 in each step and `sidecar\.venv\Scripts\python.exe` instead of
 `sidecar/.venv/bin/python`.
@@ -63,7 +94,7 @@ sidecar for you; you normally never start the sidecar by hand.
 ### Option A — one command
 
 ```bash
-make install            # = desktop npm install  +  sidecar venv setup
+make install            # = desktop npm ci  +  sidecar venv setup  +  model weights
 ```
 
 ### Option B — manual (same thing, no Make)
@@ -320,10 +351,28 @@ the sidecar pins the MSMF backend deliberately (the StreamCam is much faster
 over MSMF); don't switch it to DirectShow. If a StreamCam is wedged, unplug and
 replug it.
 
-### `make: command not found`
+### `make: command not found` / `'make' is not recognized`
 
-Install GNU Make (Windows: `winget install GnuWin32.Make`) or use the manual
-commands in each step. Every `make` target is a thin wrapper.
+Make is not installed yet. On Windows run `setup.cmd` first (in PowerShell,
+`.\setup.cmd`), which installs it with everything else — then **open a new
+terminal**: a tool installed by the setup is on the PATH of windows opened after
+it, not of the one that ran it. Or skip Make entirely: `start.cmd` launches the
+app, and every `make` target is a thin wrapper over the manual commands in each
+step. Elsewhere, install GNU Make with the system's package manager.
+
+### Installs fail with `EPERM` / "being used by another process" (Windows)
+
+The checkout is probably inside **OneDrive** (`C:\Users\<you>\OneDrive\...`),
+which tries to sync the tens of thousands of files `npm ci` and the Python venv
+create and holds them open while it does. `setup.cmd` warns when it sees this.
+Move the folder somewhere OneDrive does not sync, such as `C:\dev\scanncart`,
+and run `setup.cmd` again from there.
+
+### `make` on Windows fails with `'command' is not recognized` or `if was unexpected`
+
+make is running its recipes in cmd.exe: it found no POSIX shell. The Makefile
+looks for Git's `sh.exe` under `Program Files\Git` (or a per-user
+`AppData\Local\Programs\Git`); install Git for Windows, or run make from Git Bash.
 
 ---
 

@@ -4,9 +4,10 @@
 ## Wraps the desktop (Electron/npm) and sidecar (Python/uv) toolchains.
 ## Run `make` or `make help` to list targets.
 ##
-## Windows note: this Makefile assumes a POSIX shell (Git Bash / WSL / MSYS).
-## Install GNU Make via `winget install GnuWin32.Make`, or run these targets
-## from within WSL or a Git Bash shell that has `make` on PATH.
+## Windows note: the recipes are POSIX shell. When Git for Windows is installed
+## (`scripts/setup.ps1` installs it, with `winget install ezwinports.make` for make
+## itself), the block below points make at Git's own sh.exe, so `make` works from
+## cmd and PowerShell as well as Git Bash. Without Git, run make from WSL or MSYS.
 ##
 ## `test` is CI's target and stays fake-only, so it needs no data. `verify-clamp`,
 ## `verify-unsure`, `annotate`, `human-pass`, `readiness`, `doctor`, `accept-v2`, `replay-scenarios`,
@@ -22,13 +23,24 @@ DESKTOP_DIR := desktop
 
 ifeq ($(OS),Windows_NT)
   SIDECAR_VENV_PY := .venv/Scripts/python.exe
+  # make for Windows runs recipes in cmd.exe unless a sh.exe is on PATH, which it is only inside
+  # Git Bash - so from cmd or PowerShell every `if`/`command -v` recipe here would fail. Git's
+  # bin/sh.exe is the wrapper that also puts its coreutils (rm, ...) on PATH. Short (8.3) names,
+  # because make splits a path with spaces into two words; a per-user Git install is the last try.
+  GIT_SH := $(firstword $(wildcard \
+    C:/PROGRA~1/Git/bin/sh.exe \
+    C:/PROGRA~2/Git/bin/sh.exe \
+    $(subst \,/,$(LOCALAPPDATA))/Programs/Git/bin/sh.exe))
+  ifneq ($(GIT_SH),)
+    SHELL := $(GIT_SH)
+  endif
 else
   SIDECAR_VENV_PY := .venv/bin/python
 endif
 
 .DEFAULT_GOAL := help
 
-.PHONY: help install dev test docs-check docs-sync docs-sync-check build lint format typecheck clean \
+.PHONY: help install models dev test docs-check docs-sync docs-sync-check build lint format typecheck clean \
         verify-clamp verify-unsure verify-live-layout verify-pos-routes verify-pos-contract \
         doctor annotate human-pass readiness accept-v2 replay-scenarios record-roboflow push-check \
         sidecar-setup sidecar-run sidecar-test \
@@ -39,7 +51,8 @@ endif
 help:
 	@echo "SCANnCART - available targets"
 	@echo ""
-	@echo "  install              install desktop deps + set up sidecar venv"
+	@echo "  install              install desktop deps + set up sidecar venv + fetch the model weights"
+	@echo "  models               download the weights from the repo's \`models\` release (keeps any already here)"
 	@echo "  dev                  run the desktop app in dev mode (spawns the sidecar)"
 	@echo "  test                 run desktop + sidecar test suites"
 	@echo "  docs-check           check that internal documentation links resolve"
@@ -70,7 +83,7 @@ help:
 	@echo "  sidecar-run          run the sidecar standalone (prints SIDECAR_PORT=<n>)"
 	@echo "  sidecar-test         run the sidecar pytest suite"
 	@echo ""
-	@echo "  desktop-install      npm install in desktop/"
+	@echo "  desktop-install      npm ci in desktop/ (exactly the lockfile, which it never rewrites)"
 	@echo "  desktop-dev          electron-vite dev (full app; needs sidecar-setup first)"
 	@echo "  desktop-start        electron-vite preview"
 	@echo "  desktop-test         vitest run (headless, fakes only)"
@@ -85,7 +98,7 @@ help:
 
 ## --- aggregate targets ---
 
-install: desktop-install sidecar-setup
+install: desktop-install sidecar-setup models
 
 dev: desktop-dev
 
@@ -387,6 +400,14 @@ clean:
 
 ## --- sidecar (Python / FastAPI / YOLO11) ---
 
+# The installed weights are committed under `sidecar/models/`; they are also the assets of the
+# repo's `models` GitHub Release, and `scripts/fetch_models.py` downloads whichever ones
+# `sidecar/models/` does not have yet (one not committed yet, or an older checkout), never
+# replacing one that is there. No release, or no network, is a warning rather than a failed install:
+# the app runs without them. Run through the sidecar venv's interpreter (root-relative here).
+models:
+	$(SIDECAR_DIR)/$(SIDECAR_VENV_PY) scripts/fetch_models.py
+
 sidecar-setup:
 	cd $(SIDECAR_DIR) && \
 	if command -v uv >/dev/null 2>&1; then \
@@ -406,7 +427,7 @@ sidecar-test:
 ## --- desktop (Electron / React / TypeScript) ---
 
 desktop-install:
-	cd $(DESKTOP_DIR) && npm install
+	cd $(DESKTOP_DIR) && npm ci
 
 desktop-dev:
 	cd $(DESKTOP_DIR) && npm run dev

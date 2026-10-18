@@ -10,16 +10,33 @@ that bite on a fresh machine) read
 - **Node.js 20+** and npm — for the Electron/React desktop app.
 - **Python exactly 3.12** — for the sidecar. Newer interpreters have no
   installable `torch`/`numpy` wheels. `uv venv --python 3.12` fetches one for you.
-- **GNU Make** — optional. On Windows use Git Bash/WSL, or
-  `winget install GnuWin32.Make`; every `make` target has a manual equivalent in
+- **Visual C++ runtime** (Windows only) — PyTorch's DLLs need it.
+- **GNU Make** — optional. On Windows it works from any terminal once Git is
+  installed (the Makefile runs its recipes in Git's `sh.exe`); install it with
+  `winget install ezwinports.make`. Every `make` target has a manual equivalent in
   the full guide.
+- Optional extras the setup does not install: an NVIDIA driver (for
+  `setup.ps1 -Gpu`) and Docker (only for the `local_api` detector backend).
 - UV — optional but recommended.
+
+Don't have them? One script installs whatever is missing, then the project's
+own dependencies (safe to re-run; `--check` / `-Check` only reports):
+
+```bash
+bash scripts/setup.sh                                          # Linux/macOS
+powershell -ExecutionPolicy Bypass -File scripts/setup.ps1     # Windows (or double-click setup.cmd)
+```
+
+On Windows the whole thing is two double-clicks: `setup.cmd`, then `start.cmd`
+to launch. Run `setup.cmd` **before** any `make` command (it is what installs
+Make), open a new terminal after it, and keep the folder outside OneDrive. The model weights are committed, so the
+clone has them; `-ModelsFrom <folder>` on `setup.cmd` copies in any that are not committed yet.
 
 ## Run it
 
 ```bash
 git clone <repo-url> scanncart && cd scanncart
-make install    # desktop npm install + sidecar venv
+make install    # desktop npm ci + sidecar venv + model weights
 make test       # confirm both toolchains work (no camera needed)
 make dev        # launch the app — it spawns the sidecar for you
 ```

@@ -237,6 +237,9 @@ def test_onnx_on_cuda_without_the_gpu_runtime_warns(monkeypatch):
     the CPU wheel installed (the requirements.txt default) inference silently
     falls back to CPU with only an ultralytics log line."""
     monkeypatch.setattr("app.settings_store._cuda_provider_available", lambda: False)
+    # A machine whose torch sees the GPU: `resolve_device` falls back to "cpu" without one, so left
+    # real this test only held on a CUDA box - and silently tested nothing everywhere else.
+    monkeypatch.setattr("app.settings_store.resolve_device", lambda pref: "cuda")
     warnings = compute_warnings(
         Settings(detector_backend="native", active_model="models/scanncart-grocery.onnx",
                  device="cuda"),

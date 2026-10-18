@@ -730,6 +730,14 @@ def build_app(state_factory: Callable[[], AppState] = AppState) -> FastAPI:
             yield
         finally:
             _stop_inference_watch(state)
+            # A capture still running when the server stops (Ctrl-C on run.py, a test's server
+            # leaving) is torn down here, the way `/api/capture/stop` does it - signal, then join
+            # off the loop. Left to interpreter exit, its pipeline thread was still inside native
+            # code while the process unwound, and the process ended in C++'s std::terminate
+            # ("terminate called without an active exception", exit 134) after a clean shutdown.
+            if state.pipeline is not None:
+                state.pipeline.signal_stop()
+                await run_in_threadpool(_teardown_capture, state)
 
     app = FastAPI(title="SCANnCART Sidecar", lifespan=lifespan)
     # The renderer's origin varies by mode (Vite dev server port, or a

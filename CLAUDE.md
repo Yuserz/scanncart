@@ -34,10 +34,12 @@ Docs for people (setup, specs, readiness, training) are mapped in [`README.md`](
 
 ## Commands
 
-A root `Makefile` wraps both toolchains (requires GNU Make — on Windows use Git Bash/WSL, or `winget install GnuWin32.Make`). Run `make help` to list targets. Key ones:
+On a fresh machine, `bash scripts/setup.sh` (Linux/macOS) or `scripts/setup.ps1` / `setup.cmd` (Windows) installs the system tools — Git, Node 20+, uv + Python 3.12, GNU Make, and on Windows the VC++ runtime torch needs, plus CUDA torch with `-Gpu` — and then runs the equivalent of `make install`; the tool list lives at the top of each script, so change both together. Both scripts download the gitignored weights from the repo's `models` release (`scripts/fetch_models.py`). On Windows `start.cmd` launches the app, `setup.cmd -ModelsFrom <folder>` copies weights in from a folder instead, and `.github/workflows/windows-setup.yml` runs `setup.cmd` on a Windows runner and starts the sidecar on the result.
+
+A root `Makefile` wraps both toolchains (requires GNU Make — `winget install ezwinports.make` on Windows, where the Makefile runs its recipes in Git's `sh.exe` so make works from any terminal). Run `make help` to list targets. Key ones:
 
 ```bash
-make install              # desktop npm install + sidecar venv setup
+make install              # desktop npm ci + sidecar venv setup + model weights (make models)
 make dev                  # electron-vite dev (spawns the sidecar) — needs `make sidecar-setup` first
 make test                 # desktop vitest + sidecar pytest (fakes only — this is what CI runs)
 make docs-sync            # rewrite the numbers the docs state from the code that owns them

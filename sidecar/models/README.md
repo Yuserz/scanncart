@@ -268,10 +268,45 @@ between silencing a report and supplying the fact.
 `active_model` and `resize_mode` are both **restart-required** fields, so capture must be
 stopped before saving them.
 
-No weights are tracked in this repository. v2's are produced by `../tools/train_model.py` from the
+The installed weights are tracked in this repository (see the top of this file). v2's are produced by `../tools/train_model.py` from the
 merged set `../tools/build_dataset.py` writes (v1's export plus the locally labeled v2 frames), and
 `../tools/dataset_doctor.py` checks that set before the GPU runs. See `docs/MODEL_TRAINING.md`
 §6–§8 and `docs/RUN_SHEET.md` for the run and the integration steps.
+
+## Publishing weights for other machines
+
+The weights are **committed** in this folder, so `git pull` is the main way they reach another
+machine: after `train_model.py --install`, commit the `.pt` and its `.json` together. They are also
+published as the assets of **one GitHub Release, tagged `models`**, which fills in anything a
+checkout lacks: `setup.cmd` / `scripts/setup.ps1`, `scripts/setup.sh`,
+`make install` and `make models` all run `scripts/fetch_models.py`, which downloads each `.pt`,
+`.onnx` and `.json` attached to that release into this folder — skipping any file already here, so
+a machine's own training run is never overwritten. The app's default is
+`scanncart-grocery-v2.1.pt`, so that one and its record are the two files a release must
+carry; attach the other weights too if other machines should be able to A/B them.
+
+To publish, from the machine that trained them (once, then again after each retrain):
+
+1. On GitHub: **Releases → Draft a new release**, tag `models` (create it on `main`), title
+   e.g. *Model weights*.
+2. Attach the weight **and its `.json` record** from this folder — the record is what tells
+   `resize_mode: auto` the geometry the weight was trained at, so a weight without it runs at
+   the wrong one: `scanncart-grocery-v2.1.pt` + `.json` (the default), and optionally
+   `scanncart-grocery-v1`, `-v2-stretch`, `-v2-letterbox`, `-v2-letterbox-synth` with theirs.
+3. Publish. A machine set up before the release existed gets the files with `make models` (or
+   by re-running the setup).
+
+With the GitHub CLI the same is one command from the repo root:
+
+```bash
+gh release create models --title "Model weights" --notes "Default: scanncart-grocery-v2.1" sidecar/models/scanncart-grocery-v2.1.pt sidecar/models/scanncart-grocery-v2.1.json
+```
+
+and a retrain replaces an asset in place with
+`gh release upload models <file> --clobber`. Because the fetch never replaces a file already on a
+machine, a retrained weight reaches existing checkouts only under a **new name** (a `--variant`, as
+the naming rule above says) — a same-named file has to be deleted there first, which is a decision
+the person at that machine makes rather than a side effect of setup.
 
 ## What does **not** belong here
 
