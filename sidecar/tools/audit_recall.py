@@ -1190,14 +1190,11 @@ def main(argv: list[str] | None = None) -> int:
     generation = resolve_dataset(
         generation_for(args.generation), args.dataset_dir, args.manifest
     )
-    weights = args.weights or str(
-        default_weights(generation, SIDECAR_ROOT / "models", SIDECAR_ROOT / "data" / "settings.json")
-    )
     resize_mode = args.resize_mode or generation.resize_mode
 
     # Before the weight is resolved, because this mode asks what to shoot next and that question
-    # comes before there is a refreshed weight to measure. Everything above it - the resource
-    # envelope included - belongs to inference, which this mode never does.
+    # comes before there is a refreshed weight to measure. Everything below it - the weight and the
+    # resource envelope included - belongs to inference, which this mode never does.
     if args.size_histogram:
         print(
             f"generation {generation.name}   split {args.split}"
@@ -1212,6 +1209,11 @@ def main(argv: list[str] | None = None) -> int:
     # and resolves none, which is a contract of its own. It still reads labels and names classes, so
     # it is covered where it is read (`label_sizes`), and this refusal is for the passes below.
     require_labels_order(generation, tool="audit_recall.py")
+    # Resolved only here: `default_weights` exits when no weight is installed, which is the right
+    # answer for the passes below and the wrong one for the histogram above, asked before one exists.
+    weights = args.weights or str(
+        default_weights(generation, SIDECAR_ROOT / "models", SIDECAR_ROOT / "data" / "settings.json")
+    )
     if not Path(weights).exists():
         raise SystemExit(f"no such weight: {weights}")
 

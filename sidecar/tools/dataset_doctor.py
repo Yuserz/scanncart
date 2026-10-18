@@ -153,8 +153,10 @@ def label_problems(rows: list[list[str]], names: list[str]) -> list[str]:
     A *file* is one unit to the loader: it decides from the whole row list whether this is a polygon
     file, converts every row accordingly, and drops the entire image on any exception. So a row is
     judged in the context of its file here too - and the mixed case is the one that has no error of
-    its own: one polygon row turns *every* row into a point list, including the box rows, whose four
-    numbers then become two points and train as a box nobody drew.
+    its own. Older ultralytics turned *every* row into a point list on one polygon row, including the
+    box rows, whose four numbers then became two points and trained as a box nobody drew; 8.4's later
+    releases drop the whole frame instead ("labels mix segment and detection rows"). Either way the
+    box written here is not what trains, so the doctor refuses the file on both.
     """
     segment_file = any(len(row) > 6 for row in rows)  # the loader's own predicate
     problems: list[str] = []
@@ -171,9 +173,10 @@ def label_problems(rows: list[list[str]], names: list[str]) -> list[str]:
             # be wrong twice, and sending the operator back a second time for a fault this file was
             # already open for is the thing this function's other branches avoid.
             problems.append(
-                "a box row in a file that contains a polygon row: the loader reads every row in "
-                "this file as a polygon, so these four numbers become two points and the box it "
-                "trains is not the one written here"
+                "a box row in a file that contains a polygon row: depending on the ultralytics "
+                "version the loader either reads every row in this file as a polygon (these four "
+                "numbers become two points) or drops the whole frame - the box written here is "
+                "never the one that trains"
             )
         try:
             index = int(float(row[0]))

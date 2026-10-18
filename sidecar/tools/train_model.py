@@ -136,6 +136,7 @@ from generations import Generation
 from label_classes import DISTANCE_ORDER, SPLIT_NAMES, distance_tokens_in, load_key
 from label_classes import WORKSPACE as ROBOFLOW_WORKSPACE
 from workspace import DATA_YAML_NAME, MERGE_REPORT_NAME, SCANNCART_DATA_YAML_NAME
+import workspace
 from workspace import REPO_ROOT, SIDECAR_ROOT
 from workspace import WORKSPACE as DATASET_ROOT
 
@@ -1557,18 +1558,22 @@ def dataset_dir(recorded: str) -> Path | None:
     spellings = [raw, raw.parent] if raw.parent != raw else [raw]
     candidates: list[Path] = []
     for spelling in spellings:
+        # All three roots are read off `workspace` at call time, never the names this module imported:
+        # an imported name is frozen when the module loads, so a relocated workspace (or a test that
+        # points one elsewhere) was silently ignored - and the lookup fell through to whatever real
+        # dataset of the same name the machine happened to hold.
         if spelling.is_absolute():
             candidates.append(spelling)
         else:
-            candidates.append(SIDECAR_ROOT / spelling)
-            candidates.append(REPO_ROOT / spelling)
+            candidates.append(workspace.SIDECAR_ROOT / spelling)
+            candidates.append(workspace.REPO_ROOT / spelling)
         # Read at call time rather than at import, so a relocated workspace is honoured instead of a
         # path frozen when this module loaded. By *name*, because an absolute path recorded months
         # ago is only worth trying first - the workspace is relocatable and a set can be rebuilt
         # elsewhere, so what this finds can be a later build of the same set rather than the exact
         # one the run read. That is why the caller prints the path it used: the `source` names a
         # dataset, and the line beside it says which directory that name was standing on.
-        candidates.append(DATASET_ROOT / spelling.name)
+        candidates.append(workspace.WORKSPACE / spelling.name)
     for candidate in candidates:
         if candidate.is_dir():
             return candidate

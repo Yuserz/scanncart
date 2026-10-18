@@ -98,6 +98,12 @@ def test_the_batched_selector_answers_where_the_plain_one_raises():
     """
     count = 520
     sockets = [socket.socket(socket.AF_INET, socket.SOCK_STREAM) for _ in range(count)]
+    # Listening, so that "nothing is ready" is true everywhere: an unconnected stream socket is
+    # quiet to Windows' select() but reads as hung up - so readable - to Linux's, which made the
+    # assertion below a fact about Windows rather than about the batching.
+    for sock in sockets:
+        sock.bind(("127.0.0.1", 0))
+        sock.listen()
     try:
         if sys.platform == "win32":
             with selectors.SelectSelector() as plain:

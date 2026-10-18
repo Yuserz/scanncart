@@ -454,7 +454,8 @@ def test_enable_onnx_cuda_adds_the_torch_lib_dir_once(monkeypatch):
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
     monkeypatch.setattr(inf.sys, "platform", "win32")
     monkeypatch.setattr(inf.os.path, "isdir", lambda p: True)
-    monkeypatch.setattr(inf.os, "add_dll_directory", added.append)
+    # raising=False: the function exists on Windows only, and this test fakes being Windows.
+    monkeypatch.setattr(inf.os, "add_dll_directory", added.append, raising=False)
     monkeypatch.setattr(inf, "_added_torch_lib", None)
 
     assert inf.enable_onnx_cuda() is True
