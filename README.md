@@ -69,9 +69,9 @@ extras, and the environment quirks that are easy to lose an afternoon to.
 
 **One-command setup.** `scripts/setup.sh` (Linux/macOS) and `scripts/setup.ps1`
 (Windows, or double-click `setup.cmd`) install every tool in this table that is
-missing — Git, Node.js 20+, uv, Python 3.12 (through uv) and GNU Make, using
-winget, Homebrew or the distro's package manager — and then do what
-`make install` does. Re-running them is safe; `--check` / `-Check` only reports.
+missing — Git, Node.js 20+, uv, Python 3.12 (through uv) and GNU Make, plus on
+Windows the Visual C++ runtime PyTorch's DLLs need — using winget, Homebrew or
+the distro's package manager, and then do what `make install` does. Re-running them is safe; `--check` / `-Check` only reports.
 
 ```bash
 bash scripts/setup.sh                                          # Linux/macOS

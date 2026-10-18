@@ -14,6 +14,8 @@
     uv                any           creates the sidecar venv and fetches Python 3.12 itself
     Python            exactly 3.12  the sidecar - installed *by uv*, never the system python
     GNU Make          any           the root Makefile that wraps both toolchains
+    VC++ runtime      2015-2022 x64 PyTorch's DLLs load against it; without it the sidecar dies on
+                                    import with "WinError 126 ... fbgemm.dll"
 
   Linux/macOS: use scripts/setup.sh instead.
 
@@ -37,6 +39,7 @@ $ErrorActionPreference = 'Stop'
 $NodeMajorMin = 20
 $PythonVersion = '3.12'
 $RepoRoot = Split-Path -Parent $PSScriptRoot
+$OnWindows = $env:OS -eq 'Windows_NT'
 
 # winget id per tool. ezwinports.make rather than GnuWin32.Make: GnuWin32's is make 3.81 from
 # 2006 and is not put on PATH, this one is current and is.
@@ -45,7 +48,12 @@ $Packages = [ordered]@{
   node = 'OpenJS.NodeJS.LTS'
   uv   = 'astral-sh.uv'
   make = 'ezwinports.make'
+  vcredist = 'Microsoft.VCRedist.2015+.x64'
 }
+
+# What winget returns for "nothing to do": the package is already installed (no applicable upgrade
+# / already installed). Both happen when a tool is installed but not on this session's PATH yet.
+$WingetAlreadyInstalled = @(-1978335189, -1978335135)
 
 function Say([string]$m)  { Write-Host "==> $m" -ForegroundColor Cyan }
 function Ok([string]$m)   { Write-Host "  ok      $m" -ForegroundColor Green }
@@ -57,7 +65,9 @@ function Have([string]$c) { [bool](Get-Command $c -ErrorAction SilentlyContinue)
 function Update-SessionPath {
   $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
   $user = [Environment]::GetEnvironmentVariable('Path', 'User')
-  $env:Path = "$machine;$user;$env:LOCALAPPDATA\Microsoft\WinGet\Links;$env:USERPROFILE\.local\bin"
+  $extra = @($machine, $user, "$env:LOCALAPPDATA\Microsoft\WinGet\Links", "$env:USERPROFILE\.local\bin")
+  $sep = [IO.Path]::PathSeparator
+  $env:Path = (($extra + $env:Path) | Where-Object { $_ }) -join $sep
 }
 
 function Get-NodeMajor {
@@ -65,9 +75,25 @@ function Get-NodeMajor {
   try { return [int](& node -p "process.versions.node.split('.')[0]") } catch { return 0 }
 }
 
+# Native tools (uv, npm, winget) write progress to stderr. Windows PowerShell 5.1 turns those lines
+# into error records when output is redirected, and under 'Stop' the first one aborts the script, so
+# native calls run under 'Continue' and are judged by their exit code alone.
 function Invoke-Checked([string]$what, [scriptblock]$block) {
-  & $block
+  $prev = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try { & $block } finally { $ErrorActionPreference = $prev }
   if ($LASTEXITCODE -ne 0) { throw "$what failed (exit $LASTEXITCODE)" }
+}
+
+function Test-Native([scriptblock]$block) {
+  $prev = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try { & $block *> $null; return ($LASTEXITCODE -eq 0) } catch { return $false } finally { $ErrorActionPreference = $prev }
+}
+
+function Test-VCRedist {
+  $key = 'HKLM:\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64'
+  try { return ((Get-ItemProperty $key -ErrorAction Stop).Installed -eq 1) } catch { return $false }
 }
 
 Update-SessionPath
@@ -85,9 +111,12 @@ if ((Get-NodeMajor) -ge $NodeMajorMin -and (Have npm)) {
 }
 if (Have uv) { Ok (& uv --version) } else { Miss 'uv'; $missing += 'uv' }
 if (Have make) { Ok ((& make --version) | Select-Object -First 1) } else { Miss 'make'; $missing += 'make' }
+if ($OnWindows) {
+  if (Test-VCRedist) { Ok 'Visual C++ runtime (x64)' } else { Miss 'Visual C++ runtime (x64)'; $missing += 'vcredist' }
+}
 
 if ($Check) {
-  if ((Have uv) -and ((& uv python find $PythonVersion 2>$null) -ne $null)) {
+  if ((Have uv) -and (Test-Native { & uv python find $PythonVersion })) {
     Ok "python $PythonVersion (via uv)"
   } else {
     Miss "python $PythonVersion (uv fetches it during setup)"
@@ -106,14 +135,18 @@ if ($missing.Count -gt 0) {
   foreach ($tool in $missing) {
     $id = $Packages[$tool]
     Say "Installing $tool ($id)"
-    & winget install --id $id --exact --silent --accept-package-agreements --accept-source-agreements
-    # -1978335189 = already installed; winget says so when the tool is installed but not on PATH yet.
-    if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne -1978335189) {
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+      & winget install --id $id --exact --silent --accept-package-agreements --accept-source-agreements
+    } finally { $ErrorActionPreference = $prev }
+    if ($LASTEXITCODE -ne 0 -and $WingetAlreadyInstalled -notcontains $LASTEXITCODE) {
       throw "winget install $id failed (exit $LASTEXITCODE)"
     }
   }
   Update-SessionPath
   foreach ($tool in $missing) {
+    if ($tool -eq 'vcredist') { continue }
     if (-not (Have $tool)) {
       throw "$tool was installed but is not on PATH yet - open a new terminal and re-run this script."
     }
@@ -151,6 +184,20 @@ if ($Test) {
   try { Invoke-Checked 'pytest' { & .venv\Scripts\python.exe -m pytest -q } } finally { Pop-Location }
 }
 
-Say 'Done. Next, from Git Bash in the repo folder:'
+# npm, npx and uv ship .ps1 shims, and PowerShell's default policy ("Restricted") refuses to run
+# them: the next `npm run dev` typed into PowerShell fails with "running scripts is disabled on
+# this system". This script runs under -ExecutionPolicy Bypass so it is not affected; say how to
+# fix the user's own shells rather than changing a security setting behind their back.
+if ($OnWindows -and @('Restricted', 'AllSigned', 'Undefined') -contains [string](Get-ExecutionPolicy)) {
+  Write-Host ''
+  Write-Host "PowerShell's execution policy is '$(Get-ExecutionPolicy)', which blocks npm in PowerShell." -ForegroundColor Yellow
+  Write-Host 'Allow local scripts for your user (once), or use Git Bash / cmd instead:' -ForegroundColor Yellow
+  Write-Host '    Set-ExecutionPolicy -Scope CurrentUser RemoteSigned'
+}
+
+Write-Host ''
+Say 'Done. Next, from Git Bash in the repo folder (make needs a POSIX shell):'
 Write-Host '    make test   # confirm both toolchains work (no camera needed)'
 Write-Host '    make dev    # launch the app'
+Write-Host 'Or without make, from any terminal:'
+Write-Host '    cd desktop; npm run dev'
