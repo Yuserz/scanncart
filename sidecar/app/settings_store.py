@@ -524,6 +524,14 @@ def compute_warnings(
             "Install onnxruntime-gpu from sidecar/requirements-cuda.txt to "
             "run inference on the GPU."
         )
+    if settings.device == "cpu" and resolve_device("auto") == "cuda":
+        # An explicit `cpu` is always honoured, so this is the one setting that keeps inference
+        # off a GPU torch can use - and the usual way it got here is a choice made (or the
+        # low-end preset taken) while torch was still the CPU build.
+        warnings.append(
+            "Device is set to CPU, but torch can use this machine's NVIDIA GPU. Switch Device "
+            "to GPU (or apply the recommended preset) to run inference on the GPU."
+        )
     if settings.active_model in EXPERIMENTAL_MODELS:
         warnings.append(
             f"{settings.active_model} is experimental: presets and tuning guidance "

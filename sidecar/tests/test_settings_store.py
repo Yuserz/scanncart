@@ -594,3 +594,24 @@ def test_save_then_load_round_trips_class_allowlist(tmp_path):
     path = tmp_path / "settings.json"
     save_settings(Settings(class_allowlist=["bottle", "cup"]), str(path))
     assert load_settings(str(path)).class_allowlist == ["bottle", "cup"]
+
+
+def test_cpu_on_a_machine_whose_torch_can_use_the_gpu_warns(monkeypatch):
+    """An explicit `cpu` is honoured (`resolve_device`), so it must not be silent: on a machine
+    whose torch sees an NVIDIA GPU it is the one setting that keeps inference off the GPU, and the
+    usual way it got there is a choice made while the torch was still the CPU build."""
+    monkeypatch.setattr("app.settings_store.resolve_device", lambda pref: "cpu" if pref == "cpu" else "cuda")
+    warnings = compute_warnings(Settings(device="cpu"), "idle")
+    assert any("GPU" in w and "Device" in w for w in warnings)
+
+
+def test_cpu_without_a_usable_gpu_does_not_warn(monkeypatch):
+    monkeypatch.setattr("app.settings_store.resolve_device", lambda pref: "cpu")
+    warnings = compute_warnings(Settings(device="cpu"), "idle")
+    assert not any("GPU" in w and "Device" in w for w in warnings)
+
+
+def test_auto_on_a_gpu_machine_does_not_warn(monkeypatch):
+    monkeypatch.setattr("app.settings_store.resolve_device", lambda pref: "cuda")
+    warnings = compute_warnings(Settings(device="auto"), "idle")
+    assert not any("GPU" in w and "Device" in w for w in warnings)

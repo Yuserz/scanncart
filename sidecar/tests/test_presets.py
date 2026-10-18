@@ -70,3 +70,13 @@ def test_recommend_preset_ignores_genuinely_weak_gpu():
     # still be ignored for the high_end recommendation.
     hw = HardwareInfo(cpu_count=4, ram_gb=8, cuda_available=True, gpu_name="X", gpu_vram_gb=3.0)
     assert recommend_preset(hw) != "high_end"
+
+
+@pytest.mark.parametrize("preset", PRESETS.values(), ids=lambda p: p.name)
+def test_no_preset_pins_the_cpu(preset):
+    """A preset is a performance tier, not a device lock. `low_end` used to write `device: cpu`, and
+    it is what a machine is recommended while its torch is the CPU build - so an RTX laptop that was
+    set up that way and took the recommendation stayed on its CPU after CUDA torch arrived, because
+    an explicit `cpu` is always honoured. `auto` already means the CPU on a machine without CUDA.
+    """
+    assert preset.settings.get("device") != "cpu"

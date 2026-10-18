@@ -296,12 +296,15 @@ def test_apply_preset_while_idle_applies_settings(tmp_path):
     # Start from a stock model: the default is now a custom one, which presets
     # deliberately leave alone (see test_apply_preset_keeps_a_custom_model).
     state.settings.active_model = "yolo11m.pt"
+    # A CPU pin left over from before, which the preset must replace rather than keep.
+    state.settings.device = "cpu"
 
     r = client.post("/api/settings/preset", json={"name": "low_end"})
     assert r.status_code == 200
     # The preset's own value, not the default: presets pick a model size.
     assert state.settings.active_model == "yolo11n.pt"
-    assert state.settings.device == "cpu"
+    # `auto`, not `cpu`: no preset pins the CPU (see test_presets.test_no_preset_pins_the_cpu).
+    assert state.settings.device == "auto"
     assert state.settings.capture_width == 640
 
 

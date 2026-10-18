@@ -21,7 +21,10 @@ PRESETS: dict[str, Preset] = {
         description="No dedicated GPU, 4 or fewer cores, or under 8GB RAM. Prioritizes smoothness over accuracy.",
         settings=dict(
             active_model="yolo11n.pt",
-            device="cpu",
+            # `auto`, not `cpu`: on a machine without CUDA it is the CPU anyway, and a pinned `cpu`
+            # outlived the CPU torch that earned this tier - an explicit `cpu` is always honoured,
+            # so a GPU laptop that took this while set up CPU-only stayed on its CPU afterwards.
+            device="auto",
             capture_width=640,
             capture_height=480,
             capture_fps=15,
