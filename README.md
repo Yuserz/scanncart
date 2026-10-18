@@ -67,13 +67,24 @@ extras, and the environment quirks that are easy to lose an afternoon to.
 | **uv** | any recent | optional but recommended; manages Python 3.12 for you |
 | **A camera** | USB webcam or Logitech StreamCam | optional — only for live capture; both test suites run on fakes |
 
+**One-command setup.** `scripts/setup.sh` (Linux/macOS) and `scripts/setup.ps1`
+(Windows, or double-click `setup.cmd`) install every tool in this table that is
+missing — Git, Node.js 20+, uv, Python 3.12 (through uv) and GNU Make, plus on
+Windows the Visual C++ runtime PyTorch's DLLs need — using winget, Homebrew or
+the distro's package manager, and then do what `make install` does. Re-running them is safe; `--check` / `-Check` only reports.
+
+```bash
+bash scripts/setup.sh                                          # Linux/macOS
+powershell -ExecutionPolicy Bypass -File scripts/setup.ps1     # Windows
+```
+
 **Python 3.12 is not a suggestion.** The pinned `numpy` / `torch` / `opencv`
 wheels are not all available (or crash) on newer interpreters — a 3.13/3.14
 venv has produced a broken numpy and no installable `torch`. With `uv`,
 `uv venv --python 3.12` fetches 3.12 for you.
 
 **Make is optional and needs a POSIX shell.** On Windows use Git Bash or WSL,
-or install it with `winget install GnuWin32.Make`. Without Make, use the manual
+or install it with `winget install ezwinports.make`. Without Make, use the manual
 commands in [step 2](#2-install-both-toolchains) and
 [step 3](#3-verify-the-install--no-camera-gpu-or-api-key), and
 `sidecar\.venv\Scripts\python.exe` instead of `sidecar/.venv/bin/python`.
