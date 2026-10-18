@@ -15,17 +15,24 @@
 // Run it with `make verify-live-layout`, or directly:
 //     cd desktop && node scripts/check-live-layout.mjs
 import { createRequire } from 'node:module'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import {
-  MIN_HEIGHT,
-  MIN_WIDTH,
-  TABLET,
-  TUNING_BAND_MIN_HEIGHT,
-  TUNING_BAND_MIN_WIDTH
-} from '../src/main/windowSize.ts'
+import ts from 'typescript'
+
+// The sizes come from the TypeScript module that owns them, loaded through the compiler the desktop
+// already depends on rather than by a bare `import`: Node runs a `.ts` file only from 22.6 on, and
+// this repo supports Node 20 (CI's layout job runs on it), where that import is
+// ERR_UNKNOWN_FILE_EXTENSION before a single size is read. `windowSize.ts` is pure and imports
+// nothing, so transpiling it alone is the whole module.
+const windowSizeTs = new URL('../src/main/windowSize.ts', import.meta.url)
+const { outputText } = ts.transpileModule(readFileSync(windowSizeTs, 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+  fileName: fileURLToPath(windowSizeTs)
+})
+const { MIN_HEIGHT, MIN_WIDTH, TABLET, TUNING_BAND_MIN_HEIGHT, TUNING_BAND_MIN_WIDTH } =
+  await import(`data:text/javascript;base64,${Buffer.from(outputText).toString('base64')}`)
 
 const here = dirname(fileURLToPath(import.meta.url))
 const desktop = join(here, '..')
@@ -65,15 +72,28 @@ function electronArgs(requested) {
   ]
 }
 
+// Longer than a healthy run by an order of magnitude (CI measures all four sizes in seconds), and
+// short of anyone's patience: an Electron main process that throws opens an error dialog and waits on
+// it, which on a headless display is forever, so without a deadline a broken harness held a CI runner
+// until the job's own six-hour limit rather than failing.
+const HARNESS_TIMEOUT_MS = 120_000
+
 function runHarness(requested) {
   return new Promise((resolve, reject) => {
     const child = spawn(electron, electronArgs(requested), { cwd: desktop })
     let out = ''
     let err = ''
+    const deadline = setTimeout(() => {
+      child.kill('SIGKILL')
+      reject(
+        new Error(`the harness did not report within ${HARNESS_TIMEOUT_MS / 1000}s\n${err.trim()}`)
+      )
+    }, HARNESS_TIMEOUT_MS)
     child.stdout.on('data', (chunk) => (out += chunk))
     child.stderr.on('data', (chunk) => (err += chunk))
     child.on('error', reject)
     child.on('exit', (code) => {
+      clearTimeout(deadline)
       const line = out.split('\n').find((l) => l.startsWith('LAYOUT_RESULTS '))
       if (line === undefined) {
         reject(new Error(`the harness exited ${code} without a measurement\n${err.trim()}`))

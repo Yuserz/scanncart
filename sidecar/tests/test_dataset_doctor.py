@@ -231,15 +231,18 @@ def test_the_doctor_and_the_loader_agree_on_what_a_row_is(tmp_path):
         assert (dataset_doctor.label_problems(rows, ["a"]) != []) == corrupt, name
         assert (not corrupt) or name != "empty"
 
-    # The one deliberate difference, asserted rather than described: a file that mixes the two
-    # shapes loads *without* complaint - the box row is reshaped into a two-point polygon and the
-    # frame trains on a box nobody drew - and it is exactly what the doctor reports.
+    # The mixed file, asserted rather than described, and the one row whose loader behaviour moved
+    # between ultralytics releases - which is what this drift guard caught. Older ones load it
+    # *without* complaint (the box row is reshaped into a two-point polygon and the frame trains on a
+    # box nobody drew); 8.4's later releases drop the frame, naming the mix. Both are a box that never
+    # trains as written, so what is pinned is that the loader does one of exactly those two things,
+    # and that the doctor reports the file under either.
     mixed = "0 0.5 0.5 0.2 0.2\n0 0.1 0.1 0.5 0.1 0.3 0.4\n"
     (tmp_path / "mixed.txt").write_text(mixed, encoding="utf-8")
-    _file, _lb, _shape, _segments, _keypoints, _nm, _nf, _ne, nc, _msg = verify_image_label(
+    _file, _lb, _shape, _segments, _keypoints, _nm, _nf, _ne, nc, msg = verify_image_label(
         (str(image), str(tmp_path / "mixed.txt"), "", False, 7, 0, 2, False)
     )
-    assert nc == 0
+    assert nc == 0 or "mix segment and detection" in msg, msg
     rows = [line.split() for line in mixed.splitlines()]
     assert any("box row in a file that contains a polygon row" in p for p in dataset_doctor.label_problems(rows, ["a"]))
 

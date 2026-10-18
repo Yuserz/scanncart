@@ -1,0 +1,108 @@
+name: Windows setup
+
+# The Windows quick setup, run the way a new user runs it: `setup.cmd` from a fresh checkout, which
+# hands over to Windows PowerShell 5.1 - the shell every Windows PC has, and the one `setup.ps1` has
+# to survive (5.1 turns native stderr into errors; pwsh 7 does not, so testing on pwsh alone would
+# pass a script that aborts on a real PC). Then it proves the result rather than trusting the exit
+# code: a second run reports everything present, the sidecar starts on the venv the setup built and
+# answers /api/health, and the desktop app builds with the npm packages it installed.
+#
+# Its own workflow, and only on the paths that can change the outcome, because a Windows runner
+# downloading torch and Electron costs minutes the per-commit CI should not pay. `workflow_dispatch`
+# re-checks it by hand - the dependencies float (`>=` pins), so a setup can break with no commit here.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - setup.cmd
+      - start.cmd
+      - scripts/setup.ps1
+      - sidecar/requirements.txt
+      - desktop/package.json
+      - desktop/package-lock.json
+      - .github/workflows/windows-setup.yml
+  pull_request:
+    paths:
+      - setup.cmd
+      - start.cmd
+      - scripts/setup.ps1
+      - sidecar/requirements.txt
+      - desktop/package.json
+      - desktop/package-lock.json
+      - .github/workflows/windows-setup.yml
+  workflow_dispatch:
+
+jobs:
+  setup:
+    name: setup.cmd on a Windows machine
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      # `CI` is set on every Actions runner, which is what makes setup.cmd skip its closing `pause`.
+      - name: Run setup.cmd as a new user would
+        shell: cmd
+        run: setup.cmd
+
+      - name: A second run is safe and finds everything in place
+        shell: cmd
+        run: setup.cmd -Check
+
+      # The venv's python.exe is a shim that re-execs the uv-managed interpreter, so the sidecar's
+      # parent-watch is pointed at this shell explicitly, as Electron points it at itself.
+      - name: The sidecar starts on the installed venv and answers /api/health
+        shell: pwsh
+        working-directory: sidecar
+        run: |
+          $env:SIDECAR_PARENT_PID = $PID
+          $out = Join-Path $env:RUNNER_TEMP 'sidecar.out'
+          $err = Join-Path $env:RUNNER_TEMP 'sidecar.err'
+          $p = Start-Process -FilePath .venv\Scripts\python.exe -ArgumentList run.py `
+            -RedirectStandardOutput $out -RedirectStandardError $err -PassThru -NoNewWindow
+          try {
+            $port = $null
+            $deadline = (Get-Date).AddSeconds(180)
+            while (-not $port -and (Get-Date) -lt $deadline) {
+              if ($p.HasExited) { break }
+              $line = Get-Content $out -ErrorAction SilentlyContinue | Select-String '^SIDECAR_PORT=(\d+)' | Select-Object -First 1
+              if ($line) { $port = $line.Matches[0].Groups[1].Value } else { Start-Sleep -Seconds 1 }
+            }
+            if (-not $port) {
+              Get-Content $out, $err -ErrorAction SilentlyContinue
+              throw 'the sidecar never printed SIDECAR_PORT'
+            }
+            $health = $null
+            for ($i = 0; $i -lt 60 -and -not $health; $i++) {
+              try { $health = Invoke-RestMethod "http://127.0.0.1:$port/api/health" -TimeoutSec 5 } catch { Start-Sleep -Seconds 1 }
+            }
+            if (-not $health) {
+              Get-Content $out, $err -ErrorAction SilentlyContinue
+              throw "/api/health on port $port never answered"
+            }
+            $health | ConvertTo-Json -Depth 5
+          } finally {
+            if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
+          }
+
+      # make for Windows runs recipes in cmd.exe unless it is pointed at a POSIX shell; the
+      # Makefile points it at Git's sh.exe, which is what lets these run from cmd at all. Real
+      # targets, not -n: docs-check and docs-sync-check run through the venv's python.exe, so they
+      # prove the Windows interpreter path the Makefile picks as well as the shell.
+      - name: make works from cmd (recipes run in Git's sh.exe)
+        shell: cmd
+        run: |
+          where make
+          make help
+          make docs-check
+          make docs-sync-check
+
+      - name: make works from Git Bash
+        shell: bash
+        run: make docs-check
+
+      - name: The desktop app builds with the installed packages
+        shell: cmd
+        working-directory: desktop
+        run: npm run build
