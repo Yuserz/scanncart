@@ -5,7 +5,7 @@
 ## Run `make` or `make help` to list targets.
 ##
 ## Windows note: this Makefile assumes a POSIX shell (Git Bash / WSL / MSYS).
-## Install GNU Make via `winget install GnuWin32.Make`, or run these targets
+## Install GNU Make via `winget install ezwinports.make`, or run these targets
 ## from within WSL or a Git Bash shell that has `make` on PATH.
 ##
 ## `test` is CI's target and stays fake-only, so it needs no data. `verify-clamp`,

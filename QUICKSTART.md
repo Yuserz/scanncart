@@ -11,9 +11,17 @@ that bite on a fresh machine) read
 - **Python exactly 3.12** — for the sidecar. Newer interpreters have no
   installable `torch`/`numpy` wheels. `uv venv --python 3.12` fetches one for you.
 - **GNU Make** — optional. On Windows use Git Bash/WSL, or
-  `winget install GnuWin32.Make`; every `make` target has a manual equivalent in
+  `winget install ezwinports.make`; every `make` target has a manual equivalent in
   the full guide.
 - UV — optional but recommended.
+
+Don't have them? One script installs whatever is missing, then the project's
+own dependencies (safe to re-run; `--check` / `-Check` only reports):
+
+```bash
+bash scripts/setup.sh                                          # Linux/macOS
+powershell -ExecutionPolicy Bypass -File scripts/setup.ps1     # Windows (or double-click setup.cmd)
+```
 
 ## Run it
 

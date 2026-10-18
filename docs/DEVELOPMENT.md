@@ -31,6 +31,17 @@ Everything below explains those steps, gives the manual equivalent of each
 | **uv** | any recent | optional but recommended; manages Python 3.12 without sudo |
 | **A camera** | USB webcam or Logitech StreamCam | optional — only for live capture; the test suites need none |
 
+**One-command setup.** `scripts/setup.sh` (Linux/macOS) and `scripts/setup.ps1`
+(Windows, or double-click `setup.cmd`) install every tool in this table that is
+missing — Git, Node.js 20+, uv, Python 3.12 (through uv) and GNU Make, using
+winget, Homebrew or the distro's package manager — and then do what
+`make install` does. Re-running them is safe; `--check` / `-Check` only reports.
+
+```bash
+bash scripts/setup.sh                                          # Linux/macOS
+powershell -ExecutionPolicy Bypass -File scripts/setup.ps1     # Windows
+```
+
 **Python 3.12 is not a suggestion.** The pinned `numpy` / `torch` / `opencv`
 wheels are not all available (or crash) on newer interpreters. A 3.13/3.14
 venv has produced a broken numpy (native `_multiarray_umath` abort) and no
@@ -38,7 +49,7 @@ installable `torch`. If you use `uv`, `uv venv --python 3.12` fetches 3.12 for
 you automatically.
 
 **Make on Windows.** The `Makefile` assumes a POSIX shell. Use Git Bash or WSL,
-or install GNU Make with `winget install GnuWin32.Make`. On Windows every
+or install GNU Make with `winget install ezwinports.make`. On Windows every
 command in this guide also works from PowerShell — use the **manual** variants
 in each step and `sidecar\.venv\Scripts\python.exe` instead of
 `sidecar/.venv/bin/python`.
@@ -322,7 +333,7 @@ replug it.
 
 ### `make: command not found`
 
-Install GNU Make (Windows: `winget install GnuWin32.Make`) or use the manual
+Install GNU Make (Windows: `winget install ezwinports.make`) or use the manual
 commands in each step. Every `make` target is a thin wrapper.
 
 ---

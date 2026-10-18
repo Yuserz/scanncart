@@ -34,7 +34,9 @@ Docs for people (setup, specs, readiness, training) are mapped in [`README.md`](
 
 ## Commands
 
-A root `Makefile` wraps both toolchains (requires GNU Make — on Windows use Git Bash/WSL, or `winget install GnuWin32.Make`). Run `make help` to list targets. Key ones:
+On a fresh machine, `bash scripts/setup.sh` (Linux/macOS) or `scripts/setup.ps1` / `setup.cmd` (Windows) installs the system tools — Git, Node 20+, uv + Python 3.12, GNU Make — and then runs the equivalent of `make install`; the tool list lives at the top of each script, so change both together.
+
+A root `Makefile` wraps both toolchains (requires GNU Make — on Windows use Git Bash/WSL, or `winget install ezwinports.make`). Run `make help` to list targets. Key ones:
 
 ```bash
 make install              # desktop npm install + sidecar venv setup
