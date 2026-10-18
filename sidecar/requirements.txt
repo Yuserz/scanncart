@@ -13,6 +13,11 @@ psutil>=6.0
 # transitive one that could move.
 pyyaml>=6
 
+# The tracker's linear assignment. Ultralytics' `.track()` (BoT-SORT, every frame) imports it but
+# does not depend on it, and pip-installs it at runtime instead - which fails in a uv venv (no
+# pip) or offline, so capture died with "No module named 'lap'" on a fresh setup.
+lap>=0.5.12
+
 # Only needed to run a custom Roboflow-exported model as `native` (see
 # docs/DETECTOR_BACKENDS.md §1a). The .onnx the local inference server caches
 # is a stock Ultralytics export, so YOLO() loads it directly.

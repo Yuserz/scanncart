@@ -468,3 +468,22 @@ def test_enable_onnx_cuda_adds_the_torch_lib_dir_once(monkeypatch):
     monkeypatch.setattr(inf.sys, "platform", "linux")
     assert inf.enable_onnx_cuda() is False
     assert len(added) == 1
+
+
+def test_the_trackers_runtime_import_is_a_declared_requirement():
+    """`.track()` (BoT-SORT, every frame, every model) imports `lap` from inside Ultralytics, which
+    does not depend on it: a missing `lap` is pip-installed *at runtime*, and that self-install
+    fails in a uv venv (no pip), offline, or with `uv` off the sidecar's PATH - so a fresh setup
+    started capture with "No module named 'lap'" on whichever model was selected. Declared here, it
+    is installed with everything else instead of on the first tracked frame.
+    """
+    import re
+    from pathlib import Path
+
+    text = (Path(__file__).resolve().parents[1] / "requirements.txt").read_text(encoding="utf-8")
+    names = {
+        re.split(r"[<>=\[;\s]", line.strip(), maxsplit=1)[0].lower()
+        for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    assert "lap" in names, "requirements.txt does not declare lap, the tracker's runtime import"

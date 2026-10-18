@@ -317,7 +317,7 @@ try {
   # missing VC++ runtime or a broken wheel fails here with its real error.
   Say 'Checking the sidecar can import its libraries'
   Invoke-Checked 'the import check' {
-    & .venv\Scripts\python.exe -c "import torch, cv2, ultralytics, fastapi, onnxruntime; print('  ok      torch', torch.__version__, '/ opencv', cv2.__version__, '/ ultralytics', ultralytics.__version__)"
+    & .venv\Scripts\python.exe -c "import torch, cv2, ultralytics, fastapi, onnxruntime, lap; print('  ok      torch', torch.__version__, '/ opencv', cv2.__version__, '/ ultralytics', ultralytics.__version__)"
   }
 
   if ($Gpu) {

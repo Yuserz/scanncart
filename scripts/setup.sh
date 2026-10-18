@@ -208,7 +208,7 @@ say "Creating sidecar/.venv with Python $PYTHON_VERSION and installing requireme
   uv pip install --python .venv/bin/python -r requirements.txt
   # Prove the venv loads what the sidecar loads now, rather than at the first app start.
   say "Checking the sidecar can import its libraries"
-  .venv/bin/python -c "import torch, cv2, ultralytics, fastapi, onnxruntime; print('  ok      torch', torch.__version__, '/ opencv', cv2.__version__, '/ ultralytics', ultralytics.__version__)"
+  .venv/bin/python -c "import torch, cv2, ultralytics, fastapi, onnxruntime, lap; print('  ok      torch', torch.__version__, '/ opencv', cv2.__version__, '/ ultralytics', ultralytics.__version__)"
 )
 
 # The installed weights are committed under sidecar/models/; any the checkout lacks are fetched
