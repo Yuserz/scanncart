@@ -18,6 +18,8 @@ on:
       - setup.cmd
       - start.cmd
       - scripts/setup.ps1
+      - scripts/fetch_models.py
+      - Makefile
       - sidecar/requirements.txt
       - desktop/package.json
       - desktop/package-lock.json
@@ -27,6 +29,8 @@ on:
       - setup.cmd
       - start.cmd
       - scripts/setup.ps1
+      - scripts/fetch_models.py
+      - Makefile
       - sidecar/requirements.txt
       - desktop/package.json
       - desktop/package-lock.json
@@ -49,6 +53,13 @@ jobs:
       - name: A second run is safe and finds everything in place
         shell: cmd
         run: setup.cmd -Check
+
+      # setup.cmd already ran the download; this re-asks, so the log shows what the `models` release
+      # holds and that every asset of it is on disk (or that no release exists yet, which is a
+      # warning by design - the app runs without weights).
+      - name: The model weights from the repo's release are in place
+        shell: cmd
+        run: sidecar\.venv\Scripts\python.exe scripts\fetch_models.py --check
 
       # The venv's python.exe is a shim that re-execs the uv-managed interpreter, so the sidecar's
       # parent-watch is pointed at this shell explicitly, as Electron points it at itself.

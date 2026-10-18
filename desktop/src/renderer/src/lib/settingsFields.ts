@@ -5,17 +5,17 @@
 // hot-reloadable vs restart-required; this file only drives form rendering.
 import type { SettingsPayload } from './api'
 
-// The locally trained grocery model, run in-process. Listed first because it is the default
-// (`sidecar/app/settings.py`) and the only model that detects the actual SKUs; the stock YOLO
-// weights below are generic COCO. Mirrors the sidecar's CUSTOM_MODEL_DIR convention — any
-// .onnx/.pt under sidecar/models/ is valid, this is just the one we ship with. (The
-// Roboflow-exported ONNX, models/scanncart-grocery.onnx, is the same architecture pre-retrain
-// and remains selectable.)
-export const CUSTOM_MODEL = 'models/scanncart-grocery-v1.pt'
-// The locally trained successor (MODEL_TRAINING.md §8.2). Named here only for its label and
-// hint; the picker *discovers* the file from GET /api/models, so this entry is optional and
-// its absence would not hide the model — a future v3 needs no entry at all to be selectable.
-export const CUSTOM_MODEL_V2 = 'models/scanncart-grocery-v2-stretch.pt'
+// The locally trained grocery model, run in-process: v2, trained on the stretched local merge
+// (MODEL_TRAINING.md §8.2). Listed first because it is the default (`sidecar/app/settings.py`)
+// and the only kind of model that detects the actual SKUs; the stock YOLO weights below are
+// generic COCO. Mirrors the sidecar's CUSTOM_MODEL_DIR convention — any .onnx/.pt under
+// sidecar/models/ is valid, this is just the one we ship with (from the repo's `models` release).
+// (The Roboflow-exported ONNX, models/scanncart-grocery.onnx, remains selectable.)
+export const CUSTOM_MODEL = 'models/scanncart-grocery-v2-stretch.pt'
+// The first locally trained generation, kept for comparison. Named here only for its label; the
+// picker *discovers* the file from GET /api/models, so this entry is optional and its absence
+// would not hide the model — a future v3 needs no entry at all to be selectable.
+export const CUSTOM_MODEL_V1 = 'models/scanncart-grocery-v1.pt'
 // The same generation trained on the same frames at their own shape (`build_dataset.py --geometry
 // fit`, imgsz 960), kept beside the stretch weights so the two can be compared on one camera.
 export const CUSTOM_MODEL_V2_LETTERBOX = 'models/scanncart-grocery-v2-letterbox.pt'
@@ -33,8 +33,8 @@ export const CUSTOM_MODEL_V2_1 = 'models/scanncart-grocery-v2.1.pt'
 
 // A raw path is not a label. Anything not listed falls back to its own name.
 export const MODEL_LABELS: Record<string, string> = {
-  [CUSTOM_MODEL]: 'SCANnCART grocery v1 (custom, 7 SKUs)',
-  [CUSTOM_MODEL_V2]: 'SCANnCART grocery v2 · stretch (custom, 7 SKUs)',
+  [CUSTOM_MODEL]: 'SCANnCART grocery v2 · stretch (custom, 7 SKUs)',
+  [CUSTOM_MODEL_V1]: 'SCANnCART grocery v1 (custom, 7 SKUs)',
   [CUSTOM_MODEL_V2_LETTERBOX]: 'SCANnCART grocery v2 · letterbox (custom, 7 SKUs)',
   [CUSTOM_MODEL_V2_LETTERBOX_SYNTH]:
     'SCANnCART grocery v2 · letterbox + Tuna extras (custom, 7 SKUs)',
@@ -118,7 +118,7 @@ export const MODEL_SPEC_HINTS: Record<string, string> = {
   // --install` records the requirement beside the weights, the sidecar reports it, and the
   // Model field flags a mismatch for *any* installed weight rather than only this filename.
   // What is left is what a record cannot carry - what these weights are and what they cost.
-  [CUSTOM_MODEL_V2]:
+  [CUSTOM_MODEL]:
     'Locally trained v2 (7 SKUs), frames squashed to a 640 square — see the requirement recorded beside it below. Runs on torch, so a CUDA GPU is the fast path.',
   [CUSTOM_MODEL_V2_LETTERBOX]:
     'Locally trained v2 (7 SKUs), frames kept at their own shape and padded at 960 — see the requirement recorded beside it below. Larger input than the stretch weights, so each frame costs more GPU time.',

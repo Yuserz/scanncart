@@ -10,7 +10,7 @@ If you just want the short version, it is:
 
 ```bash
 git clone <repo-url> scanncart && cd scanncart
-make install    # desktop npm install + sidecar venv
+make install    # desktop npm ci + sidecar venv + model weights
 make test       # confirm both toolchains work (no camera needed)
 make dev        # launch the app — it spawns the sidecar for you
 ```
@@ -94,7 +94,7 @@ sidecar for you; you normally never start the sidecar by hand.
 ### Option A — one command
 
 ```bash
-make install            # = desktop npm install  +  sidecar venv setup
+make install            # = desktop npm ci  +  sidecar venv setup  +  model weights
 ```
 
 ### Option B — manual (same thing, no Make)

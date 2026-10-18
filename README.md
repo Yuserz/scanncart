@@ -119,7 +119,7 @@ cd scanncart
 ### 2. Install both toolchains
 
 ```bash
-make install            # = desktop npm install  +  sidecar venv setup
+make install            # = desktop npm ci  +  sidecar venv setup  +  model weights
 ```
 
 Without Make — **sidecar**, using `uv` (fetches Python 3.12, no activation):
@@ -185,10 +185,14 @@ model picker, and a **Test connection** button for the detector backend.
 
 Two things worth expecting on first launch:
 
-- **The grocery model is not in git.** The default model is
-  `sidecar/models/scanncart-grocery-v1.pt` with its record `scanncart-grocery-v1.json`
-  beside it; weights are gitignored, so copy both into `sidecar/models/` from the
-  team's share, or train them ([`docs/RUN_SHEET.md`](docs/RUN_SHEET.md)). Without them,
+- **The grocery model is not in git — the setup downloads it.** The default model is
+  `sidecar/models/scanncart-grocery-v2-stretch.pt` with its record
+  `scanncart-grocery-v2-stretch.json` beside it. Weights are gitignored and published
+  as the assets of the repo's `models` GitHub Release instead; `setup.cmd`,
+  `scripts/setup.sh` and `make install` fetch them (`make models` alone does just
+  that), never replacing a weight already there. How to publish a new one is in
+  [`sidecar/models/README.md`](sidecar/models/README.md#publishing-weights-for-other-machines);
+  or train them ([`docs/RUN_SHEET.md`](docs/RUN_SHEET.md)). Without them,
   pick a stock model (e.g. `yolo11n.pt`) in **Admin → Model**: it downloads into
   `sidecar/` on the first capture start and detects generic objects, not the store's
   products. Leave stock weights where they land rather than moving them into
@@ -223,7 +227,7 @@ for `curl` checks and the GPU/Roboflow extras.
 
 | Target | What it does |
 | --- | --- |
-| `make install` | desktop `npm install` + sidecar venv setup |
+| `make install` | desktop `npm ci` + sidecar venv setup + the model weights (`make models`) |
 | `make test` | desktop vitest + sidecar pytest (fakes only — needs no camera) |
 | `make dev` | run the desktop app in dev mode (spawns the sidecar) |
 | `make build` | typecheck + build the desktop app |

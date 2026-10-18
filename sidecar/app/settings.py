@@ -5,12 +5,15 @@ from dataclasses import dataclass, field
 class Settings:
     # The locally trained grocery model (see docs/MODEL_TRAINING.md), run
     # in-process. It is the only default that both detects the actual SKUs and
-    # keeps the PRD's offline promise. Trained 2026-09-24 from the dataset
-    # export to mAP50-95 0.944; measured level with the Roboflow ONNX export
-    # on CUDA (~18 ms isolated, ~40 fps in-app) while letterbox-native and
-    # retrainable. The ONNX export remains selectable (models/scanncart-grocery.onnx).
+    # keeps the PRD's offline promise. v2, trained on the stretched local merge
+    # (`merged-v2`): the demo model (docs/DEFENSE_READINESS.md). Its record
+    # (`models/scanncart-grocery-v2-stretch.json`) says `stretch`, which is what
+    # `resize_mode: auto` below then runs it at. The weights are not in git: the
+    # setup scripts fetch them from the repo's `models` release
+    # (scripts/fetch_models.py). v1 (models/scanncart-grocery-v1.pt) and the
+    # Roboflow ONNX export (models/scanncart-grocery.onnx) stay selectable.
     # See docs/DETECTOR_BACKENDS.md §1a for the backend comparison.
-    active_model: str = "models/scanncart-grocery-v1.pt"
+    active_model: str = "models/scanncart-grocery-v2-stretch.pt"
     camera_index: int = 0
     # 640x480@30 opens and streams reliably over USB 2.0; the StreamCam's
     # 1080p60 needs USB 3.0 and a failed mode switch there can wedge the MSMF

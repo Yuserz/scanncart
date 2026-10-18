@@ -34,12 +34,12 @@ Docs for people (setup, specs, readiness, training) are mapped in [`README.md`](
 
 ## Commands
 
-On a fresh machine, `bash scripts/setup.sh` (Linux/macOS) or `scripts/setup.ps1` / `setup.cmd` (Windows) installs the system tools — Git, Node 20+, uv + Python 3.12, GNU Make, and on Windows the VC++ runtime torch needs, plus CUDA torch with `-Gpu` — and then runs the equivalent of `make install`; the tool list lives at the top of each script, so change both together. On Windows `start.cmd` launches the app, `setup.cmd -ModelsFrom <folder>` copies in the gitignored weights, and `.github/workflows/windows-setup.yml` runs `setup.cmd` on a Windows runner and starts the sidecar on the result.
+On a fresh machine, `bash scripts/setup.sh` (Linux/macOS) or `scripts/setup.ps1` / `setup.cmd` (Windows) installs the system tools — Git, Node 20+, uv + Python 3.12, GNU Make, and on Windows the VC++ runtime torch needs, plus CUDA torch with `-Gpu` — and then runs the equivalent of `make install`; the tool list lives at the top of each script, so change both together. Both scripts download the gitignored weights from the repo's `models` release (`scripts/fetch_models.py`). On Windows `start.cmd` launches the app, `setup.cmd -ModelsFrom <folder>` copies weights in from a folder instead, and `.github/workflows/windows-setup.yml` runs `setup.cmd` on a Windows runner and starts the sidecar on the result.
 
 A root `Makefile` wraps both toolchains (requires GNU Make — `winget install ezwinports.make` on Windows, where the Makefile runs its recipes in Git's `sh.exe` so make works from any terminal). Run `make help` to list targets. Key ones:
 
 ```bash
-make install              # desktop npm install + sidecar venv setup
+make install              # desktop npm ci + sidecar venv setup + model weights (make models)
 make dev                  # electron-vite dev (spawns the sidecar) — needs `make sidecar-setup` first
 make test                 # desktop vitest + sidecar pytest (fakes only — this is what CI runs)
 make docs-sync            # rewrite the numbers the docs state from the code that owns them
@@ -71,9 +71,11 @@ Every sidecar command names the venv's interpreter — `.venv/bin/python` on Lin
 a bare `python`, because the uv path this file leads with activates nothing, and a bare one is the
 system interpreter, which cannot import the app's dependencies at all.
 
-The default model is the trained grocery weight `sidecar/models/scanncart-grocery-v1.pt` with its
-record `scanncart-grocery-v1.json`; weights are gitignored, so a fresh clone copies them in or trains
-them. A stock model such as `yolo11n.pt`, once selected, is auto-downloaded by Ultralytics into
+The default model is the trained grocery weight `sidecar/models/scanncart-grocery-v2-stretch.pt` with
+its record `scanncart-grocery-v2-stretch.json` (the record's `stretch` is what `resize_mode: auto` runs
+it at); weights are gitignored and published as the assets of the repo's `models` GitHub Release,
+which `scripts/fetch_models.py` downloads — the setup scripts and `make install`/`make models` run it,
+and it never replaces a weight already on disk. A stock model such as `yolo11n.pt`, once selected, is auto-downloaded by Ultralytics into
 `sidecar/` — the process cwd, because a bare `active_model` name (what `presets.py` writes) is
 resolved **by name** — not into `sidecar/models/`, which the Model picker reads. Those stock weights
 are runtime artifacts, gitignored by `*.pt` and kept on disk so the offline promise does not depend

@@ -115,7 +115,7 @@ scored above 0.85 on every frame, so the geometry did not explain the live track
 | The self-checkout config defaults to **Counter** mode | by design | Set **Basket** in Admin → Self-checkout before the demo (done on this machine) |
 | Four leftover test stations in the local database | 2026-10-05 | A `cart-1` station sorts first and is what the desktop is set to |
 | Low light lowers detection confidence | — | Auto exposure holds picture brightness at 60 fps; keep the demo area lit |
-| **Restore Defaults** in Admin puts the model back to v1 (the code default) | by design until the default is changed | Do not press it on the demo machine, or reselect `scanncart-grocery-v2` after |
+| **Restore Defaults** in Admin puts the model back to the code default | 2026-10-18: the default is now `scanncart-grocery-v2-stretch`, the demo model | Safe to press; it restores the demo model |
 | v2 reports a whole-frame phantom (mostly 555 Sardines) on a blank or empty view; only the frame-edge filter keeps it out of the log | 2026-10-06 | Keep **Drop frame-edge phantoms** on; empty-basket photos from the cart + retrain fixes it |
 | Two items stacked on top of each other (seen with Safeguard bars) are counted as one | 2026-10-06 | Demo with items side by side |
 

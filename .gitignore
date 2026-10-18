@@ -32,3 +32,6 @@ sidecar/*.log
 
 # The agent tooling's own project id.
 .freebuff/
+
+# Bytecode from importing scripts/*.py (the tests load scripts/fetch_models.py).
+__pycache__/
