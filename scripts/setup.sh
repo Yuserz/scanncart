@@ -9,6 +9,7 @@
 #   bash scripts/setup.sh              # tools + project install
 #   bash scripts/setup.sh --tools-only # system tools only
 #   bash scripts/setup.sh --check      # report what is missing, change nothing
+#   bash scripts/setup.sh --no-models  # skip downloading the model weights
 #   bash scripts/setup.sh --test       # ... and run `make test` at the end
 #
 # Windows: use scripts/setup.ps1 instead (or setup.cmd at the repo root).
@@ -40,11 +41,15 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 MODE=all
 RUN_TESTS=0
+FETCH_MODELS=1
+# The app's default model (sidecar/app/settings.py); its .json record carries the stretch geometry.
+DEFAULT_MODEL=scanncart-grocery-v2-stretch
 for arg in "$@"; do
   case "$arg" in
     --tools-only) MODE=tools ;;
     --check) MODE=check ;;
     --test) RUN_TESTS=1 ;;
+    --no-models) FETCH_MODELS=0 ;;
     -h|--help) awk 'NR>2 && !/^#/ {exit} NR>2 {sub(/^# ?/, ""); print}' "$0"; exit 0 ;;
     *) echo "unknown option: $arg (try --help)" >&2; exit 2 ;;
   esac
@@ -115,6 +120,11 @@ if [ "$MODE" = check ]; then
   fi
   if [ -x "$REPO_ROOT/sidecar/.venv/bin/python" ]; then ok "sidecar/.venv"; else miss "sidecar/.venv"; fi
   if [ -d "$REPO_ROOT/desktop/node_modules" ]; then ok "desktop/node_modules"; else miss "desktop/node_modules"; fi
+  if [ -f "$REPO_ROOT/sidecar/models/$DEFAULT_MODEL.pt" ]; then
+    ok "default model $DEFAULT_MODEL.pt"
+  else
+    miss "default model $DEFAULT_MODEL.pt (setup downloads it from the models release)"
+  fi
   exit 0
 fi
 
@@ -186,15 +196,37 @@ if [ "$MODE" = tools ]; then say "System tools ready"; exit 0; fi
 
 # --- project install (what `make install` does) --------------------------------------------------
 
-say "Installing desktop dependencies (npm install - Electron's download can take a while)"
-(cd "$REPO_ROOT/desktop" && npm install)
+# `npm ci`, not `npm install`: it installs exactly the lockfile and never writes it. npm 10 (Node
+# 22's) rewrites a lockfile npm 11 wrote, so `npm install` left a fresh clone with a modified file.
+say "Installing desktop dependencies (npm ci - Electron's download can take a while)"
+(cd "$REPO_ROOT/desktop" && npm ci)
 
 say "Creating sidecar/.venv with Python $PYTHON_VERSION and installing requirements.txt"
 (
   cd "$REPO_ROOT/sidecar"
   [ -x .venv/bin/python ] || uv venv --python "$PYTHON_VERSION" .venv
   uv pip install --python .venv/bin/python -r requirements.txt
+  # Prove the venv loads what the sidecar loads now, rather than at the first app start.
+  say "Checking the sidecar can import its libraries"
+  .venv/bin/python -c "import torch, cv2, ultralytics, fastapi, onnxruntime; print('  ok      torch', torch.__version__, '/ opencv', cv2.__version__, '/ ultralytics', ultralytics.__version__)"
 )
+
+# The weights are not in git: they are the assets of the repo's `models` GitHub Release, fetched by
+# the same script `make models` and setup.ps1 run. It keeps any weight already here, and a missing
+# release or network only warns.
+if [ $FETCH_MODELS -eq 1 ]; then
+  say "Downloading the model weights from the repo's GitHub release"
+  (cd "$REPO_ROOT" && sidecar/.venv/bin/python scripts/fetch_models.py)
+fi
+if [ ! -f "$REPO_ROOT/sidecar/models/$DEFAULT_MODEL.pt" ]; then
+  printf '\033[33mwarning:\033[0m %s\n' \
+    "The default model, sidecar/models/$DEFAULT_MODEL.pt, is not here - the app starts, but has no grocery detector." \
+    "Attach it and its .json to the repo's \`models\` release and re-run, copy them into sidecar/models/ by hand," \
+    "or pick a stock model such as yolo11n.pt in Admin > Model."
+elif [ ! -f "$REPO_ROOT/sidecar/models/$DEFAULT_MODEL.json" ]; then
+  printf '\033[33mwarning:\033[0m %s\n' \
+    "sidecar/models/$DEFAULT_MODEL.json is missing: without it 'auto' guesses the frame geometry wrong for this weight."
+fi
 
 if [ $RUN_TESTS -eq 1 ]; then
   say "Running both test suites (fakes only - no camera needed)"

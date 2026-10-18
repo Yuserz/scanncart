@@ -137,7 +137,7 @@ Two algorithms run per frame, not one:
 
 | | Choice | Note |
 |---|---|---|
-| Detector | YOLO11, Ultralytics/PyTorch | The shipped weight is `models/scanncart-grocery-v1.pt`: YOLO11s fine-tuned on the 7 store SKUs (the default). Stock COCO tiers `n`…`x` stay selectable for comparison. |
+| Detector | YOLO11, Ultralytics/PyTorch | The shipped weight is `models/scanncart-grocery-v2-stretch.pt`: YOLO11s fine-tuned on the 7 store SKUs (the default), published as an asset of the repo's `models` release; v1 stays selectable. Stock COCO tiers `n`…`x` stay selectable for comparison. |
 | Tracker | BoT-SORT | Ultralytics' default — the code calls `.track(persist=True)` without a `tracker=` argument. ByteTrack would require opting in explicitly. |
 
 **Why the tracker is architecturally load-bearing:** detection alone would emit

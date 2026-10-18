@@ -34,8 +34,10 @@
                                     needs nothing beyond the list above
     A camera          live capture  a USB webcam or Logitech StreamCam; tests need none
 
-  The model weights are not in git. Pass -ModelsFrom with a folder holding them (a USB stick, a
-  shared drive) to copy every .pt and its .json record into sidecar\models.
+  The model weights are not in git. They are downloaded from the repo's `models` GitHub Release
+  (scripts/fetch_models.py; -NoModels skips it), and -ModelsFrom copies them from a folder instead
+  (a USB stick, a shared drive). Neither replaces a weight already in sidecar\models. The default
+  model is scanncart-grocery-v2-stretch.
 
   Linux/macOS: use scripts/setup.sh instead.
 
@@ -58,6 +60,8 @@ param(
   [switch]$Test,
   # A folder holding model weights (*.pt + their *.json records) to copy into sidecar\models.
   [string]$ModelsFrom,
+  # Skip downloading the weights from the repo's `models` GitHub Release.
+  [switch]$NoModels,
   # Replace the CPU torch/onnxruntime with NVIDIA CUDA builds (needs an NVIDIA driver).
   [switch]$Gpu,
   # The PyTorch CUDA wheel tag for -Gpu; cu124 pairs with requirements-cuda.txt's onnxruntime-gpu.
@@ -213,6 +217,18 @@ function Install-Tool([string]$tool) {
 
 Update-SessionPath
 
+# A checkout under OneDrive is the most common way this setup goes wrong on a student's laptop:
+# node_modules and the venv are tens of thousands of small files, OneDrive starts syncing every one,
+# and installs then fail on files it holds open (EPERM / "being used by another process"), or crawl.
+# Said first, before minutes of downloading, because the fix is to move the folder, not to retry.
+if ($OnWindows -and $RepoRoot -match '\\OneDrive( - [^\\]+)?\\') {
+  Warn "This folder is inside OneDrive ($RepoRoot)."
+  Warn 'OneDrive will try to sync the ~50,000 files the install creates, which is slow and makes installs fail with'
+  Warn '"file in use" / EPERM errors. Move the folder somewhere OneDrive does not sync - e.g. C:\dev\scanncart - and'
+  Warn 'run setup.cmd from there. (Continuing anyway in 10 seconds; press Ctrl+C to stop.)'
+  Start-Sleep -Seconds $(if ($env:CI) { 0 } else { 10 })
+}
+
 # --- what is there ---------------------------------------------------------------------------
 
 Say 'Checking system tools'
@@ -243,6 +259,7 @@ if ($Check) {
   if (Test-Path "$RepoRoot\desktop\node_modules") { Ok 'desktop\node_modules' } else { Miss 'desktop\node_modules' }
   $weights = @(Get-ChildItem "$RepoRoot\sidecar\models" -Filter *.pt -ErrorAction SilentlyContinue)
   if ($weights.Count -gt 0) { Ok "model weights: $(($weights | ForEach-Object Name) -join ', ')" } else { Miss 'model weights in sidecar\models' }
+  if (Test-Path "$RepoRoot\sidecar\models\scanncart-grocery-v2-stretch.pt") { Ok 'default model scanncart-grocery-v2-stretch.pt' } else { Miss 'default model scanncart-grocery-v2-stretch.pt (setup downloads it from the models release)' }
   exit 0
 }
 
@@ -281,9 +298,11 @@ if ($ToolsOnly) { Say 'System tools ready'; exit 0 }
 
 # --- project install (what `make install` does) ----------------------------------------------
 
-Say "Installing desktop dependencies (npm install - Electron's download can take a while)"
+# `npm ci`, not `npm install`: it installs exactly the lockfile and never writes it. npm 10 (Node
+# 22's) rewrites a lockfile npm 11 wrote, so `npm install` left a fresh clone with a modified file.
+Say "Installing desktop dependencies (npm ci - Electron's download can take a while)"
 Push-Location "$RepoRoot\desktop"
-try { Invoke-Checked 'npm install' { & npm install } } finally { Pop-Location }
+try { Invoke-Checked 'npm ci' { & npm ci } } finally { Pop-Location }
 
 Say "Creating sidecar\.venv with Python $PythonVersion and installing requirements.txt"
 Push-Location "$RepoRoot\sidecar"
@@ -337,15 +356,28 @@ if ($ModelsFrom) {
     Ok $f.Name
   }
 }
-$weights = @(Get-ChildItem $modelsDir -Filter *.pt -ErrorAction SilentlyContinue)
+# Then whatever the repo's `models` release has that this machine does not: scripts/fetch_models.py,
+# the one downloader both setup scripts and `make models` share. It keeps any weight already here
+# (including what -ModelsFrom just copied), and a missing release or network only warns.
+if (-not $NoModels) {
+  Say 'Downloading the model weights from the repo''s GitHub release'
+  Push-Location $RepoRoot
+  try { Invoke-Checked 'the weights download' { & sidecar\.venv\Scripts\python.exe scripts\fetch_models.py } } finally { Pop-Location }
+}
+
+# The app's default model (sidecar/app/settings.py). Its .json record is what tells `auto` the
+# stretch geometry it was trained at, so the weight without its record is half an install.
+$defaultModel = 'scanncart-grocery-v2-stretch'
 if ($OnWindows -and (Have make) -and -not (Get-GitShell)) {
   Warn "make is installed but Git is not, so make's recipes have no POSIX shell. Install Git ($($ManualUrl['git']))."
 }
-if ($weights.Count -eq 0) {
+if (-not (Test-Path (Join-Path $modelsDir "$defaultModel.pt"))) {
   Write-Host ''
-  Warn 'No model weights in sidecar\models - the app starts, but the default detector has nothing to load.'
-  Warn 'Copy scanncart-grocery-v1.pt and its .json from the training PC (re-run with -ModelsFrom <folder>),'
-  Warn 'or pick a stock model such as yolo11n.pt in Admin > Model, which downloads on the first capture.'
+  Warn "The default model, sidecar\models\$defaultModel.pt, is not here - the app starts, but has no grocery detector."
+  Warn 'Attach it and its .json to the repo''s `models` release (re-run setup to fetch it), copy them in with'
+  Warn '-ModelsFrom <folder>, or pick a stock model such as yolo11n.pt in Admin > Model.'
+} elseif (-not (Test-Path (Join-Path $modelsDir "$defaultModel.json"))) {
+  Warn "sidecar\models\$defaultModel.json is missing: without it 'auto' guesses the frame geometry wrong for this weight."
 }
 
 if ($Test) {
@@ -372,6 +404,11 @@ if (@('Restricted', 'AllSigned') -contains $shellPolicy) {
 
 Write-Host ''
 Say 'Done. To launch the app, double-click start.cmd in the repo folder.'
+# Tools installed by this run are on the PATH of windows opened *after* it, not of the one that
+# started it - `make` typed into that same PowerShell window says "is not recognized".
+if ($missing.Count -gt 0) {
+  Warn 'Tools were installed just now: close this terminal and open a new one before typing make, npm or uv.'
+}
 Write-Host 'From a terminal instead:'
 Write-Host '    cd desktop; npm run dev     # any shell'
 Write-Host '    make dev                    # any shell, once Git is installed (make runs its recipes in Git''s sh)'

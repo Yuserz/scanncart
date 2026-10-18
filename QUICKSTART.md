@@ -28,14 +28,15 @@ powershell -ExecutionPolicy Bypass -File scripts/setup.ps1     # Windows (or dou
 ```
 
 On Windows the whole thing is two double-clicks: `setup.cmd`, then `start.cmd`
-to launch. Add `-ModelsFrom <folder>` to `setup.cmd` to copy the model weights
+to launch. Run `setup.cmd` **before** any `make` command (it is what installs
+Make), open a new terminal after it, and keep the folder outside OneDrive. Add `-ModelsFrom <folder>` to `setup.cmd` to copy the model weights
 in from the training PC — they are not in git.
 
 ## Run it
 
 ```bash
 git clone <repo-url> scanncart && cd scanncart
-make install    # desktop npm install + sidecar venv
+make install    # desktop npm ci + sidecar venv + model weights
 make test       # confirm both toolchains work (no camera needed)
 make dev        # launch the app — it spawns the sidecar for you
 ```
@@ -47,8 +48,9 @@ should land on the **Live** view. Click **Start** to begin capture.
 
 Two things worth expecting on first launch:
 
-- The default grocery model (`sidecar/models/scanncart-grocery-v1.pt` + its `.json`) is not
-  in git: copy it in, or pick a stock model such as `yolo11n.pt` in **Admin → Model**,
+- The default grocery model (`sidecar/models/scanncart-grocery-v2-stretch.pt` + its `.json`)
+  is not in git: the setup (and `make install`) downloads it from the repo's `models`
+  release. Without it, pick a stock model such as `yolo11n.pt` in **Admin → Model**,
   which downloads on the first capture start.
 - A Logitech StreamCam can take ~37 s to open and set its capture mode. That is
   the device, not a hang — `/api/health` keeps answering throughout.

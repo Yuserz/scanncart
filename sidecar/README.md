@@ -174,9 +174,10 @@ $ok=0; 1..10 | %{ .venv\Scripts\python.exe -c "import torch,cv2,ultralytics" 2>$
 # prints: SIDECAR_PORT=8765
 ```
 
-The default model is the trained grocery weight `models/scanncart-grocery-v1.pt` (with its
-record `models/scanncart-grocery-v1.json`). Weights are gitignored, so a fresh clone has to copy
-them in or train them (`docs/RUN_SHEET.md`); see [`models/README.md`](models/README.md). A stock
+The default model is the trained grocery weight `models/scanncart-grocery-v2-stretch.pt` (with its
+record `models/scanncart-grocery-v2-stretch.json`). Weights are gitignored; a fresh clone downloads
+them from the repo's `models` GitHub Release (`make models`, which the setup scripts and
+`make install` run), or trains them (`docs/RUN_SHEET.md`); see [`models/README.md`](models/README.md). A stock
 model such as `yolo11n.pt` is downloaded by Ultralytics into `sidecar/` on the first capture start
 that selects it.
 
