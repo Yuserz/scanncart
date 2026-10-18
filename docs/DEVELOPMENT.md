@@ -221,9 +221,11 @@ read the `SIDECAR_PORT=<n>` line rather than assuming 8765.
 
 ## 6. Optional — GPU acceleration (NVIDIA/CUDA)
 
-Skip this if you're CPU-only; everything works without it, just slower. On Windows,
-`setup.cmd` does all of this by itself when an NVIDIA driver is installed (`-Cpu` opts out); the
-commands below are the manual route, and the one for Linux/macOS.
+Skip this if you're CPU-only; everything works without it, just slower. `setup.cmd` and
+`make install` (its `sidecar-setup` step) do all of this by themselves when an NVIDIA driver is
+installed, through `scripts/cuda_torch.py` (`setup.cmd -Cpu` / `make sidecar-setup CPU=1` opt out);
+re-running either is how an existing checkout gets the GPU builds. The commands below are the manual
+route.
 
 `requirements.txt` doesn't pin `torch`, so a plain install usually pulls a
 **CPU-only** wheel even on a CUDA machine. `resolve_device("auto")` and

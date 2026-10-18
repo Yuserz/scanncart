@@ -79,7 +79,7 @@ help:
 	@echo "  typecheck            typecheck the desktop app (node + web)"
 	@echo "  clean                remove desktop node_modules/out/dist and sidecar .venv"
 	@echo ""
-	@echo "  sidecar-setup        create sidecar/.venv and install requirements (uses uv if available)"
+	@echo "  sidecar-setup        create sidecar/.venv + requirements; CUDA torch if an NVIDIA driver is found (CPU=1 skips)"
 	@echo "  sidecar-run          run the sidecar standalone (prints SIDECAR_PORT=<n>)"
 	@echo "  sidecar-test         run the sidecar pytest suite"
 	@echo ""
@@ -408,15 +408,21 @@ clean:
 models:
 	$(SIDECAR_DIR)/$(SIDECAR_VENV_PY) scripts/fetch_models.py
 
+# Then the NVIDIA builds of torch/onnxruntime when a driver is installed: requirements.txt alone
+# pulls CPU torch even on a CUDA machine, so a GPU laptop set up with `make install` ran on its CPU.
+# scripts/cuda_torch.py is the same step setup.ps1 runs; `make sidecar-setup CPU=1` skips it.
+# The venv is created only when missing (as both setup scripts do): uv refuses to create one over an
+# existing .venv, so a re-run - the way an installed checkout picks up a fix - used to fail here.
 sidecar-setup:
 	cd $(SIDECAR_DIR) && \
 	if command -v uv >/dev/null 2>&1; then \
-		uv venv --python 3.12 .venv && \
+		{ [ -x $(SIDECAR_VENV_PY) ] || uv venv --python 3.12 .venv; } && \
 		uv pip install --python $(SIDECAR_VENV_PY) -r requirements.txt; \
 	else \
-		python -m venv .venv && \
+		{ [ -x $(SIDECAR_VENV_PY) ] || python -m venv .venv; } && \
 		$(SIDECAR_VENV_PY) -m pip install -r requirements.txt; \
-	fi
+	fi && \
+	$(SIDECAR_VENV_PY) ../scripts/cuda_torch.py $(if $(CPU),--cpu)
 
 sidecar-run:
 	cd $(SIDECAR_DIR) && $(SIDECAR_VENV_PY) run.py
