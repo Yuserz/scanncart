@@ -81,7 +81,7 @@ function describeGpu(si: SystemInfoResponse): string {
     // missing CUDA torch build, not an APU — say so rather than mislabeling a
     // discrete GPU as integrated.
     if (si.gpu_name?.toLowerCase().includes('nvidia')) {
-      return `${si.gpu_name} — GPU detected but CUDA is unavailable (install a CUDA build of torch to accelerate); running on CPU`
+      return `${si.gpu_name} — GPU detected but CUDA is unavailable (torch is the CPU build: re-run setup.cmd -Gpu, then restart the app); running on CPU`
     }
     return `Integrated graphics: ${si.gpu_name ?? 'unknown'} (APU) — no CUDA acceleration, runs on CPU`
   }

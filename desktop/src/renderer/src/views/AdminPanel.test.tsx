@@ -282,6 +282,9 @@ describe('AdminPanel', () => {
     )
     // Must NOT mislabel a discrete NVIDIA card as an APU.
     expect(screen.getByTestId('hardware-info')).not.toHaveTextContent(/\(APU\)/)
+    // The remedy as the command to run: this is the state a default setup used to leave a GPU
+    // laptop in, and "install a CUDA build of torch" left the operator to work out how.
+    expect(screen.getByTestId('hardware-info')).toHaveTextContent(/re-run setup\.cmd -Gpu/)
   })
 
   it('device toggle: GPU is selectable and default on a CUDA machine, and stores auto', async () => {

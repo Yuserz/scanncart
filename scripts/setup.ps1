@@ -23,12 +23,14 @@
                                     shell the Makefile's recipes run in (from any terminal)
     GNU Make          any           optional - the root Makefile; start.cmd launches without it
 
-  Installed only when asked:
-    CUDA torch + onnxruntime-gpu    -Gpu: NVIDIA acceleration (docs/DEVELOPMENT.md section 6).
-                                    Needs an NVIDIA driver already installed (nvidia-smi).
+  Installed when an NVIDIA driver is (nvidia-smi on PATH):
+    CUDA torch + onnxruntime-gpu    NVIDIA acceleration (docs/DEVELOPMENT.md section 6). Automatic:
+                                    without it a GPU laptop runs on its CPU and the Admin panel
+                                    recommends a CPU preset for it. -Cpu keeps the CPU builds;
+                                    -Gpu insists, and fails when no NVIDIA driver is installed.
 
   Not installed by this script (optional, see the docs):
-    NVIDIA driver     for -Gpu      from nvidia.com - a driver is tied to the card, not the repo
+    NVIDIA driver     for the GPU   from nvidia.com - a driver is tied to the card, not the repo
     Docker Desktop    local_api     only for the Roboflow inference-server backend
                                     (docs/DETECTOR_BACKENDS.md); the default `native` backend
                                     needs nothing beyond the list above
@@ -50,6 +52,8 @@
   powershell -ExecutionPolicy Bypass -File scripts\setup.ps1 -ModelsFrom E:\scanncart-models
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\setup.ps1 -Gpu
+.EXAMPLE
+  powershell -ExecutionPolicy Bypass -File scripts\setup.ps1 -Cpu
 #>
 [CmdletBinding()]
 param(
@@ -63,13 +67,17 @@ param(
   [string]$ModelsFrom,
   # Skip downloading the weights from the repo's `models` GitHub Release.
   [switch]$NoModels,
-  # Replace the CPU torch/onnxruntime with NVIDIA CUDA builds (needs an NVIDIA driver).
+  # Require the NVIDIA CUDA builds of torch/onnxruntime: fail when there is no NVIDIA driver.
+  # (They are installed anyway whenever a driver is found; this only makes a missing one an error.)
   [switch]$Gpu,
+  # Keep the CPU builds even on a machine with an NVIDIA driver.
+  [switch]$Cpu,
   # The PyTorch CUDA wheel tag for -Gpu; cu124 pairs with requirements-cuda.txt's onnxruntime-gpu.
   [string]$CudaTag = 'cu124'
 )
 
 $ErrorActionPreference = 'Stop'
+if ($Gpu -and $Cpu) { throw '-Gpu and -Cpu contradict each other; pass one.' }
 
 $NodeMajorMin = 20
 $PythonVersion = '3.12'
@@ -260,6 +268,13 @@ if ($Check) {
   if (Test-Path "$RepoRoot\desktop\node_modules") { Ok 'desktop\node_modules' } else { Miss 'desktop\node_modules' }
   $weights = @(Get-ChildItem "$RepoRoot\sidecar\models" -Filter *.pt -ErrorAction SilentlyContinue)
   if ($weights.Count -gt 0) { Ok "model weights: $(($weights | ForEach-Object Name) -join ', ')" } else { Miss 'model weights in sidecar\models' }
+  if (Have nvidia-smi) {
+    $venvPy = "$RepoRoot\sidecar\.venv\Scripts\python.exe"
+    if (Test-Path $venvPy) {
+      & $venvPy -c "import sys, torch; sys.exit(0 if torch.cuda.is_available() else 1)"
+      if ($LASTEXITCODE -eq 0) { Ok 'CUDA torch (the NVIDIA GPU runs inference)' } else { Miss 'CUDA torch: an NVIDIA driver is installed but torch runs on the CPU (re-run setup.cmd)' }
+    }
+  }
   if (Test-Path "$RepoRoot\sidecar\models\scanncart-grocery-v2.1.pt") { Ok 'default model scanncart-grocery-v2.1.pt' } else { Miss 'default model scanncart-grocery-v2.1.pt (committed in git; setup also downloads it from the models release)' }
   exit 0
 }
@@ -320,24 +335,43 @@ try {
     & .venv\Scripts\python.exe -c "import torch, cv2, ultralytics, fastapi, onnxruntime, lap; print('  ok      torch', torch.__version__, '/ opencv', cv2.__version__, '/ ultralytics', ultralytics.__version__)"
   }
 
-  if ($Gpu) {
-    # docs/DEVELOPMENT.md section 6, as commands. A plain install pulls CPU torch even on a CUDA
-    # machine; torch and torchvision are replaced together (one alone fails on import with
-    # "torchvision::nms does not exist"), and onnxruntime is swapped for -gpu, never installed
-    # beside it - the two share an import name and break each other.
-    if (-not (Have nvidia-smi)) {
-      throw '-Gpu needs an NVIDIA driver (nvidia-smi was not found). Install it from nvidia.com, or re-run without -Gpu.'
+  # docs/DEVELOPMENT.md section 6, as commands - and automatic whenever an NVIDIA driver is
+  # installed, because a plain install pulls CPU torch even on a CUDA machine: an RTX laptop set up
+  # without this ran on its CPU, and the Admin panel (which trusts torch.cuda.is_available())
+  # recommended a CPU preset for it. -Cpu opts out; -Gpu makes a missing driver an error.
+  $haveDriver = Have nvidia-smi
+  if ($Gpu -and -not $haveDriver) {
+    throw '-Gpu needs an NVIDIA driver (nvidia-smi was not found). Install it from nvidia.com, or re-run without -Gpu.'
+  }
+  if ($haveDriver -and -not $Cpu) {
+    # torch and torchvision are replaced together (one alone fails on import with
+    # "torchvision::nms does not exist"), and only when torch is not a CUDA build already, so a
+    # re-run does not download ~2.5 GB again.
+    & .venv\Scripts\python.exe -c "import sys, torch; sys.exit(0 if torch.version.cuda else 1)"
+    if ($LASTEXITCODE -eq 0) {
+      Ok 'torch is already a CUDA build'
+    } else {
+      Say "NVIDIA driver found - installing CUDA torch ($CudaTag) (pass -Cpu to keep the CPU build)"
+      Invoke-Checked 'CUDA torch' {
+        & uv pip install --python .venv\Scripts\python.exe torch torchvision `
+          --index-url "https://download.pytorch.org/whl/$CudaTag" `
+          --reinstall-package torch --reinstall-package torchvision
+      }
     }
-    Say "Installing CUDA torch ($CudaTag) and onnxruntime-gpu"
-    Invoke-Checked 'CUDA torch' {
-      & uv pip install --python .venv\Scripts\python.exe torch torchvision `
-        --index-url "https://download.pytorch.org/whl/$CudaTag" `
-        --reinstall-package torch --reinstall-package torchvision
-    }
+    # onnxruntime is swapped for -gpu, never installed beside it - the two share an import name and
+    # break each other. Redone on every run: the requirements install above puts the CPU build back
+    # on a re-run, and removing it deletes the shared directory, so -gpu is reinstalled after.
+    Say 'Swapping onnxruntime for onnxruntime-gpu'
     Invoke-Checked 'removing CPU onnxruntime' { & uv pip uninstall --python .venv\Scripts\python.exe onnxruntime }
-    Invoke-Checked 'onnxruntime-gpu' { & uv pip install --python .venv\Scripts\python.exe -r requirements-cuda.txt }
-    Invoke-Checked 'the GPU check' {
-      & .venv\Scripts\python.exe -c "import torch, sys; ok = torch.cuda.is_available(); print('  ok      CUDA', torch.version.cuda, torch.cuda.get_device_name(0)) if ok else print('  torch cannot see a GPU - is the driver new enough for $CudaTag?'); sys.exit(0 if ok else 1)"
+    Invoke-Checked 'onnxruntime-gpu' { & uv pip install --python .venv\Scripts\python.exe -r requirements-cuda.txt --reinstall-package onnxruntime-gpu }
+    $gpuCheck = { & .venv\Scripts\python.exe -c "import torch, sys; ok = torch.cuda.is_available(); print('  ok      CUDA', torch.version.cuda, torch.cuda.get_device_name(0)) if ok else print('  torch cannot see a GPU - is the driver new enough for $CudaTag?'); sys.exit(0 if ok else 1)" }
+    if ($Gpu) {
+      Invoke-Checked 'the GPU check' $gpuCheck
+    } else {
+      # Found on its own, a GPU torch cannot use is not worth failing the setup over: the app still
+      # runs, on the CPU, exactly as it would have without this step.
+      & $gpuCheck
+      if ($LASTEXITCODE -ne 0) { Warn "torch cannot use the NVIDIA GPU; the app will run on the CPU. Update the driver (nvidia.com), then re-run setup." }
     }
   }
 } finally { Pop-Location }

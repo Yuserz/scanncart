@@ -15,8 +15,9 @@ that bite on a fresh machine) read
   installed (the Makefile runs its recipes in Git's `sh.exe`); install it with
   `winget install ezwinports.make`. Every `make` target has a manual equivalent in
   the full guide.
-- Optional extras the setup does not install: an NVIDIA driver (for
-  `setup.ps1 -Gpu`) and Docker (only for the `local_api` detector backend).
+- Optional extras the setup does not install: an NVIDIA driver (with one installed, the
+  setup puts in the GPU builds of torch on its own) and Docker (only for the `local_api`
+  detector backend).
 - UV — optional but recommended.
 
 Don't have them? One script installs whatever is missing, then the project's

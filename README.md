@@ -67,7 +67,7 @@ extras, and the environment quirks that are easy to lose an afternoon to.
 | **GNU Make** | any | optional; wraps both toolchains |
 | **uv** | any recent | optional but recommended; manages Python 3.12 for you |
 | **A camera** | USB webcam or Logitech StreamCam | optional — only for live capture; both test suites run on fakes |
-| **NVIDIA driver** | one that supports CUDA 12.4 | optional — only for GPU inference (`setup.ps1 -Gpu`, [§6 of the guide](docs/DEVELOPMENT.md#6-optional--gpu-acceleration-nvidiacuda)) |
+| **NVIDIA driver** | one that supports CUDA 12.4 | optional — only for GPU inference (the setup uses it when found, [§6 of the guide](docs/DEVELOPMENT.md#6-optional--gpu-acceleration-nvidiacuda)) |
 | **Docker** | any | optional — only for the `local_api` detector backend ([`docs/DETECTOR_BACKENDS.md`](docs/DETECTOR_BACKENDS.md)) |
 
 The setup scripts below install every row of this table that software can
@@ -89,8 +89,9 @@ powershell -ExecutionPolicy Bypass -File scripts/setup.ps1     # Windows
 runtime), then double-click `start.cmd` to launch the app. The model weights are
 committed in `sidecar/models/`, so the clone already has them; to add weights that are not
 committed yet, `setup.cmd -ModelsFrom <folder>` copies every `.pt` and its `.json` record
-into `sidecar/models/` and never replaces one already there. On a PC with an NVIDIA card,
-`setup.cmd -Gpu` also swaps in the CUDA builds of torch and onnxruntime. The setup ends by
+into `sidecar/models/` and never replaces one already there. On a PC with an NVIDIA driver
+installed, the setup also swaps in the CUDA builds of torch and onnxruntime on its own (`-Cpu`
+keeps the CPU builds; `-Gpu` fails when there is no driver). The setup ends by
 importing torch, OpenCV and Ultralytics from the new venv, so a broken install
 fails there rather than at the first app start, and the `Windows setup` CI
 workflow runs the same `setup.cmd` on a Windows runner and starts the sidecar on
