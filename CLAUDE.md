@@ -34,9 +34,9 @@ Docs for people (setup, specs, readiness, training) are mapped in [`README.md`](
 
 ## Commands
 
-On a fresh machine, `bash scripts/setup.sh` (Linux/macOS) or `scripts/setup.ps1` / `setup.cmd` (Windows) installs the system tools — Git, Node 20+, uv + Python 3.12, GNU Make, and on Windows the VC++ runtime torch needs — and then runs the equivalent of `make install`; the tool list lives at the top of each script, so change both together. On Windows `start.cmd` launches the app, `setup.cmd -ModelsFrom <folder>` copies in the gitignored weights, and `.github/workflows/windows-setup.yml` runs `setup.cmd` on a Windows runner and starts the sidecar on the result.
+On a fresh machine, `bash scripts/setup.sh` (Linux/macOS) or `scripts/setup.ps1` / `setup.cmd` (Windows) installs the system tools — Git, Node 20+, uv + Python 3.12, GNU Make, and on Windows the VC++ runtime torch needs, plus CUDA torch with `-Gpu` — and then runs the equivalent of `make install`; the tool list lives at the top of each script, so change both together. On Windows `start.cmd` launches the app, `setup.cmd -ModelsFrom <folder>` copies in the gitignored weights, and `.github/workflows/windows-setup.yml` runs `setup.cmd` on a Windows runner and starts the sidecar on the result.
 
-A root `Makefile` wraps both toolchains (requires GNU Make — on Windows use Git Bash/WSL, or `winget install ezwinports.make`). Run `make help` to list targets. Key ones:
+A root `Makefile` wraps both toolchains (requires GNU Make — `winget install ezwinports.make` on Windows, where the Makefile runs its recipes in Git's `sh.exe` so make works from any terminal). Run `make help` to list targets. Key ones:
 
 ```bash
 make install              # desktop npm install + sidecar venv setup

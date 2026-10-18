@@ -8,14 +8,31 @@
   `make install` would. Re-running it is safe: a tool that is already there at a good enough
   version is left alone.
 
-  The tools, and why (README.md "Prerequisites" is the human version of this list):
+  Every tool this repo uses, and why (README.md "Prerequisites" is the human version of this list;
+  scripts/setup.sh carries the same list - change both together):
+
+  Installed by this script:
     Node.js + npm     20+           required - the Electron/React desktop app (CI uses 20)
     uv                any           required - creates the sidecar venv and fetches Python 3.12
     Python            exactly 3.12  required - the sidecar; installed *by uv*, never the system one
     VC++ runtime      2015-2022 x64 required - PyTorch's DLLs load against it; without it the
                                     sidecar dies on import with "WinError 126 ... fbgemm.dll"
-    Git (+ Git Bash)  any           optional - updates the checkout; Git Bash is the shell `make` needs
+    Python packages   requirements.txt  required - into sidecar\.venv (torch, ultralytics, opencv...)
+    npm packages      package-lock      required - into desktop\node_modules (Electron, React, vite...)
+    Git               any           recommended - updates the checkout, and its sh.exe is the POSIX
+                                    shell the Makefile's recipes run in (from any terminal)
     GNU Make          any           optional - the root Makefile; start.cmd launches without it
+
+  Installed only when asked:
+    CUDA torch + onnxruntime-gpu    -Gpu: NVIDIA acceleration (docs/DEVELOPMENT.md section 6).
+                                    Needs an NVIDIA driver already installed (nvidia-smi).
+
+  Not installed by this script (optional, see the docs):
+    NVIDIA driver     for -Gpu      from nvidia.com - a driver is tied to the card, not the repo
+    Docker Desktop    local_api     only for the Roboflow inference-server backend
+                                    (docs/DETECTOR_BACKENDS.md); the default `native` backend
+                                    needs nothing beyond the list above
+    A camera          live capture  a USB webcam or Logitech StreamCam; tests need none
 
   The model weights are not in git. Pass -ModelsFrom with a folder holding them (a USB stick, a
   shared drive) to copy every .pt and its .json record into sidecar\models.
@@ -28,6 +45,8 @@
   powershell -ExecutionPolicy Bypass -File scripts\setup.ps1 -Check
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\setup.ps1 -ModelsFrom E:\scanncart-models
+.EXAMPLE
+  powershell -ExecutionPolicy Bypass -File scripts\setup.ps1 -Gpu
 #>
 [CmdletBinding()]
 param(
@@ -38,7 +57,11 @@ param(
   # Run both test suites at the end.
   [switch]$Test,
   # A folder holding model weights (*.pt + their *.json records) to copy into sidecar\models.
-  [string]$ModelsFrom
+  [string]$ModelsFrom,
+  # Replace the CPU torch/onnxruntime with NVIDIA CUDA builds (needs an NVIDIA driver).
+  [switch]$Gpu,
+  # The PyTorch CUDA wheel tag for -Gpu; cu124 pairs with requirements-cuda.txt's onnxruntime-gpu.
+  [string]$CudaTag = 'cu124'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -81,16 +104,31 @@ function Warn([string]$m) { Write-Host "warning: $m" -ForegroundColor Yellow }
 function Have([string]$c) { [bool](Get-Command $c -ErrorAction SilentlyContinue) }
 
 # winget changes PATH in the registry only; pull it into this session so the tools it just
-# installed are callable without opening a new terminal.
+# installed are callable without opening a new terminal. The session's own PATH stays first (the
+# node it already runs keeps winning) and a registry entry is added only when it is not already
+# there: the session PATH already carries most of the registry's, and simply joining the two
+# doubles it - long enough that the cmd.exe npm starts for install scripts cannot search it, and
+# `node` "is not recognized" mid-install (seen on the Windows CI runner).
 function Update-SessionPath {
-  $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
-  $user = [Environment]::GetEnvironmentVariable('Path', 'User')
+  $sep = [IO.Path]::PathSeparator
   # The two WinGet\Links folders are where winget puts portable tools (uv, make): per user, or
   # machine-wide when winget ran elevated. ~\.local\bin is where uv's own installer puts uv.
-  $extra = @($machine, $user, "$env:LOCALAPPDATA\Microsoft\WinGet\Links",
-    "$env:ProgramFiles\WinGet\Links", "$env:USERPROFILE\.local\bin")
-  $sep = [IO.Path]::PathSeparator
-  $env:Path = (($extra + $env:Path) | Where-Object { $_ }) -join $sep
+  $sources = @($env:Path,
+    [Environment]::GetEnvironmentVariable('Path', 'Machine'),
+    [Environment]::GetEnvironmentVariable('Path', 'User'),
+    "$env:LOCALAPPDATA\Microsoft\WinGet\Links", "$env:ProgramFiles\WinGet\Links",
+    "$env:USERPROFILE\.local\bin")
+  $seen = @{}
+  $entries = New-Object System.Collections.Generic.List[string]
+  foreach ($source in $sources) {
+    if (-not $source) { continue }
+    foreach ($entry in $source.Split($sep)) {
+      $entry = $entry.Trim()
+      $key = $entry.TrimEnd('\', '/').ToLowerInvariant()
+      if ($key -and -not $seen.ContainsKey($key)) { $seen[$key] = $true; $entries.Add($entry) }
+    }
+  }
+  $env:Path = $entries -join $sep
 }
 
 function Get-NodeMajor {
@@ -117,6 +155,14 @@ function Test-Native([scriptblock]$block) {
 function Test-VCRedist {
   $key = 'HKLM:\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64'
   try { return ((Get-ItemProperty $key -ErrorAction Stop).Installed -eq 1) } catch { return $false }
+}
+
+# Where the Makefile looks for Git's sh.exe (its GIT_SH list): without one, make runs its recipes
+# in cmd.exe and they fail, so a make with no Git beside it is worth a warning.
+function Get-GitShell {
+  $candidates = @("$env:ProgramFiles\Git\bin\sh.exe", "${env:ProgramFiles(x86)}\Git\bin\sh.exe",
+    "$env:LOCALAPPDATA\Programs\Git\bin\sh.exe")
+  return ($candidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1)
 }
 
 # The policy the user's own PowerShell windows get. Get-ExecutionPolicy alone would answer for this
@@ -180,6 +226,9 @@ if ((Get-NodeMajor) -ge $NodeMajorMin -and (Have npm)) {
 }
 if (Have uv) { Ok (& uv --version) } else { Miss 'uv'; $missing += 'uv' }
 if (Have make) { Ok ((& make --version) | Select-Object -First 1) } else { Miss 'make'; $missing += 'make' }
+if ($OnWindows) {
+  if (Get-GitShell) { Ok "Git's sh.exe for make: $(Get-GitShell)" } else { Miss "Git's sh.exe (make's recipes need it)" }
+}
 if ($OnWindows) {
   if (Test-VCRedist) { Ok 'Visual C++ runtime (x64)' } else { Miss 'Visual C++ runtime (x64)'; $missing += 'vcredist' }
 }
@@ -250,6 +299,27 @@ try {
   Invoke-Checked 'the import check' {
     & .venv\Scripts\python.exe -c "import torch, cv2, ultralytics, fastapi, onnxruntime; print('  ok      torch', torch.__version__, '/ opencv', cv2.__version__, '/ ultralytics', ultralytics.__version__)"
   }
+
+  if ($Gpu) {
+    # docs/DEVELOPMENT.md section 6, as commands. A plain install pulls CPU torch even on a CUDA
+    # machine; torch and torchvision are replaced together (one alone fails on import with
+    # "torchvision::nms does not exist"), and onnxruntime is swapped for -gpu, never installed
+    # beside it - the two share an import name and break each other.
+    if (-not (Have nvidia-smi)) {
+      throw '-Gpu needs an NVIDIA driver (nvidia-smi was not found). Install it from nvidia.com, or re-run without -Gpu.'
+    }
+    Say "Installing CUDA torch ($CudaTag) and onnxruntime-gpu"
+    Invoke-Checked 'CUDA torch' {
+      & uv pip install --python .venv\Scripts\python.exe torch torchvision `
+        --index-url "https://download.pytorch.org/whl/$CudaTag" `
+        --reinstall-package torch --reinstall-package torchvision
+    }
+    Invoke-Checked 'removing CPU onnxruntime' { & uv pip uninstall --python .venv\Scripts\python.exe onnxruntime }
+    Invoke-Checked 'onnxruntime-gpu' { & uv pip install --python .venv\Scripts\python.exe -r requirements-cuda.txt }
+    Invoke-Checked 'the GPU check' {
+      & .venv\Scripts\python.exe -c "import torch, sys; ok = torch.cuda.is_available(); print('  ok      CUDA', torch.version.cuda, torch.cuda.get_device_name(0)) if ok else print('  torch cannot see a GPU - is the driver new enough for $CudaTag?'); sys.exit(0 if ok else 1)"
+    }
+  }
 } finally { Pop-Location }
 
 # --- model weights (not in git) --------------------------------------------------------------
@@ -268,6 +338,9 @@ if ($ModelsFrom) {
   }
 }
 $weights = @(Get-ChildItem $modelsDir -Filter *.pt -ErrorAction SilentlyContinue)
+if ($OnWindows -and (Have make) -and -not (Get-GitShell)) {
+  Warn "make is installed but Git is not, so make's recipes have no POSIX shell. Install Git ($($ManualUrl['git']))."
+}
 if ($weights.Count -eq 0) {
   Write-Host ''
   Warn 'No model weights in sidecar\models - the app starts, but the default detector has nothing to load.'
@@ -301,4 +374,4 @@ Write-Host ''
 Say 'Done. To launch the app, double-click start.cmd in the repo folder.'
 Write-Host 'From a terminal instead:'
 Write-Host '    cd desktop; npm run dev     # any shell'
-Write-Host '    make dev                    # Git Bash only - make needs a POSIX shell'
+Write-Host '    make dev                    # any shell, once Git is installed (make runs its recipes in Git''s sh)'

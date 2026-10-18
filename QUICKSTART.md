@@ -10,9 +10,13 @@ that bite on a fresh machine) read
 - **Node.js 20+** and npm — for the Electron/React desktop app.
 - **Python exactly 3.12** — for the sidecar. Newer interpreters have no
   installable `torch`/`numpy` wheels. `uv venv --python 3.12` fetches one for you.
-- **GNU Make** — optional. On Windows use Git Bash/WSL, or
-  `winget install ezwinports.make`; every `make` target has a manual equivalent in
+- **Visual C++ runtime** (Windows only) — PyTorch's DLLs need it.
+- **GNU Make** — optional. On Windows it works from any terminal once Git is
+  installed (the Makefile runs its recipes in Git's `sh.exe`); install it with
+  `winget install ezwinports.make`. Every `make` target has a manual equivalent in
   the full guide.
+- Optional extras the setup does not install: an NVIDIA driver (for
+  `setup.ps1 -Gpu`) and Docker (only for the `local_api` detector backend).
 - UV — optional but recommended.
 
 Don't have them? One script installs whatever is missing, then the project's

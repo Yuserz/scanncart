@@ -13,12 +13,22 @@
 #
 # Windows: use scripts/setup.ps1 instead (or setup.cmd at the repo root).
 #
-# The tools, and why (README.md "Prerequisites" is the human version of this list):
-#   git      any         clone/pull the repo
-#   node+npm 20+         the Electron/React desktop app (CI uses 20)
-#   uv       any         creates the sidecar venv and fetches Python 3.12 itself, no sudo
-#   python   exactly 3.12  the sidecar - installed *by uv*, so the system python is never touched
-#   make     any         the root Makefile that wraps both toolchains
+# Every tool this repo uses, and why (README.md "Prerequisites" is the human version of this list;
+# scripts/setup.ps1 carries the same list - change both together).
+#
+# Installed by this script:
+#   node+npm 20+           required - the Electron/React desktop app (CI uses 20)
+#   uv       any           required - creates the sidecar venv and fetches Python 3.12, no sudo
+#   python   exactly 3.12  required - the sidecar; installed *by uv*, the system python is untouched
+#   Python packages        required - requirements.txt into sidecar/.venv (torch, ultralytics, opencv)
+#   npm packages           required - package-lock.json into desktop/node_modules (Electron, React)
+#   git      any           recommended - clone/pull the repo
+#   make     any           optional - the root Makefile that wraps both toolchains
+#
+# Not installed by this script (optional, see the docs):
+#   CUDA torch + onnxruntime-gpu   NVIDIA acceleration - docs/DEVELOPMENT.md section 6
+#   Docker                         only for the local_api detector backend (docs/DETECTOR_BACKENDS.md)
+#   a camera                       live capture only; the test suites need none
 
 set -euo pipefail
 
@@ -35,7 +45,7 @@ for arg in "$@"; do
     --tools-only) MODE=tools ;;
     --check) MODE=check ;;
     --test) RUN_TESTS=1 ;;
-    -h|--help) sed -n '3,21p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) awk 'NR>2 && !/^#/ {exit} NR>2 {sub(/^# ?/, ""); print}' "$0"; exit 0 ;;
     *) echo "unknown option: $arg (try --help)" >&2; exit 2 ;;
   esac
 done

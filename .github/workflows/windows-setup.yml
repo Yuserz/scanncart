@@ -86,6 +86,22 @@ jobs:
             if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
           }
 
+      # make for Windows runs recipes in cmd.exe unless it is pointed at a POSIX shell; the
+      # Makefile points it at Git's sh.exe, which is what lets these run from cmd at all. Real
+      # targets, not -n: docs-check and docs-sync-check run through the venv's python.exe, so they
+      # prove the Windows interpreter path the Makefile picks as well as the shell.
+      - name: make works from cmd (recipes run in Git's sh.exe)
+        shell: cmd
+        run: |
+          where make
+          make help
+          make docs-check
+          make docs-sync-check
+
+      - name: make works from Git Bash
+        shell: bash
+        run: make docs-check
+
       - name: The desktop app builds with the installed packages
         shell: cmd
         working-directory: desktop

@@ -4,9 +4,10 @@
 ## Wraps the desktop (Electron/npm) and sidecar (Python/uv) toolchains.
 ## Run `make` or `make help` to list targets.
 ##
-## Windows note: this Makefile assumes a POSIX shell (Git Bash / WSL / MSYS).
-## Install GNU Make via `winget install ezwinports.make`, or run these targets
-## from within WSL or a Git Bash shell that has `make` on PATH.
+## Windows note: the recipes are POSIX shell. When Git for Windows is installed
+## (`scripts/setup.ps1` installs it, with `winget install ezwinports.make` for make
+## itself), the block below points make at Git's own sh.exe, so `make` works from
+## cmd and PowerShell as well as Git Bash. Without Git, run make from WSL or MSYS.
 ##
 ## `test` is CI's target and stays fake-only, so it needs no data. `verify-clamp`,
 ## `verify-unsure`, `annotate`, `human-pass`, `readiness`, `doctor`, `accept-v2`, `replay-scenarios`,
@@ -22,6 +23,17 @@ DESKTOP_DIR := desktop
 
 ifeq ($(OS),Windows_NT)
   SIDECAR_VENV_PY := .venv/Scripts/python.exe
+  # make for Windows runs recipes in cmd.exe unless a sh.exe is on PATH, which it is only inside
+  # Git Bash - so from cmd or PowerShell every `if`/`command -v` recipe here would fail. Git's
+  # bin/sh.exe is the wrapper that also puts its coreutils (rm, ...) on PATH. Short (8.3) names,
+  # because make splits a path with spaces into two words; a per-user Git install is the last try.
+  GIT_SH := $(firstword $(wildcard \
+    C:/PROGRA~1/Git/bin/sh.exe \
+    C:/PROGRA~2/Git/bin/sh.exe \
+    $(subst \,/,$(LOCALAPPDATA))/Programs/Git/bin/sh.exe))
+  ifneq ($(GIT_SH),)
+    SHELL := $(GIT_SH)
+  endif
 else
   SIDECAR_VENV_PY := .venv/bin/python
 endif
