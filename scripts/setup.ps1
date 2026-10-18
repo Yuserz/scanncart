@@ -9,13 +9,16 @@
   version is left alone.
 
   The tools, and why (README.md "Prerequisites" is the human version of this list):
-    Git (+ Git Bash)  any           clone the repo; Git Bash is the POSIX shell `make` needs
-    Node.js + npm     20+           the Electron/React desktop app (CI uses 20)
-    uv                any           creates the sidecar venv and fetches Python 3.12 itself
-    Python            exactly 3.12  the sidecar - installed *by uv*, never the system python
-    GNU Make          any           the root Makefile that wraps both toolchains
-    VC++ runtime      2015-2022 x64 PyTorch's DLLs load against it; without it the sidecar dies on
-                                    import with "WinError 126 ... fbgemm.dll"
+    Node.js + npm     20+           required - the Electron/React desktop app (CI uses 20)
+    uv                any           required - creates the sidecar venv and fetches Python 3.12
+    Python            exactly 3.12  required - the sidecar; installed *by uv*, never the system one
+    VC++ runtime      2015-2022 x64 required - PyTorch's DLLs load against it; without it the
+                                    sidecar dies on import with "WinError 126 ... fbgemm.dll"
+    Git (+ Git Bash)  any           optional - updates the checkout; Git Bash is the shell `make` needs
+    GNU Make          any           optional - the root Makefile; start.cmd launches without it
+
+  The model weights are not in git. Pass -ModelsFrom with a folder holding them (a USB stick, a
+  shared drive) to copy every .pt and its .json record into sidecar\models.
 
   Linux/macOS: use scripts/setup.sh instead.
 
@@ -23,6 +26,8 @@
   powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\setup.ps1 -Check
+.EXAMPLE
+  powershell -ExecutionPolicy Bypass -File scripts\setup.ps1 -ModelsFrom E:\scanncart-models
 #>
 [CmdletBinding()]
 param(
@@ -31,7 +36,9 @@ param(
   # Report what is missing and change nothing.
   [switch]$Check,
   # Run both test suites at the end.
-  [switch]$Test
+  [switch]$Test,
+  # A folder holding model weights (*.pt + their *.json records) to copy into sidecar\models.
+  [string]$ModelsFrom
 )
 
 $ErrorActionPreference = 'Stop'
@@ -51,6 +58,18 @@ $Packages = [ordered]@{
   vcredist = 'Microsoft.VCRedist.2015+.x64'
 }
 
+# The app runs without these; a failure to install one is a warning, not the end of the setup.
+$Optional = @('git', 'make')
+
+# Where to get each tool by hand when neither winget nor a fallback can install it.
+$ManualUrl = @{
+  git  = 'https://git-scm.com/download/win'
+  node = 'https://nodejs.org/en/download'
+  uv   = 'https://docs.astral.sh/uv/getting-started/installation/'
+  make = 'https://github.com/mbuilov/gnumake-windows'
+  vcredist = 'https://aka.ms/vs/17/release/vc_redist.x64.exe'
+}
+
 # What winget returns for "nothing to do": the package is already installed (no applicable upgrade
 # / already installed). Both happen when a tool is installed but not on this session's PATH yet.
 $WingetAlreadyInstalled = @(-1978335189, -1978335135)
@@ -58,6 +77,7 @@ $WingetAlreadyInstalled = @(-1978335189, -1978335135)
 function Say([string]$m)  { Write-Host "==> $m" -ForegroundColor Cyan }
 function Ok([string]$m)   { Write-Host "  ok      $m" -ForegroundColor Green }
 function Miss([string]$m) { Write-Host "  missing $m" -ForegroundColor Yellow }
+function Warn([string]$m) { Write-Host "warning: $m" -ForegroundColor Yellow }
 function Have([string]$c) { [bool](Get-Command $c -ErrorAction SilentlyContinue) }
 
 # winget changes PATH in the registry only; pull it into this session so the tools it just
@@ -65,7 +85,10 @@ function Have([string]$c) { [bool](Get-Command $c -ErrorAction SilentlyContinue)
 function Update-SessionPath {
   $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
   $user = [Environment]::GetEnvironmentVariable('Path', 'User')
-  $extra = @($machine, $user, "$env:LOCALAPPDATA\Microsoft\WinGet\Links", "$env:USERPROFILE\.local\bin")
+  # The two WinGet\Links folders are where winget puts portable tools (uv, make): per user, or
+  # machine-wide when winget ran elevated. ~\.local\bin is where uv's own installer puts uv.
+  $extra = @($machine, $user, "$env:LOCALAPPDATA\Microsoft\WinGet\Links",
+    "$env:ProgramFiles\WinGet\Links", "$env:USERPROFILE\.local\bin")
   $sep = [IO.Path]::PathSeparator
   $env:Path = (($extra + $env:Path) | Where-Object { $_ }) -join $sep
 }
@@ -96,6 +119,52 @@ function Test-VCRedist {
   try { return ((Get-ItemProperty $key -ErrorAction Stop).Installed -eq 1) } catch { return $false }
 }
 
+# The policy the user's own PowerShell windows get. Get-ExecutionPolicy alone would answer for this
+# process, which setup.cmd starts with -ExecutionPolicy Bypass, so it would never report a problem.
+# The first scope that sets one wins (group policy first); none set means Windows' default.
+function Get-UserShellPolicy {
+  foreach ($scope in 'MachinePolicy', 'UserPolicy', 'CurrentUser', 'LocalMachine') {
+    $policy = [string](Get-ExecutionPolicy -Scope $scope)
+    if ($policy -ne 'Undefined') { return $policy }
+  }
+  return 'Restricted'
+}
+
+# Installs one tool, by winget when there is one, else by the tool's own installer where it has
+# one that needs no winget (uv, the VC++ runtime). Returns $false instead of throwing, so the
+# caller decides whether the tool was required.
+function Install-Tool([string]$tool) {
+  if (Have winget) {
+    $id = $Packages[$tool]
+    Say "Installing $tool ($id)"
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+      & winget install --id $id --exact --silent --accept-package-agreements --accept-source-agreements
+    } finally { $ErrorActionPreference = $prev }
+    if ($LASTEXITCODE -eq 0 -or $WingetAlreadyInstalled -contains $LASTEXITCODE) { return $true }
+    Warn "winget install $id failed (exit $LASTEXITCODE)"
+  }
+  try {
+    switch ($tool) {
+      'uv' {
+        Say 'Installing uv with its own installer'
+        Invoke-RestMethod https://astral.sh/uv/install.ps1 | Invoke-Expression
+        return $true
+      }
+      'vcredist' {
+        Say 'Installing the Visual C++ runtime from Microsoft (asks for admin rights)'
+        $exe = Join-Path $env:TEMP 'vc_redist.x64.exe'
+        Invoke-WebRequest -UseBasicParsing -Uri $ManualUrl['vcredist'] -OutFile $exe
+        $p = Start-Process -FilePath $exe -ArgumentList '/install', '/quiet', '/norestart' -Verb RunAs -Wait -PassThru
+        # 3010 = installed, a restart finishes it; 1638 = a newer one is already there.
+        return (@(0, 3010, 1638) -contains $p.ExitCode)
+      }
+    }
+  } catch { Warn "installing $tool failed: $($_.Exception.Message)" }
+  return $false
+}
+
 Update-SessionPath
 
 # --- what is there ---------------------------------------------------------------------------
@@ -123,6 +192,8 @@ if ($Check) {
   }
   if (Test-Path "$RepoRoot\sidecar\.venv\Scripts\python.exe") { Ok 'sidecar\.venv' } else { Miss 'sidecar\.venv' }
   if (Test-Path "$RepoRoot\desktop\node_modules") { Ok 'desktop\node_modules' } else { Miss 'desktop\node_modules' }
+  $weights = @(Get-ChildItem "$RepoRoot\sidecar\models" -Filter *.pt -ErrorAction SilentlyContinue)
+  if ($weights.Count -gt 0) { Ok "model weights: $(($weights | ForEach-Object Name) -join ', ')" } else { Miss 'model weights in sidecar\models' }
   exit 0
 }
 
@@ -130,26 +201,26 @@ if ($Check) {
 
 if ($missing.Count -gt 0) {
   if (-not (Have winget)) {
-    throw 'winget is not available. Install "App Installer" from the Microsoft Store, then re-run.'
+    Warn 'winget is not available (install "App Installer" from the Microsoft Store to get it).'
+    Warn 'Falling back to the tools'' own installers where they have one.'
   }
+  $failed = @()
   foreach ($tool in $missing) {
-    $id = $Packages[$tool]
-    Say "Installing $tool ($id)"
-    $prev = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    try {
-      & winget install --id $id --exact --silent --accept-package-agreements --accept-source-agreements
-    } finally { $ErrorActionPreference = $prev }
-    if ($LASTEXITCODE -ne 0 -and $WingetAlreadyInstalled -notcontains $LASTEXITCODE) {
-      throw "winget install $id failed (exit $LASTEXITCODE)"
-    }
+    if (-not (Install-Tool $tool)) { $failed += $tool }
   }
   Update-SessionPath
   foreach ($tool in $missing) {
-    if ($tool -eq 'vcredist') { continue }
-    if (-not (Have $tool)) {
-      throw "$tool was installed but is not on PATH yet - open a new terminal and re-run this script."
-    }
+    $present = if ($tool -eq 'vcredist') { Test-VCRedist } else { Have $tool }
+    if (-not $present -and $failed -notcontains $tool) { $failed += $tool }
+  }
+  $blocking = @($failed | Where-Object { $Optional -notcontains $_ })
+  foreach ($tool in $failed) {
+    if ($Optional -contains $tool) { Warn "$tool is optional and was not installed - get it from $($ManualUrl[$tool])" }
+  }
+  if ($blocking.Count -gt 0) {
+    foreach ($tool in $blocking) { Write-Host "  install $tool from $($ManualUrl[$tool])" -ForegroundColor Red }
+    throw ("Required tools are missing: $($blocking -join ', '). Install them (links above), " +
+      'open a new terminal and re-run. If one was just installed, a new terminal may be all it needs.')
   }
   if ((Get-NodeMajor) -lt $NodeMajorMin) { throw "Node.js $NodeMajorMin+ is required (found $(& node --version))." }
 }
@@ -172,7 +243,37 @@ try {
     Invoke-Checked 'uv venv' { & uv venv --python $PythonVersion .venv }
   }
   Invoke-Checked 'uv pip install' { & uv pip install --python .venv\Scripts\python.exe -r requirements.txt }
+
+  # Prove the venv can load what the sidecar loads, now rather than at the first app start: a
+  # missing VC++ runtime or a broken wheel fails here with its real error.
+  Say 'Checking the sidecar can import its libraries'
+  Invoke-Checked 'the import check' {
+    & .venv\Scripts\python.exe -c "import torch, cv2, ultralytics, fastapi, onnxruntime; print('  ok      torch', torch.__version__, '/ opencv', cv2.__version__, '/ ultralytics', ultralytics.__version__)"
+  }
 } finally { Pop-Location }
+
+# --- model weights (not in git) --------------------------------------------------------------
+
+$modelsDir = Join-Path $RepoRoot 'sidecar\models'
+if ($ModelsFrom) {
+  if (-not (Test-Path $ModelsFrom -PathType Container)) { throw "-ModelsFrom: '$ModelsFrom' is not a folder." }
+  $copied = @(Get-ChildItem $ModelsFrom -File | Where-Object { @('.pt', '.json', '.onnx') -contains $_.Extension })
+  if ($copied.Count -eq 0) { throw "-ModelsFrom: '$ModelsFrom' holds no .pt, .json or .onnx files." }
+  Say "Copying $($copied.Count) model file(s) into sidecar\models"
+  foreach ($f in $copied) {
+    # Never replace a weight already here: a same-named file may be a different training run.
+    if (Test-Path (Join-Path $modelsDir $f.Name)) { Warn "$($f.Name) is already in sidecar\models - kept, not replaced"; continue }
+    Copy-Item $f.FullName -Destination $modelsDir
+    Ok $f.Name
+  }
+}
+$weights = @(Get-ChildItem $modelsDir -Filter *.pt -ErrorAction SilentlyContinue)
+if ($weights.Count -eq 0) {
+  Write-Host ''
+  Warn 'No model weights in sidecar\models - the app starts, but the default detector has nothing to load.'
+  Warn 'Copy scanncart-grocery-v1.pt and its .json from the training PC (re-run with -ModelsFrom <folder>),'
+  Warn 'or pick a stock model such as yolo11n.pt in Admin > Model, which downloads on the first capture.'
+}
 
 if ($Test) {
   # The same two suites `make test` runs, called directly so this works from PowerShell, where
@@ -188,16 +289,16 @@ if ($Test) {
 # them: the next `npm run dev` typed into PowerShell fails with "running scripts is disabled on
 # this system". This script runs under -ExecutionPolicy Bypass so it is not affected; say how to
 # fix the user's own shells rather than changing a security setting behind their back.
-if ($OnWindows -and @('Restricted', 'AllSigned', 'Undefined') -contains [string](Get-ExecutionPolicy)) {
+$shellPolicy = if ($OnWindows) { Get-UserShellPolicy } else { 'Unrestricted' }
+if (@('Restricted', 'AllSigned') -contains $shellPolicy) {
   Write-Host ''
-  Write-Host "PowerShell's execution policy is '$(Get-ExecutionPolicy)', which blocks npm in PowerShell." -ForegroundColor Yellow
-  Write-Host 'Allow local scripts for your user (once), or use Git Bash / cmd instead:' -ForegroundColor Yellow
+  Warn "PowerShell's execution policy is '$shellPolicy', which blocks npm typed into PowerShell."
+  Warn 'start.cmd is not affected. To fix PowerShell itself, run this once:'
   Write-Host '    Set-ExecutionPolicy -Scope CurrentUser RemoteSigned'
 }
 
 Write-Host ''
-Say 'Done. Next, from Git Bash in the repo folder (make needs a POSIX shell):'
-Write-Host '    make test   # confirm both toolchains work (no camera needed)'
-Write-Host '    make dev    # launch the app'
-Write-Host 'Or without make, from any terminal:'
-Write-Host '    cd desktop; npm run dev'
+Say 'Done. To launch the app, double-click start.cmd in the repo folder.'
+Write-Host 'From a terminal instead:'
+Write-Host '    cd desktop; npm run dev     # any shell'
+Write-Host '    make dev                    # Git Bash only - make needs a POSIX shell'

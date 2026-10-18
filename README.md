@@ -78,6 +78,17 @@ bash scripts/setup.sh                                          # Linux/macOS
 powershell -ExecutionPolicy Bypass -File scripts/setup.ps1     # Windows
 ```
 
+**A new Windows PC, start to finish:** clone or unzip the repo, double-click
+`setup.cmd` (it asks for admin rights once, for Node.js and the Visual C++
+runtime), then double-click `start.cmd` to launch the app. The model weights are
+not in git — copy them from the training PC with
+`setup.cmd -ModelsFrom <folder>`, which copies every `.pt` and its `.json` record
+into `sidecar/models/` and never replaces one already there. The setup ends by
+importing torch, OpenCV and Ultralytics from the new venv, so a broken install
+fails there rather than at the first app start, and the `Windows setup` CI
+workflow runs the same `setup.cmd` on a Windows runner and starts the sidecar on
+the result.
+
 **Python 3.12 is not a suggestion.** The pinned `numpy` / `torch` / `opencv`
 wheels are not all available (or crash) on newer interpreters — a 3.13/3.14
 venv has produced a broken numpy and no installable `torch`. With `uv`,
