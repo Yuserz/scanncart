@@ -60,6 +60,22 @@
   font-size: 13px;
 }
 
+/* The camera-health notices (`components/PreviewHealth`). Amber rather than the red above, because
+   nothing is broken: the capture is running and the frames are arriving, they just cannot show
+   anything - the same meaning, and the same three colours, as the Live view's `.live-warning`.
+   Literals because the palette has no warning pair to share (`assets/theme.css` carries danger
+   only), and matching that banner by value is the point: one condition should not be two colours
+   on two screens. */
+.bt-warning {
+  padding: 8px 12px;
+  border: 1px solid #7c5a12;
+  background: #2a2110;
+  color: #ffb020;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
 .bt-preview {
   position: relative;
   align-self: start;

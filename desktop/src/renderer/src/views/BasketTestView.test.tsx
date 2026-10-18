@@ -10,7 +10,7 @@ import { DEFAULT_ZONE_PRESET } from '../../../main/transferGeometry'
 
 function harness(mirrored = false): {
   streamDeps: StreamDeps
-  frame: (detections?: FrameMessage['detections']) => void
+  frame: (detections?: FrameMessage['detections'], stats?: Partial<FrameMessage['stats']>) => void
   status: (state: string, detail: string) => void
 } {
   let captured: StreamClientOptions | null = null
@@ -25,14 +25,17 @@ function harness(mirrored = false): {
         return { connect: vi.fn(), close: vi.fn() }
       }
     },
-    frame: (detections: FrameMessage['detections'] = []) => {
+    frame: (
+      detections: FrameMessage['detections'] = [],
+      stats: Partial<FrameMessage['stats']> = {}
+    ) => {
       const msg: FrameMessage = {
         type: 'frame',
         ts: 1,
         seq: 1,
         jpeg: 'AAAA',
         detections,
-        stats: { infer_fps: 10, capture_fps: 30, latency_ms: 20, suppressed: 0 },
+        stats: { infer_fps: 10, capture_fps: 30, latency_ms: 20, suppressed: 0, ...stats },
         fresh: true,
         mirrored
       } as FrameMessage
@@ -92,6 +95,79 @@ describe('BasketTestView', () => {
       '0.0000,0.6500 1.0000,0.6500 1.0000,1.0000 0.0000,1.0000'
     )
     expect(screen.getByTestId('zone-opening')).toBeInTheDocument()
+  })
+
+  it('says the picture is too dark to count on, and nothing otherwise', async () => {
+    // The tab's own failure mode: frames arriving at full rate from a camera that can see nothing.
+    // `camera running` is true here and stays true - the state line describes the capture thread,
+    // not the picture - so without this notice a tester reads a black preview as a broken zone.
+    const h = harness()
+    const state = basketState()
+    render(
+      <BasketTestView
+        port={8765}
+        streamDeps={h.streamDeps}
+        basketDeps={{ read: async () => state, subscribe: () => () => {} }}
+        bridge={bridgeWith(state)}
+      />
+    )
+    h.frame([], { too_dark: true })
+    await waitFor(() => expect(screen.getByTestId('bt-too-dark')).toBeInTheDocument())
+    expect(screen.getByTestId('bt-too-dark')).toHaveTextContent('Add light')
+    expect(screen.getByTestId('bt-too-dark')).toHaveTextContent('Allow 30 fps when dark')
+
+    act(() => {
+      h.frame([], { too_dark: false })
+    })
+    expect(screen.queryByTestId('bt-too-dark')).not.toBeInTheDocument()
+
+    // A sidecar that predates the field says nothing about the light, which must not read as dark.
+    const older = { infer_fps: 10, capture_fps: 30, latency_ms: 20, suppressed: 0 }
+    act(() => {
+      h.frame([], older)
+    })
+    expect(screen.queryByTestId('bt-too-dark')).not.toBeInTheDocument()
+  })
+
+  it('asks for the hand-wave after a boxless capture, and clears on the first box', async () => {
+    // The aim pre-flight, on the surface that is *used* to set the camera up: at a desk the picture
+    // may legitimately show nothing, and the four corners of a zone can be clicked onto a black
+    // frame and saved, so "no box ever" is the fact that separates a wrong zone from an absent
+    // camera. Twenty seconds in, the window docs/POS_SMOKE_TEST.md §0 grants an empty counter.
+    vi.useFakeTimers()
+    try {
+      const h = harness()
+      const state = basketState()
+      render(
+        <BasketTestView
+          port={8765}
+          streamDeps={h.streamDeps}
+          basketDeps={{ read: async () => state, subscribe: () => () => {} }}
+          bridge={bridgeWith(state)}
+        />
+      )
+      h.status('running', '')
+      h.frame()
+      act(() => {
+        vi.advanceTimersByTime(19_000)
+      })
+      expect(screen.queryByTestId('bt-aim-unverified')).not.toBeInTheDocument()
+
+      act(() => {
+        vi.advanceTimersByTime(2_000)
+      })
+      expect(screen.getByTestId('bt-aim-unverified')).toHaveTextContent('wave a hand')
+      // The banner quotes the time that actually elapsed, not the threshold it crossed.
+      expect(screen.getByTestId('bt-aim-unverified')).toHaveTextContent('21s')
+
+      // Evidence is what clears it: the first box this capture produces, not the tester's word.
+      act(() => {
+        h.frame([{ track_id: 3, cls: 'century_tuna', conf: 0.9, box: [0.2, 0.2, 0.4, 0.4] }])
+      })
+      expect(screen.queryByTestId('bt-aim-unverified')).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('labels each detected box with its product, confidence and track', async () => {

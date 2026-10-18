@@ -35,9 +35,9 @@ fs.mkdirSync(SHOT_DIR, { recursive: true });
 const electronBin = path.join(APP_DIR, 'node_modules', 'electron', 'dist', 'electron.exe');
 
 const mode = process.argv[2] || 'smoke';
-if (!['smoke', 'capture', 'allowlist', 'dataset', 'models', 'classlist', 'probe', 'v1', 'basket'].includes(mode)) {
+if (!['smoke', 'capture', 'allowlist', 'dataset', 'models', 'classlist', 'probe', 'v1', 'basket', 'nocam'].includes(mode)) {
   console.error(
-    `unknown mode '${mode}' — use: smoke | capture | allowlist | dataset | models | classlist | probe | v1 | basket`
+    `unknown mode '${mode}' — use: smoke | capture | allowlist | dataset | models | classlist | probe | v1 | basket | nocam`
   );
   process.exit(1);
 }
@@ -2182,6 +2182,242 @@ if (mode === 'basket') {
     await page.evaluate((z) => window.api.savePosConfig(z), originalZones).catch((e) =>
       console.log('could not restore zones:', String(e).slice(0, 200)));
     console.log('restored zones:', JSON.stringify(Object.fromEntries(ZONE_KEYS.map((k) => [k, undefined]))) && 'done');
+  }
+}
+
+if (mode === 'nocam') {
+  // For a machine whose camera cannot see: no device at all, or a device that opens and delivers a
+  // picture of nothing. `basket` cannot be that gate - its second check is "Start camera delivers
+  // frames", which *passes* on a black stream (frames arrive at full rate) and fails outright
+  // where there is no device, so the machine this mode exists for is exactly the one where that
+  // mode reports nothing at all.
+  //
+  // What is asserted instead is what the app says about it, in both shapes, because that is what a
+  // camera-less machine can still check end to end:
+  //
+  // - **A device opens and the picture is blank.** The two notices must be on screen, on the
+  //   Basket test tab *and* on the Live view: everything else in the window reads healthy here -
+  //   the capture runs, frames arrive at the full rate, the state line says `camera running` - and
+  //   a blank picture with nothing said is the defect this mode was written from (2026-10-16: 30
+  //   fps of pure black, 0 detections, no notice anywhere). Whether the picture *is* blank is read
+  //   from its own pixels, sampled out of the preview the operator is looking at — never from the
+  //   notice being checked: keying that on `bt-too-dark` made the guard answer its own question, so
+  //   deleting the notice turned the run green (mutation-tested the same day, and the reason the
+  //   input is pixels at all). The threshold is a *screening* one — is there a picture here at all —
+  //   because "too dark to light" is the app's own judgement (`CONTRAST_FLOOR`, which is what the
+  //   notice renders) and a second copy of it here would be a number nothing keeps in step.
+  // - **No device opens.** Pointed at an index nothing answers on - chosen from `/api/cameras`' own
+  //   list, so it is this machine's absent index rather than a number written down here - Start
+  //   must fail legibly: named on screen, never `running`, with the button usable again rather
+  //   than left pending behind a spinner. On this stack the refusal is the sidecar's own (the
+  //   device open fails and `capture/start` answers 503), so what is checked is what the window
+  //   does with it.
+  //
+  // A half that cannot apply on the machine running it says so with its numbers rather than
+  // passing quietly: a lit picture is not a blank one, and a device that is absent is not a blank
+  // picture either. The index is patched with `persist=false` and restored in a `finally`, so the
+  // machine's saved settings survive whatever happens - and capture is stopped before that patch
+  // because `camera_index` is restart-required and a patch under a running capture is a 409.
+  const port = await page.evaluate(() => window.api.getSidecarPort());
+  // `text()` then parse, rather than `json()`: a refusal can arrive with no JSON body (uvicorn's
+  // own 503 does), and a harness that throws on that reports itself broken instead of the status.
+  const api = (p, init) =>
+    page.evaluate(
+      ([pt, i]) =>
+        fetch(`http://127.0.0.1:${pt}${i.path}`, i).then(async (r) => {
+          const raw = await r.text();
+          let body = null;
+          try {
+            body = JSON.parse(raw);
+          } catch {
+            body = raw;
+          }
+          return { status: r.status, body };
+        }),
+      [port, { path: p, ...init }]
+    );
+  const patch = (fields) =>
+    api('/api/settings?persist=false', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(fields)
+    });
+  const txt = (sel) => page.textContent(sel, { timeout: 2_000 }).catch(() => null);
+  const there = async (sel) => (await page.$(sel)) !== null;
+  // The picture the operator is looking at, measured from its own pixels: the preview downsampled
+  // into a canvas. Reported as evidence, and used as the screening threshold that decides whether
+  // this half applies — which is why it cannot come from the app's own verdict: a reading that only
+  // exists while the thing under test works cannot fail when the thing stops working.
+  const previewLuma = (sel) =>
+    page.evaluate((s) => {
+      const img = document.querySelector(s);
+      if (!img || !img.complete || !img.naturalWidth) return null;
+      const c = document.createElement('canvas');
+      c.width = 160;
+      c.height = 90;
+      const ctx = c.getContext('2d');
+      ctx.drawImage(img, 0, 0, c.width, c.height);
+      const { data } = ctx.getImageData(0, 0, c.width, c.height);
+      let sum = 0;
+      let sum2 = 0;
+      let n = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        const v = (data[i] + data[i + 1] + data[i + 2]) / 3;
+        sum += v;
+        sum2 += v * v;
+        n++;
+      }
+      const mean = sum / n;
+      return {
+        mean: Math.round(mean * 10) / 10,
+        std: Math.round(Math.sqrt(Math.max(0, sum2 / n - mean * mean)) * 10) / 10
+      };
+    }, sel);
+  const original = (await api('/api/settings')).body;
+  const originalIndex = original.camera_index;
+  const cams = (await api('/api/cameras')).body;
+  const present = new Set((cams?.cameras ?? []).map((c) => c.index));
+  console.log('cameras:', JSON.stringify(cams?.cameras ?? cams), '| camera_index:', originalIndex);
+
+  try {
+    // --- no device opens -------------------------------------------------------------------
+    const absent = [...Array(9).keys()].find((i) => !present.has(i));
+    if (absent === undefined) {
+      console.log('every index 0..8 answers here — the no-device half cannot be tested on this machine');
+    } else {
+      const patched = await patch({ camera_index: absent });
+      check('an absent camera index is accepted while idle', patched.status === 200, `status=${patched.status}`);
+      // No renderer reload: the patch lands on the live settings object and the *next* start reads
+      // it (measured - with this same patch and no reload, the sidecar's own log shows the open
+      // failing on the new index). A reload would only add a fresh WebSocket to wait on, which is
+      // how the first version of this mode read an empty state chip and blamed the app.
+      await page.click('button[aria-label="Start"]');
+      // The refusal is bounded but not quick on a cold sidecar: the device open fails in seconds,
+      // while `capture/start` is still waiting on the detector's first build (a cold torch import,
+      // measured well past 30 s on this machine). So this waits for the start to *settle* — the
+      // error landing, or the button coming back enabled — rather than for a fixed delay. The
+      // short sleep first is so the pending state is on screen before the wait can be satisfied by
+      // the button that is about to be disabled.
+      await page.waitForTimeout(4_000);
+      const settled = await page
+        .waitForFunction(
+          () =>
+            !!document.querySelector('[data-testid="live-error"]') ||
+            !!document.querySelector('button[aria-label="Start"]:not([disabled])'),
+          null,
+          { timeout: 180_000 }
+        )
+        .then(() => true)
+        .catch(() => false);
+      const stateText = (await txt('[data-testid="state"]')) ?? '';
+      const err = await txt('[data-testid="live-error"]');
+      console.log(
+        `camera_index=${absent}: settled=${settled} state=${JSON.stringify(stateText)} live-error=${JSON.stringify(err)}`
+      );
+      check('a refused start settles instead of holding the button', settled, `state=${stateText}`);
+      check('an unopenable device never reads as a running capture', !/running/i.test(stateText), `state=${stateText}`);
+      check('and the failure is named on screen rather than left quiet', !!err, `live-error=${err}`);
+      check(
+        'the too-dark notice is not offered as the explanation for a device that is not there',
+        !(await there('[data-testid="live-too-dark"]'))
+      );
+      check(
+        'Start is usable again instead of pending behind a spinner',
+        await page.isEnabled('button[aria-label="Start"]', { timeout: 5_000 }).catch(() => false)
+      );
+      await shot(page, 'nocam-01-no-device');
+      await patch({ camera_index: originalIndex });
+    }
+
+    // --- a device opens, and the picture may be blank ---------------------------------------
+    await page.evaluate(() => document.querySelector('[data-testid="nav-basket"]').click());
+    await page.waitForSelector('[data-testid="basket-test"]', { timeout: 15_000 });
+    if (await page.$('[data-testid="bt-start"]')) await page.click('[data-testid="bt-start"]');
+    const gotFrames = await page
+      .waitForFunction(() => !!document.querySelector('img.bt-img'), null, { timeout: 40_000 })
+      .then(() => true)
+      .catch(() => false);
+    const tabState = await txt('.bt-state');
+    const tabError = await txt('[data-testid="bt-error"]');
+    console.log(`basket tab: frames=${gotFrames} state=${JSON.stringify(tabState)} error=${JSON.stringify(tabError)}`);
+    if (!gotFrames) {
+      // No picture at all: the honest contract is the same one the no-device half makes - the app
+      // says why - because a capture that never delivers and never explains is the silence this
+      // whole mode exists to catch.
+      check(
+        'a capture that delivers no frames says why instead of waiting quietly',
+        !!tabError,
+        `bt-error=${tabError} state=${tabState}`
+      );
+    } else {
+      // Long enough for the pipeline to have judged the light rather than for a first frame.
+      await page.waitForTimeout(6_000);
+      const luma = await previewLuma('img.bt-img');
+      // Whether this half applies at all is decided from the *pixels*, never from the notice this
+      // mode exists to check: keying it on `bt-too-dark` made the guard answer its own question,
+      // and deleting the notice turned the whole run green instead of red (found by mutating it
+      // away, 2026-10-16 - the one failure mode a gate like this has). The threshold is a
+      // *screening* one - is there a picture here at all - and deliberately not the app's own
+      // `CONTRAST_FLOOR`, which is the judgement the notice renders: a real scene carries contrast
+      // even when it is dim (this camera's lit scenes measured std 24-33 against 0 for the blank
+      // stream below), so a mean and a std both under 8 of 255 is a frame with nothing in it.
+      const blank = !!luma && luma.mean < 8 && luma.std < 8;
+      const dark = await there('[data-testid="bt-too-dark"]');
+      console.log(
+        `preview pixels (of 255): ${JSON.stringify(luma)} → ${blank ? 'blank' : 'a picture'} | bt-too-dark=${dark}`
+      );
+      if (!luma) {
+        check('the preview could be read back for measurement', false, 'no pixels sampled from img.bt-img');
+      } else if (!blank) {
+        console.log(
+          'not applicable on this machine: the picture is not blank, so there is no blank-picture ' +
+            'state to gate here — this half needs a camera that cannot see (the pixels above are the reading)'
+        );
+      } else {
+        check('the capture reads as running over a blank picture', tabState === 'camera running', `state=${tabState}`);
+        check('a blank picture is named on the tab that shows it', dark);
+        check(
+          'and the notice says what to do about it',
+          ((await txt('[data-testid="bt-too-dark"]')) ?? '').includes('Add light')
+        );
+        // The aim pre-flight is a window, not a threshold crossed on the wall clock: it must be
+        // silent inside the twenty seconds the smoke test already grants an empty counter.
+        check(
+          'the hand-wave notice stays quiet inside the empty-counter window',
+          !(await there('[data-testid="bt-aim-unverified"]')),
+          `aim=${await txt('[data-testid="bt-aim-unverified"]')}`
+        );
+        console.log('waiting out the aim window…');
+        await page.waitForFunction(() => !!document.querySelector('[data-testid="bt-aim-unverified"]'), null, {
+          timeout: 30_000
+        })
+          .then(() => true)
+          .catch(() => false);
+        check(
+          'and asks for the hand-wave once the window has passed',
+          ((await txt('[data-testid="bt-aim-unverified"]')) ?? '').includes('wave a hand')
+        );
+        console.log(`tab state at the window: ${JSON.stringify(await txt('.bt-state'))} (unchanged throughout)`);
+        await shot(page, 'nocam-02-basket-blank');
+        // The same condition on the other surface that shows a picture: one sentence, one verdict.
+        await page.evaluate(() => document.querySelector('[data-testid="nav-live"]').click());
+        await page.waitForTimeout(3_000);
+        check('the Live view agrees the picture is blank', await there('[data-testid="live-too-dark"]'));
+        check(
+          'with the same sentence, not a second wording of it',
+          ((await txt('[data-testid="live-too-dark"]')) ?? '').includes('Add light over the basket')
+        );
+        await shot(page, 'nocam-03-live-blank');
+      }
+    }
+  } finally {
+    const stop = (await page.$('button[aria-label="Stop"]')) ?? (await page.$('[data-testid="bt-stop"]'));
+    if (stop) {
+      await stop.click().catch(() => {});
+      await page.waitForTimeout(2_000);
+    }
+    const back = await patch({ camera_index: originalIndex });
+    console.log('camera_index restored:', JSON.stringify(back.body?.camera_index ?? back.body));
   }
 }
 
