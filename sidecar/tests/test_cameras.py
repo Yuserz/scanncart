@@ -1,10 +1,19 @@
 """Camera enumeration. Every test runs against fakes — no real device is ever
 opened, matching the convention in the rest of the suite."""
 
+import sys
+
 import cv2
 import pytest
 
-from app.cameras import CameraDevice, list_cameras, probe_index
+from app import camera, cameras
+from app.cameras import (
+    CameraDevice,
+    list_cameras,
+    list_device_names,
+    list_msmf_device_names,
+    probe_index,
+)
 from app.main import AppState, build_app
 from fastapi.testclient import TestClient
 
@@ -118,6 +127,47 @@ def test_list_cameras_survives_a_failing_name_lister():
 
     cams = list_cameras(name_lister=boom, cap_factory=factory_for({0: (640, 480)}))
     assert [c.name for c in cams] == ["Camera 0"]
+
+
+# --- which list the names come from --------------------------------------
+#
+# The names are zipped onto indices by position, so they have to come from the list the index
+# selects from. A laptop showed why: its Windows (PnP) list carried the built-in camera, the
+# StreamCam and a Windows Hello IR camera, in WMI's order, while capture opens index N of Media
+# Foundation's own enumeration - so the row labelled "Logitech StreamCam" opened the laptop camera.
+
+
+def test_device_names_come_from_media_foundation_when_it_answers():
+    pnp = ["Integrated IR Camera", "Logitech StreamCam", "Integrated Camera"]
+    msmf = ["Integrated Camera", "Logitech StreamCam"]
+    assert list_device_names(msmf_lister=lambda: msmf, pnp_lister=lambda: pnp) == msmf
+
+
+def test_device_names_fall_back_to_the_windows_list_when_media_foundation_is_silent():
+    # Empty is "no answer", not "no cameras": `list_cameras` stops at the first index that does
+    # not open, so a positional fallback can only ever label more rows, never invent one.
+    assert list_device_names(msmf_lister=lambda: [], pnp_lister=lambda: ["Cam A"]) == ["Cam A"]
+
+
+def test_device_names_fall_back_when_media_foundation_raises():
+    def boom():
+        raise OSError("no mfplat")
+
+    assert list_device_names(msmf_lister=boom, pnp_lister=lambda: ["Cam A"]) == ["Cam A"]
+
+
+def test_the_probe_opens_devices_the_way_capture_does():
+    # The index the panel probes has to be the device capture opens. Capture pins CAP_MSMF
+    # (`camera._default_capture`); the probe used OpenCV's auto backend, which can walk a
+    # different device order, so the size shown beside a row could belong to another camera.
+    assert cameras._default_cap_factory is camera._default_capture
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Media Foundation is Windows-only")
+def test_media_foundation_enumeration_answers_without_raising():
+    # Enumerates, never opens: no camera has to be plugged in, and none is touched.
+    names = list_msmf_device_names()
+    assert isinstance(names, list) and all(isinstance(n, str) and n for n in names)
 
 
 def test_list_cameras_returns_empty_when_no_device_opens():

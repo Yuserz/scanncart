@@ -5,28 +5,40 @@ an operator nothing when a machine has a built-in webcam and a StreamCam
 plugged in. This module pairs each workable index with a human-readable name so
 the Admin Panel can offer "1 - Logitech StreamCam (1920x1080)".
 
-The pairing is the awkward part, and it is a heuristic: OpenCV exposes an index
-and no name, Windows exposes a name and no index. Neither offers a join key
-without a DirectShow/Media Foundation binding (`pygrabber` et al.), which is a
-dependency this project does not want for a label. So names are taken in
-Windows enumeration order and zipped positionally onto the indices that
-actually open, which is the order OpenCV's MSMF backend also walks.
+The pairing is the awkward part: OpenCV exposes an index and no name. Capture
+opens `cv2.VideoCapture(index, cv2.CAP_MSMF)`, and OpenCV's Media Foundation
+backend resolves that index as the index-th device of `MFEnumDeviceSources`
+(video-capture sources). So the names are read from that same enumeration -
+`list_msmf_device_names`, through ctypes, with no new dependency - and zipped
+positionally onto the indices, which makes the position a real join key rather
+than a coincidence of two orders.
 
-Because the pairing can be wrong, every device also carries the resolution it
-actually probed at. That is the operator's check: a StreamCam reports
-1920x1080 where a typical built-in webcam reports 1280x720, so a mislabeled row
-is visible rather than silent.
+It used to be one. The names came from Windows' PnP list (Win32_PnPEntity,
+classes Camera + Image), which WMI returns in its own order and which also holds
+devices Media Foundation never opens (a Windows Hello IR camera, a scanner). On a
+laptop with a built-in camera beside the StreamCam, the row labelled "Logitech
+StreamCam" opened the built-in camera. The PnP list is kept only as the fallback
+for when Media Foundation cannot be asked at all.
+
+Every device also carries the resolution it actually probed at, through the same
+open path capture uses (`camera._default_capture`), so a row can still be
+checked against what the device is: a StreamCam reports 1920x1080 where a
+typical built-in webcam reports 1280x720.
 
 Probing opens each device, which is slow (~0.5-2 s each) and cannot be done
 while capture holds the camera — callers must only probe when idle.
 """
 
+import ctypes
 import subprocess
 import sys
+import uuid
 from dataclasses import dataclass
 from typing import Callable
 
 import cv2
+
+from app.camera import _default_capture
 
 # Windows groups webcams under either PNPClass; a UVC device can land in
 # 'Camera' while a vendor-driver device (the StreamCam here) lands in 'Image'.
@@ -50,9 +62,140 @@ class CameraDevice:
     height: int
 
 
-def list_device_names() -> list[str]:
-    """Best-effort camera names in Windows enumeration order. Returns [] on any
-    failure (non-Windows, no PowerShell, timeout) — never raises, matching
+# Media Foundation, as OpenCV's MSMF backend calls it (cap_msmf: MFCreateAttributes, SetGUID
+# SOURCE_TYPE = VIDCAP, MFEnumDeviceSources, then the index-th IMFActivate). These three GUIDs
+# appear byte-for-byte in this venv's cv2.pyd.
+_MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE = "c60ac5fe-252a-478f-a0ef-bc8fa5f7cad3"
+_MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID = "8ac3587a-4ae7-42d8-99e0-0a6013eef90f"
+_MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME = "60d0e559-52f8-4fa2-bbce-acdb34a8ec01"
+_MF_VERSION = 0x00020070  # MF_SDK_VERSION 0x0002 << 16 | MF_API_VERSION 0x0070
+_MFSTARTUP_FULL = 0
+_COINIT_MULTITHREADED = 0
+# IMFAttributes vtable slots (IUnknown's three first); IMFActivate inherits them.
+_RELEASE = 2
+_GET_ALLOCATED_STRING = 13
+_SET_GUID = 24
+
+
+class _GUID(ctypes.Structure):
+    _fields_ = [
+        ("Data1", ctypes.c_uint32),
+        ("Data2", ctypes.c_uint16),
+        ("Data3", ctypes.c_uint16),
+        ("Data4", ctypes.c_ubyte * 8),
+    ]
+
+
+def _guid(text: str) -> _GUID:
+    g = _GUID()
+    ctypes.memmove(ctypes.byref(g), uuid.UUID(text).bytes_le, 16)
+    return g
+
+
+def _com_method(obj: int, slot: int, *argtypes):
+    """The `slot`-th vtable entry of COM object `obj`, bound to it, returning the HRESULT."""
+    vtable = ctypes.cast(ctypes.c_void_p(obj), ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p)))[0]
+    fn = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, *argtypes)(vtable[slot])
+    return lambda *args: fn(obj, *args)
+
+
+def _enumerate_msmf(ole32, mfplat, mf) -> list[str]:
+    """The friendly name of every Media Foundation video-capture source, in enumeration order;
+    "" where a device would not give one, so every later name keeps its index."""
+    names: list[str] = []
+    attrs = ctypes.c_void_p()
+    if mfplat.MFCreateAttributes(ctypes.byref(attrs), 1) < 0 or not attrs.value:
+        return []
+    guid_arg = ctypes.POINTER(_GUID)
+    try:
+        key = _guid(_MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE)
+        vidcap = _guid(_MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID)
+        if _com_method(attrs.value, _SET_GUID, guid_arg, guid_arg)(
+            ctypes.byref(key), ctypes.byref(vidcap)
+        ) < 0:
+            return []
+        devices = ctypes.POINTER(ctypes.c_void_p)()
+        count = ctypes.c_uint32()
+        if mf.MFEnumDeviceSources(attrs, ctypes.byref(devices), ctypes.byref(count)) < 0:
+            return []
+        friendly = _guid(_MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME)
+        try:
+            for i in range(count.value):
+                activate = devices[i]
+                if not activate:
+                    names.append("")
+                    continue
+                try:
+                    text = ctypes.c_void_p()
+                    length = ctypes.c_uint32()
+                    get_string = _com_method(
+                        activate, _GET_ALLOCATED_STRING, guid_arg,
+                        ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_uint32),
+                    )
+                    hr = get_string(ctypes.byref(friendly), ctypes.byref(text), ctypes.byref(length))
+                    if hr >= 0 and text.value:
+                        names.append(ctypes.wstring_at(text.value, length.value))
+                        ole32.CoTaskMemFree(text)
+                    else:
+                        names.append("")
+                finally:
+                    _com_method(activate, _RELEASE)()
+        finally:
+            if devices:
+                ole32.CoTaskMemFree(ctypes.cast(devices, ctypes.c_void_p))
+    finally:
+        _com_method(attrs.value, _RELEASE)()
+    return names
+
+
+def list_msmf_device_names() -> list[str]:
+    """Camera names in Media Foundation's enumeration order - the order capture's
+    `cv2.VideoCapture(index, cv2.CAP_MSMF)` indexes into. Enumerates only; no device is
+    opened. Returns [] on any failure (non-Windows, no Media Foundation - an N edition of
+    Windows ships without it) and never raises: a label must not break the panel."""
+    if sys.platform != "win32":
+        return []
+    try:
+        ole32 = ctypes.WinDLL("ole32")
+        mfplat = ctypes.WinDLL("mfplat")
+        mf = ctypes.WinDLL("mf")
+    except OSError:
+        return []
+    ole32.CoInitializeEx.restype = ctypes.c_long
+    ole32.CoTaskMemFree.argtypes = [ctypes.c_void_p]
+    mfplat.MFStartup.restype = ctypes.c_long
+    mfplat.MFStartup.argtypes = [ctypes.c_ulong, ctypes.c_ulong]
+    mfplat.MFShutdown.restype = ctypes.c_long
+    mfplat.MFCreateAttributes.restype = ctypes.c_long
+    mfplat.MFCreateAttributes.argtypes = [ctypes.POINTER(ctypes.c_void_p), ctypes.c_uint32]
+    mf.MFEnumDeviceSources.restype = ctypes.c_long
+    mf.MFEnumDeviceSources.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p)),
+        ctypes.POINTER(ctypes.c_uint32),
+    ]
+    # S_OK / S_FALSE mean this call initialised COM and owes the uninitialise; RPC_E_CHANGED_MODE
+    # means the thread already runs COM in another mode, which Media Foundation works with too.
+    co = ole32.CoInitializeEx(None, _COINIT_MULTITHREADED)
+    try:
+        if mfplat.MFStartup(_MF_VERSION, _MFSTARTUP_FULL) < 0:
+            return []
+        try:
+            names = _enumerate_msmf(ole32, mfplat, mf)
+        finally:
+            mfplat.MFShutdown()
+    except Exception:  # noqa: BLE001 - a label must never break the panel
+        return []
+    finally:
+        if co in (0, 1):
+            ole32.CoUninitialize()
+    return [n or f"Camera {i}" for i, n in enumerate(names)]
+
+
+def list_pnp_device_names() -> list[str]:
+    """Best-effort camera names in Windows PnP order - **not** the order capture indexes
+    into (see the module docstring), so only `list_device_names`' fallback. Returns [] on
+    any failure (non-Windows, no PowerShell, timeout) — never raises, matching
     hardware._list_display_adapters."""
     if sys.platform != "win32":
         return []
@@ -69,6 +212,24 @@ def list_device_names() -> list[str]:
         return []
 
 
+def list_device_names(
+    msmf_lister: Callable[[], list[str]] = list_msmf_device_names,
+    pnp_lister: Callable[[], list[str]] = list_pnp_device_names,
+) -> list[str]:
+    """Camera names in the order capture's indices select from.
+
+    Media Foundation's own list when it answers; the PnP list only when it does not, since a
+    positional pairing off the wrong list is how a StreamCam row came to open a laptop camera.
+    An empty answer is a non-answer rather than "no cameras": `list_cameras` stops at the first
+    index that does not open, so the fallback can only label rows, never add one.
+    """
+    try:
+        names = msmf_lister()
+    except Exception:  # noqa: BLE001 - fall through to the PnP names
+        names = []
+    return names or pnp_lister()
+
+
 def name_for_index(index: int, names: list[str]) -> str:
     """The Windows name at a positional index, or a numbered fallback.
 
@@ -81,8 +242,9 @@ def name_for_index(index: int, names: list[str]) -> str:
     return names[index] if index < len(names) else f"Camera {index}"
 
 
-def _default_cap_factory(index: int):
-    return cv2.VideoCapture(index)
+# The probe opens a device exactly the way capture will (MSMF, then OpenCV's auto backend only if
+# MSMF cannot open it), so the size shown beside a row is the size of the device that row starts.
+_default_cap_factory = _default_capture
 
 
 def probe_index(index: int, cap_factory: Callable[[int], object] = _default_cap_factory):
