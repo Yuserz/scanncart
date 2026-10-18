@@ -31,9 +31,9 @@ should land on the **Live** view. Click **Start** to begin capture.
 
 Two things worth expecting on first launch:
 
-- The default grocery model (`sidecar/models/scanncart-grocery-v1.pt` + its `.json`) is not
-  in git: copy it in, or pick a stock model such as `yolo11n.pt` in **Admin → Model**,
-  which downloads on the first capture start.
+- The default grocery model (`sidecar/models/scanncart-grocery-v2.1.pt` + its `.json`) is
+  committed, along with the other installed grocery weights, so a clone or `git pull` has it.
+  A stock model such as `yolo11n.pt` (**Admin → Model**) downloads on the first capture start.
 - A Logitech StreamCam can take ~37 s to open and set its capture mode. That is
   the device, not a hang — `/api/health` keeps answering throughout.
 

@@ -6,12 +6,14 @@
 import type { SettingsPayload } from './api'
 
 // The locally trained grocery model, run in-process. Listed first because it is the default
-// (`sidecar/app/settings.py`) and the only model that detects the actual SKUs; the stock YOLO
-// weights below are generic COCO. Mirrors the sidecar's CUSTOM_MODEL_DIR convention — any
-// .onnx/.pt under sidecar/models/ is valid, this is just the one we ship with. (The
-// Roboflow-exported ONNX, models/scanncart-grocery.onnx, is the same architecture pre-retrain
-// and remains selectable.)
-export const CUSTOM_MODEL = 'models/scanncart-grocery-v1.pt'
+// (`sidecar/app/settings.py`) and the only kind of model that detects the actual SKUs; the stock
+// YOLO weights below are generic COCO. Mirrors the sidecar's CUSTOM_MODEL_DIR convention — any
+// .onnx/.pt under sidecar/models/ is valid, this is just the one we ship with. The default is the
+// newest installed weight, v2.1 (described at CUSTOM_MODEL_V2_1 below); every installed weight is
+// committed under sidecar/models/, so a fresh clone runs it with no copy step.
+export const CUSTOM_MODEL = 'models/scanncart-grocery-v2.1.pt'
+// The first locally trained weights, kept installed for comparison.
+export const CUSTOM_MODEL_V1 = 'models/scanncart-grocery-v1.pt'
 // The locally trained successor (MODEL_TRAINING.md §8.2). Named here only for its label and
 // hint; the picker *discovers* the file from GET /api/models, so this entry is optional and
 // its absence would not hide the model — a future v3 needs no entry at all to be selectable.
@@ -33,7 +35,7 @@ export const CUSTOM_MODEL_V2_1 = 'models/scanncart-grocery-v2.1.pt'
 
 // A raw path is not a label. Anything not listed falls back to its own name.
 export const MODEL_LABELS: Record<string, string> = {
-  [CUSTOM_MODEL]: 'SCANnCART grocery v1 (custom, 7 SKUs)',
+  [CUSTOM_MODEL_V1]: 'SCANnCART grocery v1 (custom, 7 SKUs)',
   [CUSTOM_MODEL_V2]: 'SCANnCART grocery v2 · stretch (custom, 7 SKUs)',
   [CUSTOM_MODEL_V2_LETTERBOX]: 'SCANnCART grocery v2 · letterbox (custom, 7 SKUs)',
   [CUSTOM_MODEL_V2_LETTERBOX_SYNTH]:

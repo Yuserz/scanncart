@@ -2,8 +2,11 @@
 __pycache__/
 *.pyc
 data/
-# Weights are build outputs, not source. The README is the exception: it carries the
-# naming rule (scanncart-grocery-v<N>) that the picker and MODEL_TRAINING.md 8.2 refer to.
+# The installed grocery weights and their records are committed, so a `git pull` brings a
+# new model to every checkout: `models/*` ignores the directory's contents, then the
+# negations below put the README, the weights and the records beside them back in. The
+# `!models/*.pt` / `!models/*.onnx` lines sit *after* the blanket `*.pt` / `*.onnx` rule
+# further down, because the last matching pattern wins.
 #
 # `models/*` rather than `models/`: excluding the *directory* excludes everything under
 # it, and git does not re-include a path whose parent directory is excluded - so the
@@ -24,10 +27,14 @@ models/*
 # `yolo11n/m/s.pt` (63 MB) were committed before this rule existed and have been untracked with
 # `git rm --cached`; the files stay on disk. History still carries them, so a clone pays for them
 # until the history is rewritten - which is the reason the rule exists rather than a reason to
-# rewrite it. A test (`test_no_weight_files_are_tracked`) checks through git that it stays true,
-# since `.gitignore` alone does not untrack something already in the index.
+# rewrite it. A test (`test_only_installed_weights_are_tracked`) checks through git that no weight
+# outside `models/` is tracked, since `.gitignore` alone does not untrack something already in
+# the index.
 *.pt
 *.onnx
+!models/*.pt
+!models/*.onnx
+!models/*.json
 .env
 .venv-inference/
 .inference-runtime/

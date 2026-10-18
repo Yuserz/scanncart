@@ -1,8 +1,10 @@
 # sidecar/models/
 
-Custom grocery weights live here. The directory is **gitignored** (see `../.gitignore`) —
-weights are build outputs, megabytes each, and a fresh clone should not pay for them. Only
-this README is tracked, so the convention travels with the code.
+Custom grocery weights live here. The installed weights (`*.pt`, `*.onnx`) and the `*.json`
+records beside them are **committed** (see `../.gitignore`), so a `git pull` brings a new model
+to every checkout. After `train_model.py --install` puts a new weight here, commit the `.pt` and
+its `.json` together. Keep each file under GitHub's 100 MB limit (the YOLO11s weights are about
+19 MB).
 
 ## What goes here
 

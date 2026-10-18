@@ -69,9 +69,9 @@ Every sidecar command names the venv's interpreter — `.venv/bin/python` on Lin
 a bare `python`, because the uv path this file leads with activates nothing, and a bare one is the
 system interpreter, which cannot import the app's dependencies at all.
 
-The default model is the trained grocery weight `sidecar/models/scanncart-grocery-v1.pt` with its
-record `scanncart-grocery-v1.json`; weights are gitignored, so a fresh clone copies them in or trains
-them. A stock model such as `yolo11n.pt`, once selected, is auto-downloaded by Ultralytics into
+The default model is the trained grocery weight `sidecar/models/scanncart-grocery-v2.1.pt` with its
+record `scanncart-grocery-v2.1.json`; the installed weights under `sidecar/models/` and their records
+are committed, so a `git pull` brings a new model with it. A stock model such as `yolo11n.pt`, once selected, is auto-downloaded by Ultralytics into
 `sidecar/` — the process cwd, because a bare `active_model` name (what `presets.py` writes) is
 resolved **by name** — not into `sidecar/models/`, which the Model picker reads. Those stock weights
 are runtime artifacts, gitignored by `*.pt` and kept on disk so the offline promise does not depend

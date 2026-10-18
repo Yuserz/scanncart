@@ -1,0 +1,66 @@
+{
+  "generation": "v1",
+  "resize_mode": "stretch",
+  "source": "scanncart-grocery version 1",
+  "installed_at": "2026-09-23T00:37:41",
+  "class_names": [
+    "555 sardines 155grams",
+    "Bear Brand Fortified Powdered Milk 33g",
+    "Milo Chocolate Drink 22g Sachet",
+    "century_tuna_flakes_in_oil_155_grams",
+    "lucky_me_pancit_canton_calamansi_flavor",
+    "safeguard_pure_white_60g",
+    "silver_swan_sukang_puti_200ML"
+  ],
+  "validation": [
+    {
+      "split": "test",
+      "floor": 0.85,
+      "measured_at": "2026-09-23T00:37:03",
+      "aggregates": {
+        "precision": 0.9822268557754701,
+        "recall": 0.9433695420201175,
+        "mAP50": 0.9651860239631412,
+        "mAP50-95": 0.9354882045654603
+      },
+      "per_class": [
+        {
+          "name": "555 sardines 155grams",
+          "recall": 0.7318385817202613,
+          "instances": 97
+        },
+        {
+          "name": "Bear Brand Fortified Powdered Milk 33g",
+          "recall": 1.0,
+          "instances": 50
+        },
+        {
+          "name": "Milo Chocolate Drink 22g Sachet",
+          "recall": 1.0,
+          "instances": 6
+        },
+        {
+          "name": "century_tuna_flakes_in_oil_155_grams",
+          "recall": 1.0,
+          "instances": 50
+        },
+        {
+          "name": "lucky_me_pancit_canton_calamansi_flavor",
+          "recall": 0.912288752961102,
+          "instances": 74
+        },
+        {
+          "name": "safeguard_pure_white_60g",
+          "recall": 1.0,
+          "instances": 50
+        },
+        {
+          "name": "silver_swan_sukang_puti_200ML",
+          "recall": 0.9594594594594594,
+          "instances": 74
+        }
+      ],
+      "per_distance": []
+    }
+  ]
+}

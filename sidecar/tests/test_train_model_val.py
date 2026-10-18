@@ -17,6 +17,7 @@ import generations
 import train_model
 import workspace
 from app import source_index
+from app.settings import Settings
 
 # Rebuilt from the modules that own each fact, not copied by value.
 V2 = generations.V2
@@ -1112,27 +1113,37 @@ def test_cli_install_without_a_run_dir_installs_the_finished_run(tmp_path, capsy
     assert "resize_mode: stretch" in out
 
 
-def test_no_weight_files_are_tracked():
-    """63 MB of COCO weights were committed before the `*.pt` rule existed and have been taken
-    out of the index with `git rm --cached` (the files stay on disk - ultralytics needs them
-    there). Checked through git rather than by reading `.gitignore`, because that is the only
-    thing that knows: an ignore rule does **not** untrack something already in the index, which
-    is how three weight files stayed committed while the file that bans them sat right beside
-    them. Nothing in the working tree changes if this regresses; that is the whole problem.
+def test_only_installed_weights_are_tracked():
+    """The installed grocery weights under `sidecar/models/` are committed, so a `git pull` brings
+    a new model to every checkout - and nothing else is. 63 MB of COCO weights were committed
+    before the `*.pt` rule existed and have been taken out of the index with `git rm --cached`
+    (the files stay on disk - ultralytics needs them there). Checked through git rather than by
+    reading `.gitignore`, because that is the only thing that knows: an ignore rule does **not**
+    untrack something already in the index, which is how three weight files stayed committed while
+    the file that bans them sat right beside them.
+
+    The shipped default is checked too: a fresh clone starts on `Settings().active_model`, so that
+    weight and the record its `resize_mode: auto` reads have to be in git, not only on this disk.
     """
     ls = subprocess.run(
         ["git", "ls-files", "sidecar"], capture_output=True, text=True, cwd=REPO_ROOT
     )
     if ls.returncode != 0:
         pytest.skip("not a git checkout")
-    tracked = [p for p in ls.stdout.splitlines() if p.endswith((".pt", ".onnx"))]
-    assert tracked == [], f"weights are tracked again: {tracked}"
+    files = ls.stdout.splitlines()
+    weights = [p for p in files if p.endswith((".pt", ".onnx"))]
+    stray = [p for p in weights if p.rsplit("/", 1)[0] != "sidecar/models"]
+    assert stray == [], f"weights are tracked outside sidecar/models/: {stray}"
+
+    default = "sidecar/" + Settings().active_model
+    assert default in files, f"the default weight {default} is not committed"
+    assert default.rsplit(".", 1)[0] + ".json" in files, f"the record beside {default} is not"
 
 
 def test_models_readme_is_tracked_and_names_the_weights_the_tool_installs(tmp_path):
     """Two files have to agree about the filename the picker will show: the tool that
-    installs the weights and the README in the directory they land in. And the weights
-    themselves must stay out of git while the README stays in.
+    installs the weights and the README in the directory they land in. And the README must
+    stay tracked beside the weights.
     """
     models = REPO_ROOT / "sidecar" / "models"
     readme = models / "README.md"

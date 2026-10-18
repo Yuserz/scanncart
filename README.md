@@ -154,10 +154,11 @@ model picker, and a **Test connection** button for the detector backend.
 
 Two things worth expecting on first launch:
 
-- **The grocery model is not in git.** The default model is
-  `sidecar/models/scanncart-grocery-v1.pt` with its record `scanncart-grocery-v1.json`
-  beside it; weights are gitignored, so copy both into `sidecar/models/` from the
-  team's share, or train them ([`docs/RUN_SHEET.md`](docs/RUN_SHEET.md)). Without them,
+- **The grocery models come with the clone.** The default model is
+  `sidecar/models/scanncart-grocery-v2.1.pt` with its record `scanncart-grocery-v2.1.json`
+  beside it; every installed weight under `sidecar/models/` is committed with its record,
+  so `git pull` brings a new one. To train your own, see
+  [`docs/RUN_SHEET.md`](docs/RUN_SHEET.md). For generic objects instead,
   pick a stock model (e.g. `yolo11n.pt`) in **Admin → Model**: it downloads into
   `sidecar/` on the first capture start and detects generic objects, not the store's
   products. Leave stock weights where they land rather than moving them into
