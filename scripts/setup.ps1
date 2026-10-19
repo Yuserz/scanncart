@@ -325,10 +325,42 @@ if ($ToolsOnly) { Say 'System tools ready'; exit 0 }
 
 # `npm ci`, not `npm install`: it installs exactly the lockfile and never writes it. npm 10 (Node
 # 22's) rewrites a lockfile npm 11 wrote, so `npm install` left a fresh clone with a modified file.
+# `npm ci` deletes node_modules first, and Windows refuses to delete a file a running program holds:
+# an open (or orphaned) SCANnCART window keeps node_modules\electron\dist\debug.log open and npm
+# fails with "EBUSY: resource busy or locked". Stop this checkout's own processes - the Electron
+# app, its sidecar, vite/esbuild - before reinstalling. Only programs run from inside this repo
+# folder are touched.
+function Stop-RepoProcesses {
+  $procs = @(Get-Process -ErrorAction SilentlyContinue |
+    Where-Object { $_.Path -and $_.Path.StartsWith("$RepoRoot\", [StringComparison]::OrdinalIgnoreCase) })
+  foreach ($p in $procs) {
+    Warn "Closing $($p.ProcessName) (pid $($p.Id)), run from this folder, so its files can be replaced"
+    Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+  }
+  if ($procs.Count -gt 0) { Start-Sleep -Seconds 2 }
+}
+
 Say "Installing desktop dependencies (npm ci - Electron's download can take a while)"
 Push-Location "$RepoRoot\desktop"
 try {
-  Invoke-Checked 'npm ci' { & npm ci }
+  if ($OnWindows) { Stop-RepoProcesses }
+  try {
+    Invoke-Checked 'npm ci' { & npm ci }
+  } catch {
+    if (-not $OnWindows) { throw }
+    # Something outside the repo can hold a file too (an editor, Explorer's preview, an antivirus
+    # scan that finishes a moment later): retry once before giving up.
+    Warn 'npm ci failed - closing anything still holding desktop\node_modules and trying once more'
+    Stop-RepoProcesses
+    Start-Sleep -Seconds 5
+    try {
+      Invoke-Checked 'npm ci' { & npm ci }
+    } catch {
+      throw ("npm ci failed twice. If the error says EBUSY or EPERM, a program still has a file in " +
+        'desktop\node_modules open: close SCANnCART, any editor or terminal opened in the desktop folder, ' +
+        'and Explorer windows showing it (or restart Windows), then run setup.cmd again.')
+    }
+  }
   # `npm ci` exits 0 even when Electron's own download/extract step produced nothing (seen with an
   # antivirus scanning the zip): node_modules\electron is there, electron.exe and path.txt are not,
   # and `npm run dev` later fails with the misleading "Electron uninstall". Check the binary itself,
