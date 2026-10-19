@@ -83,9 +83,9 @@ describe('PosConfigStore', () => {
     expect(await store.load()).toEqual(DEFAULT_POS_CONFIG)
   })
 
-  it('defaults to counter mode with the cart at the bottom of the frame', async () => {
+  it('defaults to basket mode with the cart at the bottom of the frame', async () => {
     const loaded = await store.load()
-    expect(loaded.cartMode).toBe('counter')
+    expect(loaded.cartMode).toBe('basket')
     expect(loaded.cartEdge).toBe('bottom')
   })
 
@@ -113,7 +113,7 @@ describe('PosConfigStore', () => {
       'utf8'
     )
     const loaded = await store.load()
-    expect([loaded.cartMode, loaded.cartEdge]).toEqual(['counter', 'bottom'])
+    expect([loaded.cartMode, loaded.cartEdge]).toEqual(['basket', 'bottom'])
   })
 
   it('defaults to bands (the camera under the handle) with no outlines', async () => {

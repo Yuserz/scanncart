@@ -5,6 +5,23 @@ equivalents of every command, GPU/Roboflow extras, and the environment quirks
 that bite on a fresh machine) read
 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
 
+## New Windows device (the short path)
+
+1. Get the code: `git clone <repo-url> C:\scanncart` — or download the ZIP from GitHub and
+   unzip it. Keep it **outside OneDrive** (a synced folder breaks `node_modules` and the venv).
+2. Double-click **`setup.cmd`**. It installs everything missing (Node, uv + Python 3.12, the
+   VC++ runtime, Git, Make, CUDA torch when an NVIDIA driver is present), the app's own
+   dependencies and the model weights, then puts a **SCANnCART** shortcut on the desktop.
+   Safe to re-run; `setup.cmd -Check` only reports what is missing.
+3. Plug the Logitech StreamCam into a **USB 3.0** port (blue, or marked SS) and close NVIDIA
+   Broadcast / Logi apps that might hold the camera.
+4. Double-click **SCANnCART** on the desktop (or `start.cmd`), then press **Start**.
+
+What a fresh install defaults to: capture **1920x1080 @ 60 fps** (the StreamCam's best mode)
+and self-checkout cart mode **Basket**. If the camera never delivers frames on a machine with
+only USB 2.0, set 1280x720 or 640x480 @ 30 in **Admin → Camera & Capture** and replug the camera. If
+Windows Defender kills the sidecar on start, add the repo folder as a Defender exclusion.
+
 ## You need
 
 - **Node.js 20+** and npm — for the Electron/React desktop app.

@@ -9,7 +9,9 @@ const CONFIG = {
   ...DEFAULT_POS_CONFIG,
   posBaseUrl: 'http://192.168.1.20:3000',
   posSecret: 'secret',
-  stationId: 'counter-1'
+  stationId: 'counter-1',
+  // A saved counter-mode config, so switching to basket is an edit.
+  cartMode: 'counter' as const
 }
 
 let saved: unknown = null
