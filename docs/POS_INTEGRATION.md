@@ -30,6 +30,12 @@ the shop goes live, the ordered run is [POS_SMOKE_TEST.md](./POS_SMOKE_TEST.md).
 
 ## 2. Set up pushcart-web
 
+**On the cloud project (the default, no Docker):** pushcart-web's shared Supabase project is already
+migrated and seeded — the seven-class product map and station `counter-1` are in it — so steps 1 and 3
+are done. Get `.env.cloud` from a teammate (it carries `POS_INGEST_SECRET`), run `make dev` in the
+pushcart-web checkout (it serves `http://localhost:3000`), and paste that secret into SCANnCART (§3).
+The steps below are for a fresh database, such as pushcart-web's optional local Docker stack.
+
 1. Apply the migration `supabase/migrations/*_pos_self_checkout.sql`. It adds `stations`,
    `product_class_map`, `station_sessions`, `station_session_overrides` and `pos_sync_log`, the
    `cart_items.session_ref` column, and the five functions (`pos_reconcile` for the desktop;
@@ -75,9 +81,9 @@ Admin Panel → **Self-checkout**. Its header shows the live status — *Off* (n
 
 | Field | Meaning |
 | --- | --- |
-| pushcart-web address | Whichever host runs pushcart-web: `http://192.168.1.20:3000` for Docker on the shop LAN, `https://pushcart.example.com` for cloud hosting. No trailing path. |
+| pushcart-web address | Whichever host runs pushcart-web. Default `http://localhost:3000`: pushcart-web's `make dev` on this PC, with its data in the cloud Supabase project (no Docker). Another PC on the LAN is `http://<its-ip>:3000`; a hosted deployment is `https://…`. No trailing path. |
 | Shared secret | The same value as pushcart-web's `POS_INGEST_SECRET`. Hidden unless you press *Show*. |
-| Station | The `id` of the station registered for **this** counter (§2 step 3). |
+| Station | The `id` of the station registered for **this** counter (§2 step 3). Default `counter-1`, the station pushcart-web's seed registers in the cloud project. |
 | Time before an item is added (s) | How long an item must be seen before it counts. Default 3. |
 | Time before an item is removed (s) | How long a lower count must hold before an item is removed. Default 10. **Suspended 2026-10-03:** until the removal-capable model ships, no automatic removal happens — a verified count is a floor for the rest of the session, and this window only carries the count through camera dropouts. |
 | Minimum confidence | Confidence below which a detection never counts. Default 0.6, to be tuned at the counter. |

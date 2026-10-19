@@ -136,10 +136,10 @@ scored above 0.85 on every frame, so the geometry did not explain the live track
 ## Demo-day checklist
 
 1. Close NVIDIA Broadcast (and turn off its autostart), Discord and anything else that can hold the camera.
-2. Start Docker Desktop → `npx supabase start` and `npm run dev` in pushcart-web.
+2. In pushcart-web (`C:\codes\pushcart-4scanncart`), run `make dev` — it copies `.env.cloud` over `.env` and serves on `http://localhost:3000` against the cloud Supabase project. No Docker.
 3. Start SCANnCART; on **Live**, confirm Capture fps ≈ 60 and the model is `scanncart-grocery-v2-stretch`
    with geometry `stretch` (Admin → `resize_mode` on `auto`).
-4. Admin → Self-checkout: station `cart-1`, mode **Basket**, *Test connection* answers 200.
+4. Admin → Self-checkout: station `counter-1`, mode **Basket**, *Test connection* answers 200.
 5. Basket test: zones match the table/basket in the picture; clear products out of the inside zone.
 6. Tablet: open `/customer/guest/scan-start`, tap **Start shopping**; the desktop shows *Customer session open*.
 7. Deposit one product slowly through the opening and leave it; it appears in about half a second.

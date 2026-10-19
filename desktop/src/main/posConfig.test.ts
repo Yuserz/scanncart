@@ -175,11 +175,11 @@ describe('PosConfigStore', () => {
 
 describe('isPosEnabled', () => {
   it('is off until base URL, secret and station id are all set', () => {
+    // The defaults carry the address and station but never the secret, so they stay off.
     expect(isPosEnabled(DEFAULT_POS_CONFIG)).toBe(false)
-    expect(isPosEnabled({ ...DEFAULT_POS_CONFIG, posBaseUrl: 'http://x' })).toBe(false)
-    expect(isPosEnabled({ ...DEFAULT_POS_CONFIG, posBaseUrl: 'http://x', posSecret: 's' })).toBe(
-      false
-    )
+    const empty = { ...DEFAULT_POS_CONFIG, posBaseUrl: '', stationId: '' }
+    expect(isPosEnabled({ ...empty, posBaseUrl: 'http://x' })).toBe(false)
+    expect(isPosEnabled({ ...empty, posBaseUrl: 'http://x', posSecret: 's' })).toBe(false)
     expect(
       isPosEnabled({
         ...DEFAULT_POS_CONFIG,

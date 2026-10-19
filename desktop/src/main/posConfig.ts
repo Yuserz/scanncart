@@ -29,7 +29,7 @@ export type CartMode = 'counter' | 'basket'
 export const CART_MODES: readonly CartMode[] = ['counter', 'basket']
 
 export interface PosConfig {
-  /** Whichever host serves pushcart-web (`http://192.168.1.20:3000` or an https cloud host). */
+  /** Whichever host serves pushcart-web (`http://localhost:3000` on this PC, or an https host). */
   posBaseUrl: string
   /** Shared secret for the `x-pos-token` header; matches pushcart-web's POS_INGEST_SECRET. */
   posSecret: string
@@ -72,10 +72,14 @@ export const POS_CONFIG_FILENAME = 'pos.json'
 /** The sidecar's default `track_expiry_s`, used when the live value cannot be read. */
 export const DEFAULT_TRACK_EXPIRY_S = 1.5
 
+// pushcart-web runs on the same PC (`make dev` there, against the cloud Supabase project), and its
+// seed registers station `counter-1`, so a fresh install only needs the secret pasted in. The
+// secret stays empty - it lives in pushcart-web's `.env.cloud`, never in git - so the feature
+// is still off until someone sets it.
 export const DEFAULT_POS_CONFIG: PosConfig = {
-  posBaseUrl: '',
+  posBaseUrl: 'http://localhost:3000',
   posSecret: '',
-  stationId: '',
+  stationId: 'counter-1',
   commitDwellS: 3,
   removeSettleS: 10,
   minCommitConf: 0.6,
