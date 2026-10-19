@@ -113,7 +113,7 @@ scored above 0.85 on every frame, so the geometry did not explain the live track
 | The scanner refused requests (“Exceeded concurrency limit”, > 64 open connections) once, then the app closed | 2026-10-05, during repeated dev-mode reloads of the Basket test screen; idle connection count is 4–8 | The soak watches the connection count; avoid hot-reloading during the demo (run a normal build) |
 | Products on the desk inside the *inside* zone trigger review | 2026-10-05 | Clear the inside zone before Start; press **Basket checked** if it fires |
 | The self-checkout config defaults to **Basket** mode | done | A fresh install starts in Basket; a `pos.json` saved earlier keeps its own mode, so check Admin → Self-checkout on an old machine |
-| Four leftover test stations in the local database | 2026-10-05 | A `cart-1` station sorts first and is what the desktop is set to |
+| Four leftover test stations in the old local Docker database | 2026-10-05; superseded 2026-10-19 by the cloud project | The cloud project has one station, `counter-1`, which is the desktop's default |
 | Low light lowers detection confidence | — | Auto exposure holds picture brightness at 60 fps; keep the demo area lit |
 | **Restore Defaults** in Admin puts the model back to the code default | 2026-10-18: the default is now `scanncart-grocery-v2.1`, the newest weight — not the demo model | After pressing it, pick `scanncart-grocery-v2-stretch` again in **Admin → Model** |
 | v2 reports a whole-frame phantom (mostly 555 Sardines) on a blank or empty view; only the frame-edge filter keeps it out of the log | 2026-10-06 | Keep **Drop frame-edge phantoms** on; empty-basket photos from the cart + retrain fixes it |

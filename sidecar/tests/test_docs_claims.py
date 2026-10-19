@@ -334,7 +334,7 @@ def _same(doc_value: str, code_value: object) -> bool:
 def test_settings_defaults_named_in_the_docs_match_the_settings_dataclass():
     """Both spellings of "this field defaults to X" are checked against `Settings()`.
 
-    The inline shape (`capture_width=1280`) is the one that was actually stale: `settings.py` says
+    The inline shape (`capture_width=1280`) is the one that was actually stale: `settings.py` said
     640x480@30 - the geometry that opens reliably over USB 2.0 - while the capture guidance still
     told a shooter to record at 1280x720@60 and *claimed those were the defaults in that file*.
     """

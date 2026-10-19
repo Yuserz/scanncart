@@ -328,14 +328,22 @@ if ($ToolsOnly) { Say 'System tools ready'; exit 0 }
 # `npm ci` deletes node_modules first, and Windows refuses to delete a file a running program holds:
 # an open (or orphaned) SCANnCART window keeps node_modules\electron\dist\debug.log open and npm
 # fails with "EBUSY: resource busy or locked". Stop this checkout's own processes - the Electron
-# app, its sidecar, vite/esbuild - before reinstalling. Only programs run from inside this repo
-# folder are touched.
+# app, its sidecar, vite/esbuild - before reinstalling. A process counts as this checkout's when its
+# executable lives in the repo folder (electron.exe, esbuild.exe) or its command line names it (the
+# dev server runs in the system node.exe, the sidecar in uv's python.exe behind the venv's
+# launcher), and only these four program names are considered, so the shell running this script
+# is never one of them. Each is ended with its children (taskkill /T): killing only the venv's
+# launcher would leave the real interpreter running with the camera open.
 function Stop-RepoProcesses {
-  $procs = @(Get-Process -ErrorAction SilentlyContinue |
-    Where-Object { $_.Path -and $_.Path.StartsWith("$RepoRoot\", [StringComparison]::OrdinalIgnoreCase) })
+  $names = @('electron.exe', 'node.exe', 'python.exe', 'esbuild.exe')
+  $procs = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+      $_.ProcessId -ne $PID -and $names -contains $_.Name.ToLower() -and (
+        ($_.ExecutablePath -and $_.ExecutablePath.StartsWith("$RepoRoot\", [StringComparison]::OrdinalIgnoreCase)) -or
+        ($_.CommandLine -and $_.CommandLine.IndexOf("$RepoRoot\", [StringComparison]::OrdinalIgnoreCase) -ge 0))
+    })
   foreach ($p in $procs) {
-    Warn "Closing $($p.ProcessName) (pid $($p.Id)), run from this folder, so its files can be replaced"
-    Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+    Warn "Closing $($p.Name) (pid $($p.ProcessId)), run from this folder, so its files can be replaced"
+    & taskkill.exe /PID $p.ProcessId /T /F 2>&1 | Out-Null
   }
   if ($procs.Count -gt 0) { Start-Sleep -Seconds 2 }
 }
@@ -356,9 +364,11 @@ try {
     try {
       Invoke-Checked 'npm ci' { & npm ci }
     } catch {
-      throw ("npm ci failed twice. If the error says EBUSY or EPERM, a program still has a file in " +
-        'desktop\node_modules open: close SCANnCART, any editor or terminal opened in the desktop folder, ' +
-        'and Explorer windows showing it (or restart Windows), then run setup.cmd again.')
+      # Keep npm's own failure first: a network or registry error must not read as a locked file.
+      throw ("$($_.Exception.Message), twice - npm's own error is above. If it says EBUSY or EPERM, a " +
+        'program still has a file in desktop\node_modules open: close SCANnCART, any editor or terminal ' +
+        'opened in the desktop folder and Explorer windows showing it (or restart Windows), then run ' +
+        'setup.cmd again.')
     }
   }
   # `npm ci` exits 0 even when Electron's own download/extract step produced nothing (seen with an
