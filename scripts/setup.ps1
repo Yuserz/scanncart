@@ -54,6 +54,9 @@
   powershell -ExecutionPolicy Bypass -File scripts\setup.ps1 -Gpu
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts\setup.ps1 -Cpu
+
+  A full install ends by putting a "SCANnCART" shortcut to start.cmd on the desktop (-NoShortcut
+  skips it; CI never gets one), so a new device launches from there.
 #>
 [CmdletBinding()]
 param(
@@ -74,7 +77,9 @@ param(
   [switch]$Cpu,
   # Override the PyTorch CUDA wheel tag. Empty (the default) lets scripts/cuda_torch.py choose from
   # the card: cu128 for Turing (RTX 20xx/GTX 16xx) and newer, cu126 for older cards.
-  [string]$CudaTag = ''
+  [string]$CudaTag = '',
+  # Skip the "SCANnCART" shortcut to start.cmd on the desktop.
+  [switch]$NoShortcut
 )
 
 $ErrorActionPreference = 'Stop'
@@ -441,8 +446,30 @@ if (@('Restricted', 'AllSigned') -contains $shellPolicy) {
   Write-Host '    Set-ExecutionPolicy -Scope CurrentUser RemoteSigned'
 }
 
+# A desktop shortcut, so launching on a new device is one double-click without finding the repo
+# folder. Re-running setup rewrites it, which also repoints it if the folder moved.
+$shortcutMade = $false
+if ($OnWindows -and -not $NoShortcut -and -not $env:CI) {
+  try {
+    $desktopDir = [Environment]::GetFolderPath('Desktop')
+    $shell = New-Object -ComObject WScript.Shell
+    $link = $shell.CreateShortcut((Join-Path $desktopDir 'SCANnCART.lnk'))
+    $link.TargetPath = Join-Path $RepoRoot 'start.cmd'
+    $link.WorkingDirectory = $RepoRoot
+    $link.Description = 'Launch SCANnCART (desktop app + detection sidecar)'
+    $link.Save()
+    $shortcutMade = $true
+  } catch {
+    Warn "Could not create the desktop shortcut ($($_.Exception.Message)); start.cmd still launches the app."
+  }
+}
+
 Write-Host ''
-Say 'Done. To launch the app, double-click start.cmd in the repo folder.'
+if ($shortcutMade) {
+  Say 'Done. To launch the app, double-click "SCANnCART" on the desktop (or start.cmd in the repo folder).'
+} else {
+  Say 'Done. To launch the app, double-click start.cmd in the repo folder.'
+}
 # Tools installed by this run are on the PATH of windows opened *after* it, not of the one that
 # started it - `make` typed into that same PowerShell window says "is not recognized".
 if ($missing.Count -gt 0) {

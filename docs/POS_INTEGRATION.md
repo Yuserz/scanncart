@@ -84,7 +84,7 @@ Admin Panel → **Self-checkout**. Its header shows the live status — *Off* (n
 | Check for a new customer every (ms, under *Advanced*) | How often the desktop asks for a session while unbound. Default 1000. |
 | Check the open session every (ms, under *Advanced*) | The same, while bound. Default 5000. |
 | Read the camera's tracks every (ms, under *Advanced*) | How often the sidecar's tracks are read while bound. Default 1000. |
-| What the cart follows | `Counter` (default): the cart is what the camera sees, with the posted count as a floor. `Basket`: the cart is the transfer ledger — a confirmed deposit adds, a confirmed removal subtracts, hiding changes nothing. See §4a. |
+| What the cart follows | `Basket` (default): the cart is the transfer ledger — a confirmed deposit adds, a confirmed removal subtracts, hiding changes nothing. `Counter`: the cart is what the camera sees, with the posted count as a floor (the fallback). See §4a. |
 
 The **zones** are summarised in this section (one line under the cart mode) and edited on the
 **Basket test** tab (§4b), which draws them over the live picture. They are stored in the same
@@ -170,7 +170,7 @@ Basket mode replaces "what is visible" with **confirmed transfers**, which is wh
 - **No change:** showing an item outside, hovering at the opening and pulling back, rearranging inside the cart, an empty hand reaching in, or an item hidden after it was deposited.
 - **Needs review (cart unchanged):** the class changes mid-path, two items cross the opening at once (two in-flight items within 0.5 s of each other — an item merely resting on the rim does not count), an item stops mid-path, an item appears in the opening with no origin, a removal of something the ledger does not hold, a product already in the cart band at Start (its track first seen inside the band in the 3 s after Start — an item carried in through the opening in those seconds is a deposit), an app restart mid-session, or the camera seeing nothing for more than a few seconds. Review is sent to pushcart-web as `pending_review`; staff clear it with **Basket checked** on the Live view or on the admin POS screen. Each review sync carries `review_as_of` — the moment of the newest interaction it counts — so the admin screen's clear (stamped `review_cleared_at`) outranks a desktop re-post of interactions the human already checked, while a newer interaction still raises the review.
 
-The ledger runs in counter mode too, as a shadow, so it can be compared with the real basket before switching. `Counter` is still the configuration default, but the product is the basket: with the camera on the cart, counter mode would drop an item from the bill as soon as other items hide it. Select `Basket` for the cart (and for the defense demo); the acceptance gates in `CART_TRANSFER_SPEC.md` §3 are what would make basket the shipped default. The ledger is kept beside `pos.json` as `basket-ledger.json`, keyed to the session.
+The ledger runs in counter mode too, as a shadow, so it can be compared with the real basket before switching. `Basket` is the configuration default, because the product is the basket: with the camera on the cart, counter mode would drop an item from the bill as soon as other items hide it. `Counter` stays selectable as the fallback; the acceptance gates in `CART_TRANSFER_SPEC.md` §3 are still what the basket has to pass at go-live. The ledger is kept beside `pos.json` as `basket-ledger.json`, keyed to the session.
 
 ## 4b. Zones and the Basket test screen
 

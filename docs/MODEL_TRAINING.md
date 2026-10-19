@@ -144,8 +144,8 @@ Keep augmentation modest and physically plausible:
 
 1. **Use the real rig.** Record on the actual Logitech StreamCam, at the deployed mount height,
    at the sidecar's configured resolution. Defaults live in `sidecar/app/settings.py`:
-   `capture_width=640`, `capture_height=480`, `capture_fps=30` (the 640x480@30 mode that opens
-   reliably over USB 2.0; the StreamCam's 1080p60 needs USB 3.0 and can wedge MSMF without it).
+   `capture_width=1920`, `capture_height=1080`, `capture_fps=60` (the StreamCam's 1080p60 mode,
+   which needs a USB 3.0 port and can wedge MSMF without one; 640x480@30 is the USB 2.0 fallback).
    *Domain match beats volume — 200 images from the real rig outperform 1,000 web-scraped product photos.*
 2. **Record video, then extract frames at ~1 fps** — not 30. Consecutive frames are near-duplicates
    that inflate your count and leak between train/valid splits.

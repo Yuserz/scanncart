@@ -47,7 +47,7 @@ export interface PosConfig {
   sessionPollMs: number
   /** `/api/logs` poll interval while bound (ms). */
   logsPollMs: number
-  /** Which derivation the cart follows; `counter` until the basket passes its rehearsal. */
+  /** Which derivation the cart follows; `basket` (the product), `counter` as its fallback. */
   cartMode: CartMode
   /** The edge of the camera frame the cart is at; a deposit moves toward it. */
   cartEdge: CartEdge
@@ -82,7 +82,7 @@ export const DEFAULT_POS_CONFIG: PosConfig = {
   unboundPollMs: 1000,
   sessionPollMs: 5000,
   logsPollMs: 1000,
-  cartMode: 'counter',
+  cartMode: 'basket',
   cartEdge: DEFAULT_ZONE_PRESET.cartEdge,
   insideFraction: DEFAULT_ZONE_PRESET.insideFraction,
   openingFraction: DEFAULT_ZONE_PRESET.openingFraction,

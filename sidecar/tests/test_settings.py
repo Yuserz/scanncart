@@ -204,9 +204,9 @@ def test_settings_defaults():
     # docs/MODEL_TRAINING.md and docs/DETECTOR_BACKENDS.md §1a.
     assert s.active_model == "models/scanncart-grocery-v2.1.pt"
     # USB-2.0-safe first-run settings.
-    assert s.capture_width == 640
-    assert s.capture_height == 480
-    assert s.capture_fps == 30
+    assert s.capture_width == 1920
+    assert s.capture_height == 1080
+    assert s.capture_fps == 60
     assert s.conf_threshold == 0.5
     assert s.imgsz == 640
     # `auto`, not `letterbox`: it reads the requirement recorded beside the selected weights, which

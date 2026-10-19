@@ -169,7 +169,7 @@ describe('AdminPanel', () => {
       expect(api.updateSettings).toHaveBeenCalledWith(
         expect.objectContaining({
           active_model: DEFAULT_SETTINGS.active_model,
-          capture_width: 640
+          capture_width: 1920
         })
       )
     )
