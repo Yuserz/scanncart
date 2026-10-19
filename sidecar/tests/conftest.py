@@ -1,6 +1,7 @@
 """Suite-wide guards for the state a test could otherwise touch on the machine it runs on.
 
-One fixture, and it exists because of one file. The source index (`app/source_index.py`) is
+Two fixtures. The CUDA one is described where it is defined; the source-index one exists because
+of one file. The source index (`app/source_index.py`) is
 *machine* state - a record of the runs this machine has trained, beside the settings and the
 detection log rather than beside the weights - and it is keyed by a weight's **bytes** rather than
 by a path. Every fake weight in this tree is built from the same handful of bytes (`b"weights"`),
@@ -23,6 +24,18 @@ test from depending on where the suite is run.
 from __future__ import annotations
 
 import pytest
+
+
+@pytest.fixture(autouse=True)
+def _no_real_cuda_kernel(monkeypatch):
+    """`app.settings.cuda_kernel_runs` launches a real kernel; the suite never touches a GPU.
+
+    Stubbed to "the kernel runs", so `torch.cuda.is_available()` - real or a test's fake - decides,
+    as it did before the probe existed. Tests of the probe itself call `_probe_cuda_kernel`.
+    """
+    import app.settings as settings_module
+
+    monkeypatch.setattr(settings_module, "cuda_kernel_runs", lambda torch: True)
 
 
 @pytest.fixture(autouse=True)

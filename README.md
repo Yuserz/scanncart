@@ -128,8 +128,8 @@ Without Make — **sidecar**, using `uv` (fetches Python 3.12, no activation):
 ```bash
 cd sidecar
 uv venv --python 3.12 .venv
-uv pip install --python .venv/Scripts/python.exe -r requirements.txt   # Windows
-uv pip install --python .venv/bin/python -r requirements.txt           # Linux/macOS
+uv pip install --python .venv/Scripts/python.exe -r requirements.lock.txt   # Windows
+uv pip install --python .venv/bin/python -r requirements.lock.txt           # Linux/macOS
 ```
 
 or with plain `venv`:
@@ -137,8 +137,8 @@ or with plain `venv`:
 ```bash
 cd sidecar
 python -m venv .venv
-.venv\Scripts\python.exe -m pip install -r requirements.txt            # Windows
-.venv/bin/python -m pip install -r requirements.txt                    # Linux/macOS
+.venv\Scripts\python.exe -m pip install -r requirements.lock.txt            # Windows
+.venv/bin/python -m pip install -r requirements.lock.txt                    # Linux/macOS
 ```
 
 **Desktop**:

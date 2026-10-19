@@ -53,7 +53,11 @@ def probe_hardware(
     try:
         import torch
 
-        if torch.cuda.is_available():
+        from app.settings import cuda_usable
+
+        # The same answer resolve_device gives, so the panel never reports (and recommends a
+        # preset for) a GPU the sidecar will not run on.
+        if cuda_usable():
             props = torch.cuda.get_device_properties(0)
             return HardwareInfo(
                 cpu_count=cpu_count,
