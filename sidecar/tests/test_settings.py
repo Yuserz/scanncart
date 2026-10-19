@@ -251,6 +251,40 @@ def test_resolve_device_forced_cuda_falls_back_when_unavailable(monkeypatch):
     assert resolve_device("auto") == "cpu"
 
 
+def test_resolve_device_falls_back_when_the_gpu_cannot_run_a_kernel(monkeypatch):
+    # `is_available()` is True for a card the installed build has no kernels for (a GTX 10xx on a
+    # cu128 build, an RTX 50xx on cu124): capture then died on the first frame with "no kernel
+    # image is available". Only a kernel that runs makes the GPU usable.
+    import app.settings as settings_module
+
+    _fake_torch(monkeypatch, cuda_available=True)
+    monkeypatch.setattr(settings_module, "cuda_kernel_runs", lambda torch: False)
+    assert resolve_device("cuda") == "cpu"
+    assert resolve_device("auto") == "cpu"
+
+
+def test_cuda_kernel_runs_reports_a_kernel_failure_as_unusable():
+    import types
+
+    import app.settings as settings_module
+
+    def no_kernel(*_args, **_kwargs):
+        raise RuntimeError("CUDA error: no kernel image is available for execution on the device")
+
+    broken = types.SimpleNamespace(ones=no_kernel)
+    assert settings_module._probe_cuda_kernel(broken) is False
+
+    class _Tensor:
+        def __mul__(self, _k):
+            return self
+
+        def sum(self):
+            return types.SimpleNamespace(item=lambda: 16.0)
+
+    working = types.SimpleNamespace(ones=lambda *_a, **_k: _Tensor())
+    assert settings_module._probe_cuda_kernel(working) is True
+
+
 # --- the desktop mirror of the sidecar's vocabularies ----------------------
 #
 # `settingsDefaults.ts` is not the only file the desktop keeps in step by hand: `settingsFields.ts`

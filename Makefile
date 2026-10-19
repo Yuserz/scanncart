@@ -79,7 +79,8 @@ help:
 	@echo "  typecheck            typecheck the desktop app (node + web)"
 	@echo "  clean                remove desktop node_modules/out/dist and sidecar .venv"
 	@echo ""
-	@echo "  sidecar-setup        create sidecar/.venv + requirements; CUDA torch if an NVIDIA driver is found (CPU=1 skips)"
+	@echo "  sidecar-setup        create sidecar/.venv + the locked requirements; CUDA torch if an NVIDIA driver is found (CPU=1 skips)"
+	@echo "  sidecar-lock         re-resolve requirements.lock.txt after editing requirements.txt (UPGRADE=<pkg> moves one pin)"
 	@echo "  sidecar-run          run the sidecar standalone (prints SIDECAR_PORT=<n>)"
 	@echo "  sidecar-test         run the sidecar pytest suite"
 	@echo ""
@@ -417,12 +418,20 @@ sidecar-setup:
 	cd $(SIDECAR_DIR) && \
 	if command -v uv >/dev/null 2>&1; then \
 		{ [ -x $(SIDECAR_VENV_PY) ] || uv venv --python 3.12 .venv; } && \
-		uv pip install --python $(SIDECAR_VENV_PY) -r requirements.txt; \
+		uv pip install --python $(SIDECAR_VENV_PY) -r requirements.lock.txt; \
 	else \
 		{ [ -x $(SIDECAR_VENV_PY) ] || python -m venv .venv; } && \
-		$(SIDECAR_VENV_PY) -m pip install -r requirements.txt; \
+		$(SIDECAR_VENV_PY) -m pip install -r requirements.lock.txt; \
 	fi && \
 	$(SIDECAR_VENV_PY) ../scripts/cuda_torch.py $(if $(CPU),--cpu)
+
+# requirements.lock.txt is what every machine installs; requirements.txt is only its floors. Existing
+# pins are kept (uv reads the output file as preferences), so only what requirements.txt now forces
+# moves - or the one package named by UPGRADE=<name>. Commit both files together.
+sidecar-lock:
+	cd $(SIDECAR_DIR) && uv pip compile requirements.txt --universal --python-version 3.12 \
+		--no-annotate --custom-compile-command "make sidecar-lock" -o requirements.lock.txt \
+		$(if $(UPGRADE),--upgrade-package $(UPGRADE))
 
 sidecar-run:
 	cd $(SIDECAR_DIR) && $(SIDECAR_VENV_PY) run.py

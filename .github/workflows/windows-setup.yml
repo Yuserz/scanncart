@@ -21,6 +21,8 @@ on:
       - scripts/fetch_models.py
       - Makefile
       - sidecar/requirements.txt
+      - sidecar/requirements.lock.txt
+      - scripts/cuda_torch.py
       - desktop/package.json
       - desktop/package-lock.json
       - .github/workflows/windows-setup.yml
@@ -32,6 +34,8 @@ on:
       - scripts/fetch_models.py
       - Makefile
       - sidecar/requirements.txt
+      - sidecar/requirements.lock.txt
+      - scripts/cuda_torch.py
       - desktop/package.json
       - desktop/package-lock.json
       - .github/workflows/windows-setup.yml

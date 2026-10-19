@@ -21,7 +21,7 @@
 #   node+npm 20+           required - the Electron/React desktop app (CI uses 20)
 #   uv       any           required - creates the sidecar venv and fetches Python 3.12, no sudo
 #   python   exactly 3.12  required - the sidecar; installed *by uv*, the system python is untouched
-#   Python packages        required - requirements.txt into sidecar/.venv (torch, ultralytics, opencv)
+#   Python packages        required - requirements.lock.txt (exact versions) into sidecar/.venv
 #   npm packages           required - package-lock.json into desktop/node_modules (Electron, React)
 #   git      any           recommended - clone/pull the repo
 #   make     any           optional - the root Makefile that wraps both toolchains
@@ -201,11 +201,11 @@ if [ "$MODE" = tools ]; then say "System tools ready"; exit 0; fi
 say "Installing desktop dependencies (npm ci - Electron's download can take a while)"
 (cd "$REPO_ROOT/desktop" && npm ci)
 
-say "Creating sidecar/.venv with Python $PYTHON_VERSION and installing requirements.txt"
+say "Creating sidecar/.venv with Python $PYTHON_VERSION and installing requirements.lock.txt"
 (
   cd "$REPO_ROOT/sidecar"
   [ -x .venv/bin/python ] || uv venv --python "$PYTHON_VERSION" .venv
-  uv pip install --python .venv/bin/python -r requirements.txt
+  uv pip install --python .venv/bin/python -r requirements.lock.txt
   # Prove the venv loads what the sidecar loads now, rather than at the first app start.
   say "Checking the sidecar can import its libraries"
   .venv/bin/python -c "import torch, cv2, ultralytics, fastapi, onnxruntime, lap; print('  ok      torch', torch.__version__, '/ opencv', cv2.__version__, '/ ultralytics', ultralytics.__version__)"

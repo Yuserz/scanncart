@@ -1,8 +1,19 @@
+# The sidecar's direct dependencies, as floors. This is the list people edit; machines do not install
+# it. Every installer (setup.cmd / scripts/setup.ps1, scripts/setup.sh, `make sidecar-setup`, CI)
+# installs requirements.lock.txt, the exact versions resolved from this file. Floors alone let each
+# machine resolve whatever was newest on the day it ran setup, so two laptops set up a month apart
+# ran different ultralytics/torch/polars/fastapi - and only one of those sets had ever met the real
+# camera. The lock holds the versions of the dev venv that has (RTX 4060 + StreamCam).
+#
+# After changing this file: `make sidecar-lock` (add UPGRADE=<package> to move one pin), then commit both.
+# torch/torchvision are pinned there as PyPI's CPU builds; scripts/cuda_torch.py swaps in the same
+# versions' CUDA builds when an NVIDIA driver is present.
+
 fastapi>=0.139
 uvicorn[standard]>=0.51
 ultralytics>=8.4
 opencv-python-headless>=5.0
-numpy>=2.5
+numpy>=2.3
 pydantic>=2.13
 pytest>=9.1
 httpx>=0.28

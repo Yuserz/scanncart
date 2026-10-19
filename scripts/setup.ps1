@@ -17,7 +17,7 @@
     Python            exactly 3.12  required - the sidecar; installed *by uv*, never the system one
     VC++ runtime      2015-2022 x64 required - PyTorch's DLLs load against it; without it the
                                     sidecar dies on import with "WinError 126 ... fbgemm.dll"
-    Python packages   requirements.txt  required - into sidecar\.venv (torch, ultralytics, opencv...)
+    Python packages   requirements.lock.txt  required - the exact versions, into sidecar\.venv
     npm packages      package-lock      required - into desktop\node_modules (Electron, React, vite...)
     Git               any           recommended - updates the checkout, and its sh.exe is the POSIX
                                     shell the Makefile's recipes run in (from any terminal)
@@ -72,11 +72,15 @@ param(
   [switch]$Gpu,
   # Keep the CPU builds even on a machine with an NVIDIA driver.
   [switch]$Cpu,
-  # The PyTorch CUDA wheel tag for -Gpu; cu124 pairs with requirements-cuda.txt's onnxruntime-gpu.
-  [string]$CudaTag = 'cu124'
+  # Override the PyTorch CUDA wheel tag. Empty (the default) lets scripts/cuda_torch.py choose from
+  # the card: cu128 for Turing (RTX 20xx/GTX 16xx) and newer, cu126 for older cards.
+  [string]$CudaTag = ''
 )
 
 $ErrorActionPreference = 'Stop'
+# uv gives up on a request after 30 s by default; torch's wheels are ~2.5 GB and shop/school Wi-Fi
+# stalls longer than that. A user's own value wins.
+if (-not $env:UV_HTTP_TIMEOUT) { $env:UV_HTTP_TIMEOUT = '120' }
 if ($Gpu -and $Cpu) { throw '-Gpu and -Cpu contradict each other; pass one.' }
 
 $NodeMajorMin = 20
@@ -318,15 +322,44 @@ if ($ToolsOnly) { Say 'System tools ready'; exit 0 }
 # 22's) rewrites a lockfile npm 11 wrote, so `npm install` left a fresh clone with a modified file.
 Say "Installing desktop dependencies (npm ci - Electron's download can take a while)"
 Push-Location "$RepoRoot\desktop"
-try { Invoke-Checked 'npm ci' { & npm ci } } finally { Pop-Location }
+try {
+  Invoke-Checked 'npm ci' { & npm ci }
+  # `npm ci` exits 0 even when Electron's own download/extract step produced nothing (seen with an
+  # antivirus scanning the zip): node_modules\electron is there, electron.exe and path.txt are not,
+  # and `npm run dev` later fails with the misleading "Electron uninstall". Check the binary itself,
+  # re-run Electron's installer once, then once more from a fresh download cache.
+  $electronOk = { Test-Native { & node -e "require('fs').accessSync(require('electron'))" } }
+  if (-not (& $electronOk)) {
+    Warn "Electron's binary is missing after npm ci - re-running its installer"
+    Invoke-Checked "Electron's installer" { & node node_modules\electron\install.js }
+    if (-not (& $electronOk)) {
+      $env:electron_config_cache = Join-Path $env:TEMP "scanncart-electron-cache-$PID"
+      Warn "Still missing - downloading Electron again into a fresh cache ($env:electron_config_cache)"
+      Remove-Item -Recurse -Force node_modules\electron\dist -ErrorAction SilentlyContinue
+      Invoke-Checked "Electron's installer" { & node node_modules\electron\install.js }
+    }
+    if (-not (& $electronOk)) {
+      throw ("Electron did not install (desktop\node_modules\electron\dist has no electron.exe). An antivirus " +
+        'quarantining it is the usual cause - allow the repo folder, delete desktop\node_modules and re-run.')
+    }
+  }
+  Ok "Electron $(& node -p "require('electron/package.json').version")"
+} finally { Pop-Location }
 
-Say "Creating sidecar\.venv with Python $PythonVersion and installing requirements.txt"
+Say "Creating sidecar\.venv with Python $PythonVersion and installing requirements.lock.txt"
 Push-Location "$RepoRoot\sidecar"
 try {
   if (-not (Test-Path '.venv\Scripts\python.exe')) {
     Invoke-Checked 'uv venv' { & uv venv --python $PythonVersion .venv }
   }
-  Invoke-Checked 'uv pip install' { & uv pip install --python .venv\Scripts\python.exe -r requirements.txt }
+  # One retry: a single PyPI timeout on slow Wi-Fi failed the whole setup after minutes of
+  # downloading. uv's cache keeps what already arrived, so the retry fetches only the rest.
+  try {
+    Invoke-Checked 'uv pip install' { & uv pip install --python .venv\Scripts\python.exe -r requirements.lock.txt }
+  } catch {
+    Warn "$($_.Exception.Message) - retrying once (a slow or dropped connection is the usual cause)"
+    Invoke-Checked 'uv pip install' { & uv pip install --python .venv\Scripts\python.exe -r requirements.lock.txt }
+  }
 
   # Prove the venv can load what the sidecar loads, now rather than at the first app start: a
   # missing VC++ runtime or a broken wheel fails here with its real error.
@@ -339,7 +372,8 @@ try {
   # a plain install pulls CPU torch even on a CUDA machine, and the app then runs on the CPU and
   # recommends a CPU preset. scripts/cuda_torch.py is the one copy of the rule - `make sidecar-setup`
   # runs it too. -Cpu keeps the CPU builds; -Gpu makes a missing driver or unusable GPU an error.
-  $cudaArgs = @('--cuda-tag', $CudaTag)
+  $cudaArgs = @()
+  if ($CudaTag) { $cudaArgs += @('--cuda-tag', $CudaTag) }
   if ($Gpu) { $cudaArgs += '--require' }
   if ($Cpu) { $cudaArgs += '--cpu' }
   Invoke-Checked 'the GPU builds' { & .venv\Scripts\python.exe "$RepoRoot\scripts\cuda_torch.py" @cudaArgs }

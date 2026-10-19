@@ -106,7 +106,7 @@ make install            # = desktop npm ci  +  sidecar venv setup  +  model weig
 cd sidecar
 # POSIX:  python -m venv .venv && source .venv/bin/activate
 # Windows: python -m venv .venv && .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r requirements.lock.txt
 ```
 
 Or with `uv` (no activation needed, and it fetches Python 3.12):
@@ -115,9 +115,9 @@ Or with `uv` (no activation needed, and it fetches Python 3.12):
 cd sidecar
 uv venv --python 3.12 .venv
 # Windows:
-uv pip install --python .venv/Scripts/python.exe -r requirements.txt
+uv pip install --python .venv/Scripts/python.exe -r requirements.lock.txt
 # Linux/macOS:
-uv pip install --python .venv/bin/python -r requirements.txt
+uv pip install --python .venv/bin/python -r requirements.lock.txt
 ```
 
 **Desktop** (installs Node deps):
@@ -227,22 +227,22 @@ installed, through `scripts/cuda_torch.py` (`setup.cmd -Cpu` / `make sidecar-set
 re-running either is how an existing checkout gets the GPU builds. The commands below are the manual
 route.
 
-`requirements.txt` doesn't pin `torch`, so a plain install usually pulls a
-**CPU-only** wheel even on a CUDA machine. `resolve_device("auto")` and
-`GET /api/system-info` trust `torch.cuda.is_available()`, so a CPU wheel makes
-a real GPU silently report as `cuda_available: false`.
+`requirements.lock.txt` pins `torch` and `torchvision` as PyPI's **CPU** wheels, so the base
+install runs on the CPU even on a CUDA machine. `resolve_device("auto")` and
+`GET /api/system-info` only report the GPU when a kernel actually runs on it, so a CPU wheel (or a
+CUDA build without kernels for the card) reads as `cuda_available: false` rather than crashing.
 
-Reinstall **`torch` and `torchvision` together** from PyTorch's CUDA index
-(pick a `cuXXX` tag your driver supports — check `nvidia-smi`; newer drivers
-are backwards compatible with older tags). Installing only `torch` leaves
-`torchvision` mismatched and the import fails with
+Reinstall **`torch` and `torchvision` together**, at the versions the lock pins, from the CUDA index
+that fits the card: `cu128` for Turing (RTX 20xx / GTX 16xx) and newer, `cu126` for older cards
+(`nvidia-smi --query-gpu=compute_cap --format=csv` reports it; below 7.5 is older). Installing only
+`torch` leaves `torchvision` mismatched and the import fails with
 `operator torchvision::nms does not exist`.
 
 ```bash
 cd sidecar
 uv pip install --python .venv/Scripts/python.exe \
-  torch torchvision \
-  --index-url https://download.pytorch.org/whl/cu124 \
+  torch==2.11.0 torchvision==0.26.0 \
+  --index-url https://download.pytorch.org/whl/cu128 \
   --reinstall-package torch --reinstall-package torchvision
 ```
 

@@ -61,8 +61,8 @@ Two things worth expecting on first launch:
 # sidecar
 cd sidecar
 uv venv --python 3.12 .venv
-uv pip install --python .venv/Scripts/python.exe -r requirements.txt   # Windows
-uv pip install --python .venv/bin/python -r requirements.txt           # Linux/macOS
+uv pip install --python .venv/Scripts/python.exe -r requirements.lock.txt   # Windows
+uv pip install --python .venv/bin/python -r requirements.lock.txt           # Linux/macOS
 
 # desktop
 cd ../desktop && npm install

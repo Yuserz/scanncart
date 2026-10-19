@@ -14,11 +14,11 @@ Roboflow Workflow over HTTP. See [../docs/DETECTOR_BACKENDS.md](../docs/DETECTOR
 cd sidecar
 python -m venv .venv
 # Windows: .venv\Scripts\activate   |   *nix: source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.lock.txt
 ```
 
 > No system `pip`/`venv`? [uv](https://docs.astral.sh/uv/) works without sudo:
-> `uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -r requirements.txt`
+> `uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -r requirements.lock.txt`
 
 > **Use Python 3.12.** The pinned `numpy`/`torch`/`opencv` wheels are not all
 > available (or crash) on very new interpreters — a 3.14 venv was seen with a
@@ -28,34 +28,28 @@ pip install -r requirements.txt
 
 ### GPU (NVIDIA/CUDA) setup
 
-`requirements.txt` doesn't pin `torch`, so a plain install pulls in
-whatever `ultralytics` resolves — on Windows/Linux that's usually a
-**CPU-only** wheel (`torch==X.Y.Z+cpu`), even on a machine with a CUDA
-GPU. `resolve_device("auto")` and `GET /api/system-info` both trust
-`torch.cuda.is_available()`, so a CPU-only wheel makes a real GPU silently
-report as "not detected" — no error, just `cuda_available: false`.
+`requirements.lock.txt` pins `torch==2.11.0` / `torchvision==0.26.0` as PyPI's **CPU** wheels, so
+the base install runs on the CPU even on a CUDA machine. `setup.cmd` and `make sidecar-setup` then
+run `scripts/cuda_torch.py`, which swaps in the *same versions'* CUDA builds when `nvidia-smi` is on
+PATH. It picks the wheel tag from the card's compute capability: `cu128` for Turing (RTX 20xx /
+GTX 16xx) and newer, Blackwell included, and `cu126` for older cards, whose kernels the cu128 builds
+no longer carry. A build without kernels for the card still reports `is_available() == True` and
+fails on the first kernel, so the script checks the GPU by running one, and `resolve_device`
+(`app/settings.py`) makes the same check at runtime and falls back to the CPU.
 
-If you have an NVIDIA GPU, reinstall `torch` **and** `torchvision` together
-from PyTorch's CUDA index after the base install (adjust the `cuXXX` tag to
-a version your driver supports — check `nvidia-smi`'s reported CUDA
-version, newer drivers are backwards compatible with older `cuXXX`
-wheels). Reinstalling only `torch` leaves `torchvision` on whatever
-CPU/loose version `ultralytics` originally resolved, and a mismatched pair
-fails at import time with `RuntimeError: operator torchvision::nms does
-not exist` (torchvision registers its ops against the specific torch
-build it was compiled for) — so always pin both to the same `cuXXX` tag:
+By hand, keep `torch` **and** `torchvision` together and at the locked versions (a mismatched pair
+fails at import with `RuntimeError: operator torchvision::nms does not exist`):
 
 ```bash
-uv pip install --python .venv/Scripts/python.exe torch torchvision --index-url https://download.pytorch.org/whl/cu124 --reinstall-package torch --reinstall-package torchvision
+uv pip install --python .venv/Scripts/python.exe torch==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/cu128 --reinstall-package torch --reinstall-package torchvision
 ```
 
 Verify with the venv's interpreter: `.venv/Scripts/python.exe -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"` (POSIX: `.venv/bin/python`).
 
-> Verified on the current dev machine (RTX 4060, driver 610.62): the base
-> install pulled `torch==2.13.0+cpu`; reinstalling from the `cu128` index gave
-> `torch==2.11.0+cu128` (uv picks the nearest version that index actually
-> carries — don't hard-pin the version, just the `cuXXX` tag) with
-> `cuda_available: true`.
+> Pin the version, not just the tag: unpinned, uv takes the newest build the tag's index carries,
+> and that differs by tag (the `cu124` index stops at 2.6.0), so machines set up with different
+> tags ran different torches. Verified on the dev machine (RTX 4060, compute capability 8.9):
+> `torch==2.11.0+cu128`, `cuda_available: true`.
 
 ### Roboflow credentials (only for the API backends)
 

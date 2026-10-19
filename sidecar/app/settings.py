@@ -1,3 +1,4 @@
+import functools
 from dataclasses import dataclass, field
 
 
@@ -156,15 +157,41 @@ class Settings:
     remote_max_retries: int = 2
 
 
-def resolve_device(pref: str) -> str:
-    # "cpu" is always honored. "auto" and an explicit "cuda" both want the GPU,
-    # but only when torch can actually use it — otherwise fall back to "cpu" so a
-    # stale or forced "cuda" (e.g. persisted before a CPU-only torch install)
-    # never crashes capture at start on a machine without a CUDA-enabled torch.
-    if pref == "cpu":
-        return "cpu"
+def _probe_cuda_kernel(torch) -> bool:
+    try:
+        return float((torch.ones(8, device="cuda") * 2).sum().item()) == 16.0
+    except Exception as exc:  # noqa: BLE001 - any failure here means "not this GPU"
+        print(f"[sidecar] torch sees a CUDA GPU but cannot run on it ({exc}) - using the CPU",
+              flush=True)
+        return False
+
+
+@functools.lru_cache(maxsize=None)
+def cuda_kernel_runs(torch) -> bool:
+    """Whether a kernel actually runs on the GPU, asked once per process.
+
+    `torch.cuda.is_available()` alone is True for a card the installed build carries no kernels for
+    (a GTX 10xx on a cu128 build, an RTX 50xx on cu124), and capture then died on its first frame
+    with "no kernel image is available". scripts/cuda_torch.py picks the build that fits the card;
+    this is the runtime half, for a machine set up some other way. Keyed by the module so the
+    suite's fake torches never share an answer; tests/conftest.py stubs it to True.
+    """
+    return _probe_cuda_kernel(torch)
+
+
+def cuda_usable() -> bool:
     try:
         import torch
-        return "cuda" if torch.cuda.is_available() else "cpu"
     except ImportError:
+        return False
+    return bool(torch.cuda.is_available()) and cuda_kernel_runs(torch)
+
+
+def resolve_device(pref: str) -> str:
+    # "cpu" is always honored. "auto" and an explicit "cuda" both want the GPU,
+    # but only when torch can actually run on it — otherwise fall back to "cpu" so a
+    # stale or forced "cuda" (e.g. persisted before a CPU-only torch install, or a
+    # build without kernels for this card) never crashes capture at start.
+    if pref == "cpu":
         return "cpu"
+    return "cuda" if cuda_usable() else "cpu"

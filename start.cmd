@@ -6,6 +6,11 @@ if not exist "%~dp0desktop\node_modules" (
   if not defined CI pause
   exit /b 1
 )
+if not exist "%~dp0desktop\node_modules\electron\path.txt" (
+  echo Electron did not finish installing - run setup.cmd again, it repairs it.
+  if not defined CI pause
+  exit /b 1
+)
 if not exist "%~dp0sidecar\.venv\Scripts\python.exe" (
   echo The sidecar's Python environment is missing - run setup.cmd first.
   if not defined CI pause
