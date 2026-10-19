@@ -16,6 +16,10 @@ Run it while standing in the exact pose/scene that produces the false positive (
 the checkout counter, close to the lens). Shoot variety: different angles, distances, lighting. Aim
 for roughly 5-10% of your total dataset size — more than that hurts recall on real products.
 
+A camera is asked for the app's own capture mode (`Settings`' defaults, 640x480@60 — 4:3 like the
+training frames), so a negative has the shape a runtime frame has; `--width/--height/--fps` change
+it, and a camera that delivers some other size is reported rather than silently accepted.
+
 Usage (run from sidecar/):
     .venv/Scripts/python.exe tools/capture_hard_negatives.py --source 0
     .venv/Scripts/python.exe tools/capture_hard_negatives.py --source 0 --interval 1.0 --max-frames 300
@@ -40,6 +44,7 @@ import cv2
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.camera import _default_capture  # noqa: E402
+from app.settings import Settings  # noqa: E402
 from workspace import DATA_YAML_NAME  # noqa: E402  (the artifact name the readers look for)
 
 DEFAULT_OUT = "data/datasets/hard_negatives"
@@ -70,6 +75,7 @@ def run(
     max_frames: int = 200,
     capture_factory=_default_capture,
     now_fn=time.monotonic,
+    mode: tuple[int, int, int] | None = None,
 ) -> int:
     """Capture up to max_frames frames, spaced >= interval seconds apart.
 
@@ -77,7 +83,8 @@ def run(
     repeatedly mid-capture. The capture factory defaults to the app's own `_default_capture`, so the
     device opens over the same backend the running app uses (MSMF on Windows, which is where this
     camera's 60 fps lives) — a negatives set shot through a different OpenCV backend is a set of
-    frames from a camera state the model never sees at runtime.
+    frames from a camera state the model never sees at runtime. `mode` is `(width, height, fps)`
+    for a camera index and is ignored for a video file, whose frames are whatever it holds.
     """
     if interval < 0:
         raise ValueError("interval cannot be negative")
@@ -96,6 +103,9 @@ def run(
     if not cap.isOpened():
         cap.release()
         raise RuntimeError(f"Could not open source: {source!r}")
+    wanted = mode if mode is not None and isinstance(source, int) else None
+    if wanted is not None:
+        _request_mode(cap, *wanted)
 
     saved = 0
     last_save = now_fn()
@@ -113,6 +123,9 @@ def run(
                 time.sleep(0.05)
                 continue
             failures = 0
+            if wanted is not None:
+                _report_size(frame, wanted)
+                wanted = None
             now = now_fn()
             if now - last_save < interval:
                 continue
@@ -129,6 +142,30 @@ def run(
 
     _write_data_yaml(Path(out))
     return saved
+
+
+def _request_mode(cap, width: int, height: int, fps: int) -> None:
+    """Ask for the app's capture mode the way `CameraCapture.open` does: MJPG first, then the size.
+
+    The order is the app's: MSMF picks its media type when the size is set, and without MJPG it
+    negotiates the uncompressed format, which caps the StreamCam at ~30 fps.
+    """
+    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+    cap.set(cv2.CAP_PROP_FPS, fps)
+
+
+def _report_size(frame, wanted: tuple[int, int, int]) -> None:
+    """Say so when the camera ignored the requested size: those frames are not the runtime's shape."""
+    height, width = frame.shape[:2]
+    if (width, height) != wanted[:2]:
+        print(
+            f"warning: asked for {wanted[0]}x{wanted[1]} but the camera delivers {width}x{height}; "
+            "these negatives will not match the app's frames - check the camera, or pass the mode "
+            "the app runs at with --width/--height",
+            flush=True,
+        )
 
 
 def _write_data_yaml(out: Path) -> None:
@@ -178,11 +215,36 @@ def main() -> int:
         default=200,
         help="Stop after this many frames. Default: 200",
     )
+    defaults = Settings()
+    parser.add_argument(
+        "--width",
+        type=int,
+        default=defaults.capture_width,
+        help=f"Capture width for a camera. Default: the app's, {defaults.capture_width}",
+    )
+    parser.add_argument(
+        "--height",
+        type=int,
+        default=defaults.capture_height,
+        help=f"Capture height for a camera. Default: the app's, {defaults.capture_height}",
+    )
+    parser.add_argument(
+        "--fps",
+        type=int,
+        default=defaults.capture_fps,
+        help=f"Capture fps for a camera. Default: the app's, {defaults.capture_fps}",
+    )
     args = parser.parse_args()
 
     source = int(args.source) if args.source.isdigit() else args.source
     try:
-        saved = run(source, out=args.out, interval=args.interval, max_frames=args.max_frames)
+        saved = run(
+            source,
+            out=args.out,
+            interval=args.interval,
+            max_frames=args.max_frames,
+            mode=(args.width, args.height, args.fps),
+        )
     except RuntimeError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

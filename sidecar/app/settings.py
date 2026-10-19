@@ -14,12 +14,15 @@ class Settings:
     # stay selectable. See docs/DETECTOR_BACKENDS.md §1a for the backends.
     active_model: str = "models/scanncart-grocery-v2.1.pt"
     camera_index: int = 0
-    # The StreamCam's best mode, 1080p60 (MJPG over MSMF, see camera.py). It
-    # needs a USB 3.0 port: on USB 2.0 a failed mode switch can wedge the MSMF
-    # driver until the camera is physically replugged, so drop to 1280x720 or
-    # 640x480@30 in Admin > Camera & Capture on a machine without one.
-    capture_width: int = 1920
-    capture_height: int = 1080
+    # 640x480@60 (MJPG over MSMF, see camera.py): 4:3 like every frame the
+    # grocery weights were trained on - they stretch a frame to imgsz, so a 16:9
+    # frame squashes products differently from the training set - and the mode
+    # the frame-clamp, frame-filling and unsure-phantom filters were measured at
+    # (acceptance.py). imgsz is 640, so a larger frame adds no detail the model
+    # sees, and this mode fits USB 2.0, where the StreamCam's 1080p60 can wedge
+    # the MSMF driver until the camera is replugged.
+    capture_width: int = 640
+    capture_height: int = 480
     capture_fps: int = 60
     conf_threshold: float = 0.5
     imgsz: int = 640

@@ -239,6 +239,14 @@ sidecar/.venv/Scripts/python.exe sidecar/tools/capture_hard_negatives.py \
   --source 0 --interval 2.0 --max-frames 200
 ```
 
+**Shoot them from the cart, through the StreamCam, at the app's own mode** — which the tool asks
+the camera for by default: 640x480@60, landscape 4:3. That is the shape of every frame the model
+meets at runtime and of every product photo it trained on (the weights stretch a frame to
+640x640, so a frame of another shape squashes the scene differently). Phone photos are the wrong
+source for this tier: the deleted set was mostly portrait phone shots (3040x4048, 1536x2048),
+which is neither the camera nor the view. If the tool warns that the camera delivers another
+size, fix the camera before keeping the frames.
+
 ```bash
 # stages 50, batch `negative`, tag `negative` — into its own out dir, no distance needed
 sidecar/.venv/Scripts/python.exe sidecar/tools/clean_v2.py clean \

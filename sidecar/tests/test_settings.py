@@ -203,9 +203,9 @@ def test_settings_defaults():
     # The locally trained grocery model, run in-process — see
     # docs/MODEL_TRAINING.md and docs/DETECTOR_BACKENDS.md §1a.
     assert s.active_model == "models/scanncart-grocery-v2.1.pt"
-    # The StreamCam's 1080p60 first-run mode (needs USB 3.0; see settings.py).
-    assert s.capture_width == 1920
-    assert s.capture_height == 1080
+    # 640x480@60: 4:3 like the training frames, the filters' measured mode.
+    assert s.capture_width == 640
+    assert s.capture_height == 480
     assert s.capture_fps == 60
     assert s.conf_threshold == 0.5
     assert s.imgsz == 640

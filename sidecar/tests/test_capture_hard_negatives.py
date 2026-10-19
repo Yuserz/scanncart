@@ -185,3 +185,51 @@ def test_next_index_scans_existing_files(tmp_path):
     (tmp_path / "cam0_000002.jpg").touch()
     assert _next_index(tmp_path, "cam0") == 6
     assert _next_index(tmp_path, "cam1") == 0
+
+
+class ModeCap(FakeCap):
+    """FakeCap that records the property writes the tool makes before reading."""
+
+    def __init__(self, frames):
+        super().__init__(frames)
+        self.writes = []
+
+    def set(self, prop, value):
+        self.writes.append((prop, value))
+        return True
+
+
+def test_a_camera_is_asked_for_the_mode_mjpg_first(tmp_path):
+    import cv2
+
+    cap = ModeCap([_frame(640, 480)])
+    run(0, out=str(tmp_path), interval=0.0, max_frames=1, capture_factory=lambda src: cap,
+        mode=(640, 480, 60))
+    assert cap.writes == [
+        (cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG")),
+        (cv2.CAP_PROP_FRAME_WIDTH, 640),
+        (cv2.CAP_PROP_FRAME_HEIGHT, 480),
+        (cv2.CAP_PROP_FPS, 60),
+    ]
+
+
+def test_a_video_file_keeps_its_own_frames(tmp_path):
+    cap = ModeCap([_frame()])
+    run("clip.mp4", out=str(tmp_path), interval=0.0, max_frames=1,
+        capture_factory=lambda src: cap, mode=(640, 480, 60))
+    assert cap.writes == []
+
+
+def test_a_camera_that_ignores_the_size_is_reported(tmp_path, capsys):
+    cap = ModeCap([_frame(1280, 720), _frame(1280, 720)])
+    run(0, out=str(tmp_path), interval=0.0, max_frames=2, capture_factory=lambda src: cap,
+        mode=(640, 480, 60))
+    out = capsys.readouterr().out
+    assert out.count("warning: asked for 640x480 but the camera delivers 1280x720") == 1
+
+
+def test_a_camera_that_honours_the_size_says_nothing(tmp_path, capsys):
+    cap = ModeCap([_frame(640, 480)])
+    run(0, out=str(tmp_path), interval=0.0, max_frames=1, capture_factory=lambda src: cap,
+        mode=(640, 480, 60))
+    assert "warning" not in capsys.readouterr().out

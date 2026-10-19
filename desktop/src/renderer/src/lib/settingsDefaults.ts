@@ -7,9 +7,9 @@ import type { SettingsPayload } from './api'
 export const DEFAULT_SETTINGS: SettingsPayload = {
   active_model: 'models/scanncart-grocery-v2.1.pt',
   camera_index: 0,
-  // Mirrors settings.py: the StreamCam's 1080p60, which needs USB 3.0 (see there).
-  capture_width: 1920,
-  capture_height: 1080,
+  // Mirrors settings.py: 640x480@60, 4:3 like the training frames (see there).
+  capture_width: 640,
+  capture_height: 480,
   capture_fps: 60,
   conf_threshold: 0.5,
   imgsz: 640,

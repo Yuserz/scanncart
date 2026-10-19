@@ -396,10 +396,10 @@ cd desktop && npm run dev   # electron-vite dev with HMR, opens a window
   back down to idle with Start re-enabled — no hang, no fake `running`.
   Observed verbatim on a wedged device: *"Capture stopped: Camera 0 stopped
   delivering frames for 3s (35 attempts) — it may have been unplugged,
-  suspended, or taken by another program."* Shipped defaults are 1920x1080@60 (the
-  `high_end` preset's mode), which this camera streams over USB 3.0 but is the
-  way to walk into it on USB 2.0 or a flaky port — drop to 1280x720 or
-  640x480@30 in Admin before driving `capture` mode if it wedges, and after a replug re-check the Camera dropdown
+  suspended, or taken by another program."* Shipped defaults are 640x480@60, which
+  this camera streams fine, so the way to walk into it is applying the
+  **`high_end` preset (1920x1080@60)** — check capture settings in Admin before
+  driving `capture` mode, and after a replug re-check the Camera dropdown
   (`Detecting cameras…` / Rescan), since the index can shift.
 - **A held device looks exactly like the MSMF wedge — check who holds the camera
   first (hit Oct 2026).** Another process owning the StreamCam produces the same

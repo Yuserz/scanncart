@@ -13,14 +13,15 @@ that bite on a fresh machine) read
    VC++ runtime, Git, Make, CUDA torch when an NVIDIA driver is present), the app's own
    dependencies and the model weights, then puts a **SCANnCART** shortcut on the desktop.
    Safe to re-run; `setup.cmd -Check` only reports what is missing.
-3. Plug the Logitech StreamCam into a **USB 3.0** port (blue, or marked SS) and close NVIDIA
-   Broadcast / Logi apps that might hold the camera.
+3. Plug in the Logitech StreamCam (USB 3.0 if the PC has one, though the default mode also runs
+   on USB 2.0) and close NVIDIA Broadcast, Discord and Logi apps that might hold the camera.
 4. Double-click **SCANnCART** on the desktop (or `start.cmd`), then press **Start**.
 
-What a fresh install defaults to: capture **1920x1080 @ 60 fps** (the StreamCam's best mode)
-and self-checkout cart mode **Basket**. If the camera never delivers frames on a machine with
-only USB 2.0, set 1280x720 or 640x480 @ 30 in **Admin → Camera & Capture** and replug the camera. If
-Windows Defender kills the sidecar on start, add the repo folder as a Defender exclusion.
+What a fresh install defaults to: capture **640x480 @ 60 fps** — 4:3, the shape the model was
+trained on, and safe over USB 2.0 — and self-checkout cart mode **Basket**. Don't raise it to a
+16:9 mode (1280x720, 1920x1080): the model sees no extra detail and products come out squashed
+differently from its training photos. If Windows Defender kills the sidecar on start, add the
+repo folder as a Defender exclusion.
 
 ## You need
 
